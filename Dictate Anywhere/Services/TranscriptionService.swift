@@ -28,7 +28,14 @@ final class TranscriptionService {
     var errorMessage: String?
 
     // Configuration
-    private let modelVariant = "base"
+    private(set) var modelVariant = "base"
+
+    /// Sets the model variant to use (e.g., "base", "small", "large-v3")
+    func setModelVariant(_ variant: String) {
+        modelVariant = variant
+        isModelDownloaded = false
+        isModelLoaded = false
+    }
 
     // MARK: - Initialization
 

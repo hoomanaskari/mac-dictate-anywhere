@@ -5,24 +5,31 @@ struct DictationView: View {
     @State private var isButtonPressed = false
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
+            Spacer()
+
             // Status indicator
             statusView
 
             // Microphone selector
             microphoneSelector
 
-            // Transcript area
-            transcriptArea
-
             // Hold to dictate button
             dictateButton
 
             // Hint text
             hintText
+
+            Spacer()
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            // Models button
+            modelsButton
         }
         .padding(24)
-        .frame(minWidth: 400, minHeight: 360)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 
@@ -105,27 +112,6 @@ struct DictationView: View {
         }
     }
 
-    // MARK: - Transcript Area
-
-    private var transcriptArea: some View {
-        ScrollView {
-            Text(viewModel.currentTranscript.isEmpty ? "Your transcription will appear here..." : viewModel.currentTranscript)
-                .font(.body)
-                .foregroundStyle(viewModel.currentTranscript.isEmpty ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.05))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                }
-        }
-    }
-
     // MARK: - Dictate Button
 
     private var dictateButton: some View {
@@ -192,6 +178,50 @@ struct DictationView: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+
+    // MARK: - Models Button
+
+    private var modelsButton: some View {
+        Button(action: {
+            viewModel.showModelManagement()
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "cube.box")
+                    .font(.system(size: 14))
+
+                if let currentModel = viewModel.modelManager.currentModel {
+                    Text("Model: \(currentModel.displayName)")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("(\(currentModel.size))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Select Model")
+                        .font(.system(size: 13, weight: .medium))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isReady)
+        .opacity(isReady ? 1 : 0.5)
     }
 }
 

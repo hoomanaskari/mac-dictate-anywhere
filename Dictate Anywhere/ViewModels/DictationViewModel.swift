@@ -14,6 +14,7 @@ final class DictationViewModel {
         case ready
         case listening
         case processing
+        case modelManagement      // Model selection screen
         case error(String)
 
         var statusText: String {
@@ -34,6 +35,8 @@ final class DictationViewModel {
                 return "Listening..."
             case .processing:
                 return "Processing..."
+            case .modelManagement:
+                return "Model Management"
             case .error(let message):
                 return "Error: \(message)"
             }
@@ -50,8 +53,9 @@ final class DictationViewModel {
     let transcriptionService = TranscriptionService()
     let keyboardMonitor = KeyboardMonitorService()
     let microphoneManager = MicrophoneManager()
+    let modelManager = ModelManager()
 
-    // NEW: Services for auto-insert and overlay
+    // Services for auto-insert and overlay
     let audioLevelMonitor = AudioLevelMonitor()
     let textInsertionService = TextInsertionService.shared
     let overlayController = OverlayWindowController.shared
@@ -249,6 +253,33 @@ final class DictationViewModel {
 
         if permissionChecker.allPermissionsGranted && state == .permissionsMissing {
             initialize()
+        }
+    }
+
+    // MARK: - Model Management
+
+    /// Navigates to the model management screen
+    func showModelManagement() {
+        guard case .ready = state else { return }
+        state = .modelManagement
+    }
+
+    /// Reinitializes the transcription service with a new model
+    /// Called after user selects a different model in ModelsView
+    func reinitializeWithNewModel(_ model: WhisperModel) async {
+        state = .initializingModel
+
+        // Clean up current transcription service
+        transcriptionService.cleanup()
+
+        // Update transcription service with new model variant
+        transcriptionService.setModelVariant(model.whisperKitVariant)
+
+        do {
+            try await transcriptionService.initializeWhisperKit()
+            state = .ready
+        } catch {
+            state = .error("Failed to initialize model: \(error.localizedDescription)")
         }
     }
 }

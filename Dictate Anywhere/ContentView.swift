@@ -31,11 +31,14 @@ struct ContentView: View {
             case .ready, .listening, .processing:
                 DictationView(viewModel: viewModel)
 
+            case .modelManagement:
+                ModelsView(viewModel: viewModel)
+
             case .error(let message):
                 errorView(message)
             }
         }
-        .frame(minWidth: 420, minHeight: 380)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 
@@ -48,7 +51,7 @@ struct ContentView: View {
             Text(message)
                 .foregroundStyle(.secondary)
         }
-        .frame(width: 420, height: 220)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 
@@ -85,7 +88,7 @@ struct ContentView: View {
             .buttonStyle(.plain)
         }
         .padding(32)
-        .frame(width: 420)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 }

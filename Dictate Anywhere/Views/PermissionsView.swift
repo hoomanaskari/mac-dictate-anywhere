@@ -78,7 +78,7 @@ struct PermissionsView: View {
             .buttonStyle(.plain)
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 
