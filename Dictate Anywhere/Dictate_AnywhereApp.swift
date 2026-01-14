@@ -9,9 +9,18 @@ import SwiftUI
 
 @main
 struct Dictate_AnywhereApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var viewModel = DictationViewModel()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(viewModel: viewModel)
+                .onAppear {
+                    viewModel.initialize()
+                }
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultSize(width: 450, height: 400)
     }
 }
