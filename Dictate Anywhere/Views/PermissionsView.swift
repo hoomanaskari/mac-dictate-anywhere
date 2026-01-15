@@ -69,10 +69,10 @@ struct PermissionsView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
                 .background {
                     Capsule()
-                        .stroke(.blue, lineWidth: 1.5)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
                 }
             }
             .buttonStyle(.plain)
@@ -124,10 +124,10 @@ struct PermissionsView: View {
                         .fontWeight(.medium)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.accentColor)
                         .background {
                             Capsule()
-                                .stroke(.blue, lineWidth: 1)
+                                .stroke(Color.accentColor, lineWidth: 1)
                         }
                 }
                 .buttonStyle(.plain)

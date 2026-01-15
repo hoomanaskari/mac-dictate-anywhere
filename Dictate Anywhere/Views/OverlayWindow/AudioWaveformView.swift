@@ -8,8 +8,8 @@ struct AudioWaveformView: View {
     /// Number of bars in the waveform
     private let barCount = 7
 
-    /// Bright orange color for the waveform
-    private let waveformColor = Color.orange
+    /// Brand color for the waveform
+    private let waveformColor = Color.accentColor
 
     var body: some View {
         HStack(spacing: 8) {

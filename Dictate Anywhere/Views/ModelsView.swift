@@ -66,7 +66,7 @@ struct ModelsView: View {
                     Text("Back")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
             .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
@@ -100,19 +100,13 @@ struct ModelsView: View {
 
             // Model info
             VStack(spacing: 8) {
-                Text(WhisperModel.defaultModel.displayName)
+                Text("Model Downloaded")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
 
                 Text(WhisperModel.defaultModel.size)
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-
-                Text(WhisperModel.defaultModel.description)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
             }
 
             // Delete button
@@ -129,6 +123,7 @@ struct ModelsView: View {
                     Capsule()
                         .stroke(.red.opacity(0.5), lineWidth: 1)
                 }
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .padding(.top, 8)
@@ -142,7 +137,7 @@ struct ModelsView: View {
             // Icon
             Image(systemName: "arrow.down.circle")
                 .font(.system(size: 48))
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
 
             // Info
             VStack(spacing: 8) {
@@ -173,8 +168,9 @@ struct ModelsView: View {
                 .padding(.vertical, 12)
                 .background {
                     Capsule()
-                        .fill(.blue)
+                        .fill(Color.accentColor)
                 }
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .padding(.top, 8)
@@ -188,7 +184,7 @@ struct ModelsView: View {
             // Icon
             Image(systemName: "arrow.down.circle")
                 .font(.system(size: 48))
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
 
             // Title
             VStack(spacing: 8) {
@@ -196,7 +192,7 @@ struct ModelsView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
 
-                Text(WhisperModel.defaultModel.displayName)
+                Text(WhisperModel.defaultModel.size)
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -210,7 +206,7 @@ struct ModelsView: View {
                             .frame(height: 6)
 
                         Capsule()
-                            .fill(.blue)
+                            .fill(Color.accentColor)
                             .frame(width: geometry.size.width * viewModel.modelManager.downloadProgress, height: 6)
                     }
                 }

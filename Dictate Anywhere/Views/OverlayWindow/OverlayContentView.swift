@@ -107,7 +107,7 @@ struct ProcessingIndicatorView: View {
         HStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(0.8)
-                .tint(.orange)
+                .tint(Color.accentColor)
 
             Text("Processing...")
                 .font(.system(size: 13, weight: .medium))

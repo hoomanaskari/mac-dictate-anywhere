@@ -123,12 +123,12 @@ struct DictationView: View {
                 Text(isButtonPressed ? "Release to Copy" : "Hold to Dictate")
                     .fontWeight(.medium)
             }
-            .foregroundStyle(isButtonPressed ? .red : .blue)
+            .foregroundStyle(isButtonPressed ? .red : Color.accentColor)
             .padding(.horizontal, 24)
             .padding(.vertical, 12)
             .background {
                 Capsule()
-                    .stroke(isButtonPressed ? Color.red : Color.blue, lineWidth: 1.5)
+                    .stroke(isButtonPressed ? Color.red : Color.accentColor, lineWidth: 1.5)
             }
         }
         .buttonStyle(.plain)
@@ -190,11 +190,8 @@ struct DictationView: View {
                 Image(systemName: "cube.box")
                     .font(.system(size: 14))
 
-                Text("Model: \(WhisperModel.defaultModel.displayName)")
+                Text("Speech Model")
                     .font(.system(size: 13, weight: .medium))
-                Text("(\(WhisperModel.defaultModel.size))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
 
                 Spacer()
 
