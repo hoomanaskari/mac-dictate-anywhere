@@ -5,6 +5,11 @@ struct OverlayContentView: View {
     /// Current state of the overlay
     let state: OverlayState
 
+    /// Whether to show text preview (from settings)
+    private var showTextPreview: Bool {
+        SettingsManager.shared.showTextPreview
+    }
+
     var body: some View {
         ZStack {
             // Semi-transparent rounded rectangle background
@@ -27,7 +32,7 @@ struct OverlayContentView: View {
     private var frameWidth: CGFloat {
         switch state {
         case .listening:
-            return 320
+            return showTextPreview ? 320 : 200
         default:
             return 180
         }
@@ -37,7 +42,7 @@ struct OverlayContentView: View {
     private var frameHeight: CGFloat {
         switch state {
         case .listening:
-            return 140
+            return showTextPreview ? 140 : 60
         default:
             return 60
         }
@@ -51,7 +56,7 @@ struct OverlayContentView: View {
             LoadingIndicatorView()
 
         case .listening(let level, let transcript):
-            ListeningView(audioLevel: level, transcript: transcript)
+            ListeningView(audioLevel: level, transcript: transcript, showTextPreview: showTextPreview)
 
         case .processing:
             ProcessingIndicatorView()
@@ -66,32 +71,39 @@ struct OverlayContentView: View {
 struct ListeningView: View {
     let audioLevel: Float
     let transcript: String
+    let showTextPreview: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Live transcript text - auto-scrolls to show most recent words
-            ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    Text(transcript.isEmpty ? "Listening..." : transcript)
-                        .font(.system(size: 19, weight: .light))
-                        .foregroundStyle(.white.opacity(0.95))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .id("transcript")
-                }
-                .frame(height: 66)
-                .onChange(of: transcript) { _, _ in
-                    // Auto-scroll to bottom when transcript changes
-                    withAnimation(.easeOut(duration: 0.1)) {
+        if showTextPreview {
+            // Full view with transcript and waveform
+            VStack(spacing: 8) {
+                // Live transcript text - auto-scrolls to show most recent words
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        Text(transcript.isEmpty ? "Listening..." : transcript)
+                            .font(.system(size: 19, weight: .light))
+                            .foregroundStyle(.white.opacity(0.95))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .id("transcript")
+                    }
+                    .frame(height: 66)
+                    .onChange(of: transcript) { _, _ in
+                        // Auto-scroll to bottom when transcript changes
+                        withAnimation(.easeOut(duration: 0.1)) {
+                            proxy.scrollTo("transcript", anchor: .bottom)
+                        }
+                    }
+                    .onAppear {
                         proxy.scrollTo("transcript", anchor: .bottom)
                     }
                 }
-                .onAppear {
-                    proxy.scrollTo("transcript", anchor: .bottom)
-                }
-            }
 
-            // Audio waveform
+                // Audio waveform
+                AudioWaveformView(audioLevel: audioLevel)
+            }
+        } else {
+            // Compact view with waveform only
             AudioWaveformView(audioLevel: audioLevel)
         }
     }
@@ -158,6 +170,12 @@ struct SuccessIndicatorView: View {
 
 #Preview("Listening - With Text") {
     OverlayContentView(state: .listening(level: 0.6, transcript: "Hello, this is a test of the live transcription feature"))
+        .background(.black)
+}
+
+#Preview("Listening - Compact (No Text)") {
+    // Note: Toggle showTextPreview in SettingsManager to see this preview
+    OverlayContentView(state: .listening(level: 0.5, transcript: ""))
         .background(.black)
 }
 

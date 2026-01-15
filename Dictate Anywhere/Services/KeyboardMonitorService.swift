@@ -99,6 +99,11 @@ final class KeyboardMonitorService {
         }
 
         // Reset state
+        resetState()
+    }
+
+    /// Resets all internal state flags - useful for force recovery
+    func resetState() {
         lock.lock()
         isFnKeyDown = false
         isCustomShortcutDown = false

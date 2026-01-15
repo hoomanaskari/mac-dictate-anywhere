@@ -4,6 +4,9 @@ import AppKit
 final class ClipboardManager {
     static let shared = ClipboardManager()
 
+    /// Stores the last transcript for menu bar access
+    var lastTranscript: String = ""
+
     private init() {}
 
     /// Copies text to the system clipboard
