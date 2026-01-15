@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         let showItem = NSMenuItem(
-            title: "Show Dictate Anywhere",
+            title: "Open Dictate Anywhere",
             action: #selector(showMainWindow),
             keyEquivalent: ""
         )
@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(
-            title: "Quit Dictate Anywhere",
+            title: "Quit",
             action: #selector(quitApp),
             keyEquivalent: "q"
         )
