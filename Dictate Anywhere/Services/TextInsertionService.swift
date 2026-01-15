@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import CoreGraphics
-import ApplicationServices
 
 /// Service for inserting text into focused input fields system-wide
 /// Uses clipboard + CGEvent keyboard simulation (Cmd+V) for maximum compatibility
@@ -14,9 +13,9 @@ final class TextInsertionService {
     // MARK: - Public Interface
 
     /// Inserts text into the currently focused input field
-    /// If no focused input is detected, copies to clipboard as fallback
+    /// Always attempts to paste since user explicitly triggered dictation
     /// - Parameter text: The text to insert
-    /// - Returns: True if text was pasted into a focused input, false if copied to clipboard only
+    /// - Returns: True if paste was attempted, false if text was empty
     @discardableResult
     func insertText(_ text: String) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,63 +23,12 @@ final class TextInsertionService {
             return false
         }
 
-        // Check if there's a focused text input
-        let hasFocusedInput = checkForFocusedTextInput()
-
-        if hasFocusedInput {
-            // Paste into focused input
-            return await pasteText(text)
-        } else {
-            // Fallback: copy to clipboard only
-            return copyToClipboard(text)
-        }
+        // Always attempt to paste - user explicitly triggered dictation
+        // so they expect text to be inserted wherever their cursor is
+        return await pasteText(trimmedText)
     }
 
     // MARK: - Private Methods
-
-    /// Checks if there's a focused text input element using Accessibility API
-    private func checkForFocusedTextInput() -> Bool {
-        // Get the frontmost application
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
-            return false
-        }
-
-        let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
-
-        // Get the focused UI element
-        var focusedElement: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(
-            appElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedElement
-        )
-
-        guard result == .success, let element = focusedElement else {
-            return false
-        }
-
-        // Check the role of the focused element
-        var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(
-            element as! AXUIElement,
-            kAXRoleAttribute as CFString,
-            &role
-        )
-
-        if let roleString = role as? String {
-            // Common text input roles
-            let textInputRoles = [
-                "AXTextField",
-                "AXTextArea",
-                "AXComboBox",
-                "AXSearchField",
-                "AXWebArea"  // Web content areas (browser inputs)
-            ]
-            return textInputRoles.contains(roleString)
-        }
-
-        return false
-    }
 
     /// Copies text to clipboard and simulates Cmd+V paste
     private func pasteText(_ text: String) async -> Bool {
@@ -102,19 +50,6 @@ final class TextInsertionService {
         }
 
         return success
-    }
-
-    /// Copies text to clipboard only (fallback when no focused input)
-    private func copyToClipboard(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let success = pasteboard.setString(text, forType: .string)
-
-        if success {
-            NSSound(named: "Pop")?.play()
-        }
-
-        return false  // Return false to indicate it was only copied, not pasted
     }
 
     /// Simulates Cmd+V keystroke using CGEvent
