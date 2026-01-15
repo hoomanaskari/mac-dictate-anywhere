@@ -158,7 +158,7 @@ final class TranscriptionService {
     }
 
     /// Waits until audio samples are flowing from the microphone
-    /// Returns true if audio is ready, false if timeout occurred
+    /// Returns true if audio is ready, false if timeout or cancelled
     func waitForAudioReady(timeout: TimeInterval = 2.0) async -> Bool {
         guard let whisperKit = whisperKit else { return false }
 
@@ -167,6 +167,9 @@ final class TranscriptionService {
         let minSamples = 160  // ~10ms of audio at 16kHz - enough to confirm mic is working
 
         while Date().timeIntervalSince(startTime) < timeout {
+            // Check if recording was cancelled while waiting
+            guard isRecording else { return false }
+
             if audioProcessor.audioSamples.count >= minSamples {
                 return true
             }
@@ -174,7 +177,7 @@ final class TranscriptionService {
         }
 
         // Timeout - but if we have ANY samples, consider it ready
-        return audioProcessor.audioSamples.count > 0
+        return isRecording && audioProcessor.audioSamples.count > 0
     }
 
     /// Stops recording and returns the final transcript
@@ -214,6 +217,30 @@ final class TranscriptionService {
         await stateManager.setIdle()
 
         return finalTranscript
+    }
+
+    /// Force cancels recording from any state - used when user releases Fn key during startup
+    /// This bypasses normal state checks to ensure immediate cancellation
+    func forceCancel() async {
+        // Stop the transcription loop
+        isTranscribing = false
+        transcriptionTask?.cancel()
+        transcriptionTask = nil
+
+        // Stop audio capture if WhisperKit is available
+        if let whisperKit = whisperKit {
+            let audioProcessor = whisperKit.audioProcessor
+            audioProcessor.stopRecording()
+            audioProcessor.purgeAudioSamples(keepingLast: 0)
+        }
+
+        await MainActor.run {
+            self.isRecording = false
+            self.currentTranscript = ""
+        }
+
+        // Force reset state to idle regardless of current state
+        await stateManager.reset()
     }
 
     // MARK: - Private Methods

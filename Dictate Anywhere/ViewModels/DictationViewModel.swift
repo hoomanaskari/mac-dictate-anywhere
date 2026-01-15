@@ -56,7 +56,7 @@ final class DictationViewModel {
     let permissionChecker = PermissionChecker()
     let transcriptionService = TranscriptionService()
     let keyboardMonitor = KeyboardMonitorService()
-    let microphoneManager = MicrophoneManager()
+    let microphoneManager = MicrophoneManager.shared
     let modelManager = ModelManager()
 
     // Services for auto-insert and overlay
@@ -208,14 +208,24 @@ final class DictationViewModel {
     func stopDictation() async {
         guard case .listening = state else { return }
 
-        state = .processing
-
-        // Stop audio level monitoring
+        // IMMEDIATELY hide overlay and stop monitoring - user released Fn key
+        // This ensures the app is responsive even if cleanup takes time
+        overlayController.hide()
         audioLevelMonitor.stopMonitoring()
         audioLevelTask?.cancel()
         audioLevelTask = nil
 
-        // Show processing state
+        // Check if we were still in the "preparing" phase (no audio yet)
+        // In that case, just cancel everything and return to ready
+        if !transcriptionService.isRecording || transcriptionService.currentTranscript.isEmpty {
+            // Force cancel - handles cases where recording didn't fully start
+            await transcriptionService.forceCancel()
+            state = .ready
+            return
+        }
+
+        // Normal stop - we have audio to process
+        state = .processing
         overlayController.show(state: .processing)
 
         // Get final transcript
