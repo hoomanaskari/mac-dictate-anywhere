@@ -20,6 +20,9 @@ struct ModelsView: View {
                 }
 
                 Spacer()
+
+                // FluidAudio Attribution
+                fluidAudioAttribution
             }
             .padding(24)
             .navigationTitle("Speech Model")
@@ -32,11 +35,10 @@ struct ModelsView: View {
                             Text("Back")
                                 .font(.system(size: 13, weight: .medium))
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 16)
                         .padding(.vertical, 4)
                     }
                     .buttonStyle(.plain)
-                    .padding(.leading, 8)
                     .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
                     .disabled(!viewModel.modelManager.isModelDownloaded)
                 }
@@ -193,6 +195,42 @@ struct ModelsView: View {
                     .monospacedDigit()
             }
             .padding(.horizontal, 60)
+        }
+    }
+
+    // MARK: - FluidAudio Attribution
+
+    private var fluidAudioAttribution: some View {
+        VStack(spacing: 12) {
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            VStack(spacing: 8) {
+                Text("Powered by FluidAudio")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text("Parakeet ASR · On-device processing")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.4))
+
+                Button(action: {
+                    if let url = URL(string: "https://github.com/FluidInference/FluidAudio") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "link")
+                            .font(.system(size: 10))
+                        Text("View on GitHub")
+                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(.blue.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 

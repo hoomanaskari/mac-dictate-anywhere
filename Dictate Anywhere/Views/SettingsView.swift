@@ -44,11 +44,10 @@ struct SettingsView: View {
                             Text("Back")
                                 .font(.system(size: 13, weight: .medium))
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 16)
                         .padding(.vertical, 4)
                     }
                     .buttonStyle(.plain)
-                    .padding(.leading, 8)
                 }
             }
         }
