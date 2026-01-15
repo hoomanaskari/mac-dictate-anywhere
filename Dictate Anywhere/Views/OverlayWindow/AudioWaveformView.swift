@@ -6,7 +6,7 @@ struct AudioWaveformView: View {
     let audioLevel: Float
 
     /// Number of bars in the waveform
-    private let barCount = 7
+    private let barCount = 12
 
     /// Brand color for the waveform
     private let waveformColor = Color.accentColor
@@ -34,7 +34,7 @@ struct AudioWaveformView: View {
 
     /// Draws the waveform bars on the canvas
     private func drawWaveform(context: GraphicsContext, size: CGSize, time: TimeInterval) {
-        let barWidth: CGFloat = 6
+        let barWidth: CGFloat = 2
         let spacing: CGFloat = 4
         let totalWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
         let startX = (size.width - totalWidth) / 2

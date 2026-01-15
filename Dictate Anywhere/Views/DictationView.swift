@@ -2,7 +2,6 @@ import SwiftUI
 
 struct DictationView: View {
     @Bindable var viewModel: DictationViewModel
-    @State private var isButtonPressed = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -13,9 +12,6 @@ struct DictationView: View {
 
             // Microphone selector
             microphoneSelector
-
-            // Hold to dictate button
-            dictateButton
 
             // Hint text
             hintText
@@ -112,47 +108,6 @@ struct DictationView: View {
         }
     }
 
-    // MARK: - Dictate Button
-
-    private var dictateButton: some View {
-        Button(action: {}) {
-            HStack(spacing: 8) {
-                Image(systemName: isButtonPressed ? "mic.fill" : "mic")
-                    .font(.title3)
-                    .symbolEffect(.bounce, value: isButtonPressed)
-                Text(isButtonPressed ? "Release to Copy" : "Hold to Dictate")
-                    .fontWeight(.medium)
-            }
-            .foregroundStyle(isButtonPressed ? .red : Color.accentColor)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
-            .background {
-                Capsule()
-                    .stroke(isButtonPressed ? Color.red : Color.accentColor, lineWidth: 1.5)
-            }
-        }
-        .buttonStyle(.plain)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isButtonPressed {
-                        isButtonPressed = true
-                        Task {
-                            await viewModel.startDictation()
-                        }
-                    }
-                }
-                .onEnded { _ in
-                    isButtonPressed = false
-                    Task {
-                        await viewModel.stopDictation()
-                    }
-                }
-        )
-        .disabled(!isReady)
-        .opacity(isReady ? 1 : 0.5)
-    }
-
     private var isReady: Bool {
         if case .ready = viewModel.state { return true }
         if case .listening = viewModel.state { return true }
@@ -165,7 +120,7 @@ struct DictationView: View {
         HStack(spacing: 4) {
             Image(systemName: "keyboard")
                 .font(.caption)
-            Text("Or press and hold")
+            Text("Press and hold")
             Text("fn")
                 .fontWeight(.semibold)
                 .padding(.horizontal, 6)
@@ -174,7 +129,7 @@ struct DictationView: View {
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 }
-            Text("key anywhere")
+            Text("anywhere to dictate")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
