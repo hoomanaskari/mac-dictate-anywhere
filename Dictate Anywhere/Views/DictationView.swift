@@ -13,6 +13,9 @@ struct DictationView: View {
             // Microphone selector
             microphoneSelector
 
+            // Language indicator
+            languageIndicator
+
             // Hint text
             hintText
 
@@ -122,6 +125,31 @@ struct DictationView: View {
         if case .ready = viewModel.state { return true }
         if case .listening = viewModel.state { return true }
         return false
+    }
+
+    // MARK: - Language Indicator
+
+    private var languageIndicator: some View {
+        let settings = SettingsManager.shared
+
+        return HStack(spacing: 6) {
+            Text(settings.selectedLanguage.flag)
+                .font(.system(size: 14))
+
+            Text(settings.selectedLanguage.displayName)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background {
+            Capsule()
+                .fill(Color.white.opacity(0.05))
+                .overlay {
+                    Capsule()
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                }
+        }
     }
 
     // MARK: - Hint Text

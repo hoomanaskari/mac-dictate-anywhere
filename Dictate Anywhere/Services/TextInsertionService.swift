@@ -4,7 +4,7 @@ import CoreGraphics
 
 /// Service for inserting text into focused input fields system-wide
 /// Uses clipboard + CGEvent keyboard simulation (Cmd+V) for maximum compatibility
-/// Falls back to clipboard-only when no focused input is detected
+/// Text is ALWAYS copied to clipboard, so user can manually paste if auto-paste fails
 final class TextInsertionService {
     static let shared = TextInsertionService()
 
@@ -13,9 +13,10 @@ final class TextInsertionService {
     // MARK: - Public Interface
 
     /// Inserts text into the currently focused input field
-    /// Always attempts to paste since user explicitly triggered dictation
+    /// Text is ALWAYS copied to clipboard first, then Cmd+V is simulated
+    /// If auto-paste fails, user can still paste manually
     /// - Parameter text: The text to insert
-    /// - Returns: True if paste was attempted, false if text was empty
+    /// - Returns: True if text was copied to clipboard (paste may or may not succeed in target app)
     @discardableResult
     func insertText(_ text: String) async -> Bool {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -23,16 +24,15 @@ final class TextInsertionService {
             return false
         }
 
-        // Always attempt to paste - user explicitly triggered dictation
-        // so they expect text to be inserted wherever their cursor is
         return await pasteText(trimmedText)
     }
 
     // MARK: - Private Methods
 
     /// Copies text to clipboard and simulates Cmd+V paste
+    /// Clipboard is ALWAYS set - paste simulation may not work in all apps
     private func pasteText(_ text: String) async -> Bool {
-        // Copy to clipboard
+        // Copy to clipboard FIRST - this always succeeds and serves as fallback
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
@@ -43,24 +43,20 @@ final class TextInsertionService {
         try? await Task.sleep(for: .milliseconds(50))
 
         // Simulate Cmd+V
-        let success = simulatePaste()
+        simulatePaste()
 
-        if success {
-            NSSound(named: "Pop")?.play()
-        }
-
-        return success
+        return true
     }
 
     /// Simulates Cmd+V keystroke using CGEvent
-    private func simulatePaste() -> Bool {
+    private func simulatePaste() {
         let vKeyCode: CGKeyCode = 9  // V key
 
         let source = CGEventSource(stateID: .hidSystemState)
 
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
-            return false
+            return
         }
 
         keyDown.flags = .maskCommand
@@ -68,7 +64,5 @@ final class TextInsertionService {
 
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
-
-        return true
     }
 }

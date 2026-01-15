@@ -16,7 +16,7 @@ struct ModelDownloadView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("This is a one-time download (\(WhisperModel.defaultModel.size))")
+                Text("This is a one-time download (~500 MB)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

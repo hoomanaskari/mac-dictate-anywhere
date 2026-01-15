@@ -17,6 +17,10 @@ final class SettingsManager {
         static let customShortcutDisplayName = "customShortcutDisplayName"
         static let isModifierOnlyShortcut = "isModifierOnlyShortcut"
         static let showTextPreview = "showTextPreview"
+        static let selectedLanguage = "selectedLanguage"
+        static let isAutoStopEnabled = "isAutoStopEnabled"
+        static let soundEffectsEnabled = "soundEffectsEnabled"
+        static let soundEffectsVolume = "soundEffectsVolume"
     }
 
     // MARK: - Fn Key Settings
@@ -76,6 +80,40 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Language Settings
+
+    /// The selected language for transcription
+    var selectedLanguage: SupportedLanguage {
+        didSet {
+            UserDefaults.standard.set(selectedLanguage.rawValue, forKey: Keys.selectedLanguage)
+        }
+    }
+
+    // MARK: - Auto-Stop Settings
+
+    /// Whether to automatically stop dictation when speech ends (end-of-utterance detection)
+    var isAutoStopEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isAutoStopEnabled, forKey: Keys.isAutoStopEnabled)
+        }
+    }
+
+    // MARK: - Sound Effects Settings
+
+    /// Whether sound effects are enabled for dictation start/stop
+    var soundEffectsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(soundEffectsEnabled, forKey: Keys.soundEffectsEnabled)
+        }
+    }
+
+    /// Volume for sound effects (0.0 to 1.0)
+    var soundEffectsVolume: Float {
+        didSet {
+            UserDefaults.standard.set(soundEffectsVolume, forKey: Keys.soundEffectsVolume)
+        }
+    }
+
     // MARK: - Computed Properties
 
     /// Returns true if a custom shortcut has been configured
@@ -108,9 +146,28 @@ final class SettingsManager {
 
         // Load overlay settings (default: show text preview)
         showTextPreview = UserDefaults.standard.object(forKey: Keys.showTextPreview) as? Bool ?? true
+
+        // Load language setting (default: English)
+        let languageCode = UserDefaults.standard.string(forKey: Keys.selectedLanguage) ?? "en"
+        selectedLanguage = SupportedLanguage(rawValue: languageCode) ?? .english
+
+        // Load auto-stop setting (default: enabled)
+        isAutoStopEnabled = UserDefaults.standard.object(forKey: Keys.isAutoStopEnabled) as? Bool ?? true
+
+        // Load sound effects settings (default: enabled at 30% volume)
+        soundEffectsEnabled = UserDefaults.standard.object(forKey: Keys.soundEffectsEnabled) as? Bool ?? true
+        soundEffectsVolume = UserDefaults.standard.object(forKey: Keys.soundEffectsVolume) as? Float ?? 0.3
     }
 
     // MARK: - Methods
+
+    /// Plays a sound effect if enabled, with the configured volume
+    func playSound(_ name: String) {
+        guard soundEffectsEnabled else { return }
+        guard let sound = NSSound(named: name) else { return }
+        sound.volume = soundEffectsVolume
+        sound.play()
+    }
 
     /// Clears the custom shortcut
     func clearCustomShortcut() {
