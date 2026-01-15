@@ -103,11 +103,12 @@ final class MicrophoneManager {
         // Get default input device
         let defaultInputID = getDefaultInputDeviceID()
 
-        // Filter to only input devices
+        // Filter to only physical input devices (exclude virtual/aggregate)
         var microphones: [Microphone] = []
 
         for deviceID in deviceIDs {
             if hasInputChannels(deviceID: deviceID),
+               isPhysicalDevice(deviceID: deviceID),
                let name = getDeviceName(deviceID: deviceID) {
                 let isDefault = deviceID == defaultInputID
                 microphones.append(Microphone(id: deviceID, name: name, isDefault: isDefault))
@@ -185,6 +186,33 @@ final class MicrophoneManager {
         }
 
         return cfString as String
+    }
+
+    /// Checks if device is a physical microphone (not virtual or aggregate)
+    private func isPhysicalDevice(deviceID: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+
+        let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &transportType)
+
+        guard status == noErr else {
+            // If we can't determine transport type, include the device
+            return true
+        }
+
+        // Filter out virtual and aggregate devices
+        // kAudioDeviceTransportTypeVirtual = 'virt' = 0x76697274
+        // kAudioDeviceTransportTypeAggregate = 'grup' = 0x67727570
+        let virtualType: UInt32 = 0x76697274  // 'virt'
+        let aggregateType: UInt32 = 0x67727570  // 'grup'
+
+        return transportType != virtualType && transportType != aggregateType
     }
 
     // MARK: - Device Change Listener

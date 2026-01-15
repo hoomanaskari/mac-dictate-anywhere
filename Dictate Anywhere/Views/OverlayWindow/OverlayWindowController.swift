@@ -23,10 +23,7 @@ final class OverlayWindowController {
     private var hideTask: Task<Void, Never>?
 
     // Window configuration
-    private let windowWidth: CGFloat = 320
-    private let windowHeightCompact: CGFloat = 60      // For loading/processing/success
-    private let windowHeightWithTranscript: CGFloat = 120  // For listening with transcript
-    private let bottomMargin: CGFloat = 100
+    private let bottomMargin: CGFloat = 50
 
     // MARK: - Initialization
 
@@ -115,7 +112,7 @@ final class OverlayWindowController {
     /// Creates and configures the overlay window
     private func createOverlayWindow() -> NSWindow {
         // Calculate initial position (will be repositioned)
-        let initialFrame = NSRect(x: 0, y: bottomMargin, width: windowWidth, height: windowHeightCompact)
+        let initialFrame = NSRect(x: 0, y: bottomMargin, width: 180, height: 60)
 
         // Create borderless, transparent window
         let window = NSWindow(
@@ -158,14 +155,8 @@ final class OverlayWindowController {
     private func repositionWindow(for state: OverlayState) {
         guard let screen = NSScreen.main, let window = overlayWindow else { return }
 
-        // Determine height based on state
-        let windowHeight: CGFloat
-        switch state {
-        case .listening:
-            windowHeight = windowHeightWithTranscript
-        default:
-            windowHeight = windowHeightCompact
-        }
+        // Get actual content size based on state (must match OverlayContentView)
+        let (windowWidth, windowHeight) = contentSize(for: state)
 
         let screenFrame = screen.visibleFrame
         let windowX = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2
@@ -174,5 +165,22 @@ final class OverlayWindowController {
         // Set both size and position
         let newFrame = NSRect(x: windowX, y: windowY, width: windowWidth, height: windowHeight)
         window.setFrame(newFrame, display: true, animate: false)
+    }
+
+    /// Returns the content size for a given state (must match OverlayContentView frame sizes)
+    private func contentSize(for state: OverlayState) -> (width: CGFloat, height: CGFloat) {
+        switch state {
+        case .listening:
+            // Check if text preview is enabled
+            let showTextPreview = SettingsManager.shared.showTextPreview
+            if showTextPreview {
+                return (320, 140)
+            } else {
+                return (200, 60)
+            }
+        default:
+            // Loading, processing, success all use compact size
+            return (180, 60)
+        }
     }
 }

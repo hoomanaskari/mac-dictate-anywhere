@@ -16,6 +16,7 @@ final class SettingsManager {
         static let customShortcutModifiers = "customShortcutModifiers"
         static let customShortcutDisplayName = "customShortcutDisplayName"
         static let isModifierOnlyShortcut = "isModifierOnlyShortcut"
+        static let showTextPreview = "showTextPreview"
     }
 
     // MARK: - Fn Key Settings
@@ -66,6 +67,15 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Overlay Settings
+
+    /// Whether to show text preview in the overlay window during dictation
+    var showTextPreview: Bool {
+        didSet {
+            UserDefaults.standard.set(showTextPreview, forKey: Keys.showTextPreview)
+        }
+    }
+
     // MARK: - Computed Properties
 
     /// Returns true if a custom shortcut has been configured
@@ -95,6 +105,9 @@ final class SettingsManager {
         customShortcutDisplayName = UserDefaults.standard.string(forKey: Keys.customShortcutDisplayName) ?? ""
 
         isModifierOnlyShortcut = UserDefaults.standard.object(forKey: Keys.isModifierOnlyShortcut) as? Bool ?? false
+
+        // Load overlay settings (default: show text preview)
+        showTextPreview = UserDefaults.standard.object(forKey: Keys.showTextPreview) as? Bool ?? true
     }
 
     // MARK: - Methods

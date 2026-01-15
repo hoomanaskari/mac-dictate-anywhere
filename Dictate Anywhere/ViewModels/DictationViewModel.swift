@@ -71,17 +71,62 @@ final class DictationViewModel {
 
     private var setupTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
+    private var windowCloseObserver: Any?
+    private var forceResetObserver: Any?
 
     // MARK: - Initialization
 
     init() {
         setupKeyboardCallbacks()
+        setupNotificationObservers()
     }
 
     deinit {
         setupTask?.cancel()
         audioLevelTask?.cancel()
         keyboardMonitor.stopMonitoring()
+        if let observer = windowCloseObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = forceResetObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Sets up observers for app notifications
+    private func setupNotificationObservers() {
+        // Window close observer
+        windowCloseObserver = NotificationCenter.default.addObserver(
+            forName: .mainWindowWillClose,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleWindowClose()
+        }
+
+        // Force reset observer (from menu bar)
+        forceResetObserver = NotificationCenter.default.addObserver(
+            forName: .forceResetRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.forceReset()
+        }
+    }
+
+    /// Handles window close - exits settings/modelManagement to allow dictation
+    private func handleWindowClose() {
+        switch state {
+        case .settings:
+            hideSettings()
+        case .modelManagement:
+            // Only exit if model is downloaded and ready
+            if modelManager.isModelDownloaded {
+                state = .ready
+            }
+        default:
+            break
+        }
     }
 
     // MARK: - Setup
@@ -190,9 +235,16 @@ final class DictationViewModel {
         overlayController.show(state: .listening(level: 0, transcript: ""))
 
         // Start combined audio level + transcript update loop for overlay (~30 FPS)
+        // Also acts as a watchdog - if key is released but we're still here, force stop
         audioLevelTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             while self.transcriptionService.isRecording && !Task.isCancelled {
+                // Watchdog: if key is no longer held but we're still recording, force stop
+                if !self.keyboardMonitor.isHoldingKey {
+                    await self.forceStopDictation()
+                    return
+                }
+
                 let level = self.audioLevelMonitor.smoothedLevel
                 let transcript = self.transcriptionService.currentTranscript
                 self.currentTranscript = transcript
@@ -235,6 +287,9 @@ final class DictationViewModel {
         let finalTranscript = await transcriptionService.stopRecording()
         currentTranscript = finalTranscript
 
+        // Store for menu bar access
+        ClipboardManager.shared.lastTranscript = finalTranscript
+
         // Insert text into focused input (uses clipboard + Cmd+V)
         if !finalTranscript.isEmpty {
             _ = await textInsertionService.insertText(finalTranscript)
@@ -247,6 +302,42 @@ final class DictationViewModel {
         overlayController.hide(afterDelay: 0.5)
 
         state = .ready
+    }
+
+    /// Force stops dictation regardless of current state - used as emergency recovery
+    func forceStopDictation() async {
+        // Cancel all tasks
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
+
+        // Stop all services
+        audioLevelMonitor.stopMonitoring()
+        await transcriptionService.forceCancel()
+
+        // Hide overlay immediately
+        overlayController.hide(afterDelay: 0)
+
+        // Reset to ready state (only if we were in a dictation-related state)
+        switch state {
+        case .listening, .processing:
+            state = .ready
+        default:
+            break
+        }
+    }
+
+    /// Public method to force reset the app state - callable from menu bar
+    func forceReset() {
+        Task { @MainActor in
+            await forceStopDictation()
+
+            // Reset keyboard monitor internal state
+            keyboardMonitor.resetState()
+
+            // Restart keyboard monitoring to ensure clean state
+            keyboardMonitor.stopMonitoring()
+            keyboardMonitor.startMonitoring()
+        }
     }
 
     // MARK: - Permission Actions

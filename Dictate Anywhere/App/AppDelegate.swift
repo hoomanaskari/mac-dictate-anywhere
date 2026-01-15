@@ -48,6 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showItem.target = self
         menu.addItem(showItem)
 
+        let copyTranscriptItem = NSMenuItem(
+            title: "Copy Last Transcript",
+            action: #selector(copyLastTranscript),
+            keyEquivalent: "c"
+        )
+        copyTranscriptItem.target = self
+        menu.addItem(copyTranscriptItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // Microphone submenu
@@ -57,6 +65,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(microphoneMenuItem!)
 
         updateMicrophoneMenu()
+
+        menu.addItem(NSMenuItem.separator())
+
+        let forceResetItem = NSMenuItem(
+            title: "Force Reset",
+            action: #selector(forceReset),
+            keyEquivalent: "r"
+        )
+        forceResetItem.target = self
+        menu.addItem(forceResetItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -125,6 +143,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func copyLastTranscript() {
+        let transcript = ClipboardManager.shared.lastTranscript
+        if !transcript.isEmpty {
+            ClipboardManager.shared.copyToClipboard(transcript)
+        }
+    }
+
+    @objc private func forceReset() {
+        // Post notification to force reset the app state
+        NotificationCenter.default.post(name: .forceResetRequested, object: nil)
+    }
+
     @objc private func quitApp() {
         NSApp.terminate(nil)
     }
@@ -169,6 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        // Notify that the main window is closing (so viewModel can exit settings/modelManagement)
+        NotificationCenter.default.post(name: .mainWindowWillClose, object: nil)
+
         // Hide from dock when window closes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.setActivationPolicy(.accessory)
@@ -189,4 +222,22 @@ extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         updateMicrophoneMenu()
     }
+}
+
+// MARK: - NSMenuItemValidation
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(copyLastTranscript) {
+            return !ClipboardManager.shared.lastTranscript.isEmpty
+        }
+        return true
+    }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let mainWindowWillClose = Notification.Name("mainWindowWillClose")
+    static let forceResetRequested = Notification.Name("forceResetRequested")
 }

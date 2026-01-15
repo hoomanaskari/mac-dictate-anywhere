@@ -18,6 +18,9 @@ struct SettingsView: View {
                     // Keyboard Shortcuts Section
                     keyboardShortcutsSection
 
+                    // Overlay Section
+                    overlaySection
+
                     Spacer()
                 }
                 .padding(24)
@@ -126,6 +129,41 @@ struct SettingsView: View {
             // Warning if both are disabled
             if !settings.isFnKeyEnabled && !settings.isCustomShortcutEnabled {
                 warningBanner
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+
+    // MARK: - Overlay Section
+
+    private var overlaySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Overlay")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Show Text Preview Toggle
+            settingsRow(
+                icon: "text.bubble",
+                title: "Show Text Preview",
+                description: "Display live transcription text in the overlay"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.showTextPreview },
+                    set: { settings.showTextPreview = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
             }
         }
         .padding(16)
