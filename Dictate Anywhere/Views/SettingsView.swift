@@ -4,16 +4,10 @@ struct SettingsView: View {
     @Bindable var viewModel: DictationViewModel
     private let settings = SettingsManager.shared
     @State private var showLanguagePicker = false
+    @State private var fillerWordsText: String = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            header
-
-            Divider()
-                .background(Color.white.opacity(0.1))
-
-            // Content
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     // Keyboard Shortcuts Section
@@ -25,15 +19,37 @@ struct SettingsView: View {
                     // Dictation Section (Auto-stop)
                     dictationSection
 
+                    // Text Processing Section (Filler word removal)
+                    textProcessingSection
+
                     // Sound Effects Section
                     soundEffectsSection
 
                     // Overlay Section
                     overlaySection
 
-                    Spacer()
+                    Spacer(minLength: 20)
                 }
                 .padding(24)
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: {
+                        viewModel.hideSettings()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Back")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 8)
+                }
             }
         }
         .sheet(isPresented: $showLanguagePicker) {
@@ -45,47 +61,8 @@ struct SettingsView: View {
                 }
             ))
         }
-        .frame(width: 500, height: 580)
+        .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Button(action: {
-                viewModel.hideSettings()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundStyle(.white.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            Text("Settings")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-
-            Spacer()
-
-            // Invisible spacer for centering
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("Back")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .opacity(0)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 54)  // Clear the traffic light buttons
-        .padding(.bottom, 16)
     }
 
     // MARK: - Keyboard Shortcuts Section
@@ -237,6 +214,91 @@ struct SettingsView: View {
                 ))
                 .toggleStyle(.switch)
                 .labelsHidden()
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+
+    // MARK: - Text Processing Section
+
+    private var textProcessingSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Text Processing")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Filler Word Removal Toggle
+            settingsRow(
+                icon: "text.badge.minus",
+                title: "Remove Filler Words",
+                description: "Filter out um, uh, erm, etc. from transcriptions"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.isFillerWordRemovalEnabled },
+                    set: { settings.isFillerWordRemovalEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            // Filler Words Editor (shown when enabled)
+            if settings.isFillerWordRemovalEnabled {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Words to remove (comma-separated)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    TextField("um, uh, erm, er, hmm", text: $fillerWordsText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .background {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.white.opacity(0.05))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                }
+                        }
+                        .onAppear {
+                            fillerWordsText = settings.fillerWordsToRemove.joined(separator: ", ")
+                        }
+                        .onChange(of: fillerWordsText) { _, newValue in
+                            // Parse comma-separated words and update settings
+                            let words = newValue
+                                .split(separator: ",")
+                                .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+                                .filter { !$0.isEmpty }
+                            settings.fillerWordsToRemove = words
+                        }
+
+                    // Reset to defaults button
+                    Button(action: {
+                        settings.fillerWordsToRemove = SettingsManager.defaultFillerWords
+                        fillerWordsText = settings.fillerWordsToRemove.joined(separator: ", ")
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11))
+                            Text("Reset to Defaults")
+                                .font(.system(size: 12))
+                        }
+                        .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.leading, 36)
             }
         }
         .padding(16)

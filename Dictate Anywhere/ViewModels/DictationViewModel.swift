@@ -276,7 +276,10 @@ final class DictationViewModel {
         overlayController.show(state: .processing)
 
         // Get final transcript (stopRecording handles the case where recording already stopped)
-        let finalTranscript = await transcriptionService.stopRecording()
+        let rawTranscript = await transcriptionService.stopRecording()
+
+        // Apply filler word removal if enabled
+        let finalTranscript = settings.removeFillerWords(from: rawTranscript)
         currentTranscript = finalTranscript
 
         // Store for menu bar access (even if empty, so user knows dictation happened)

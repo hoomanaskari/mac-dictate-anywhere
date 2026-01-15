@@ -21,6 +21,8 @@ final class SettingsManager {
         static let isAutoStopEnabled = "isAutoStopEnabled"
         static let soundEffectsEnabled = "soundEffectsEnabled"
         static let soundEffectsVolume = "soundEffectsVolume"
+        static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
+        static let fillerWordsToRemove = "fillerWordsToRemove"
     }
 
     // MARK: - Fn Key Settings
@@ -114,6 +116,25 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Filler Word Removal Settings
+
+    /// Whether filler word removal is enabled
+    var isFillerWordRemovalEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isFillerWordRemovalEnabled, forKey: Keys.isFillerWordRemovalEnabled)
+        }
+    }
+
+    /// List of filler words to remove from transcriptions
+    var fillerWordsToRemove: [String] {
+        didSet {
+            UserDefaults.standard.set(fillerWordsToRemove, forKey: Keys.fillerWordsToRemove)
+        }
+    }
+
+    /// Default filler words
+    static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
+
     // MARK: - Computed Properties
 
     /// Returns true if a custom shortcut has been configured
@@ -157,6 +178,10 @@ final class SettingsManager {
         // Load sound effects settings (default: enabled at 30% volume)
         soundEffectsEnabled = UserDefaults.standard.object(forKey: Keys.soundEffectsEnabled) as? Bool ?? true
         soundEffectsVolume = UserDefaults.standard.object(forKey: Keys.soundEffectsVolume) as? Float ?? 0.3
+
+        // Load filler word removal settings (default: disabled, with default words)
+        isFillerWordRemovalEnabled = UserDefaults.standard.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
+        fillerWordsToRemove = UserDefaults.standard.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
     }
 
     // MARK: - Methods
@@ -241,6 +266,48 @@ final class SettingsManager {
         }
 
         return parts.joined()
+    }
+
+    // MARK: - Filler Word Removal
+
+    /// Removes filler words from the given text using word boundary-aware matching
+    /// - Parameter text: The input text to filter
+    /// - Returns: Text with filler words removed (or original text if feature disabled)
+    func removeFillerWords(from text: String) -> String {
+        guard isFillerWordRemovalEnabled else { return text }
+        guard !fillerWordsToRemove.isEmpty else { return text }
+
+        // Build regex pattern with word boundaries
+        // Escape special regex characters in filler words and join with |
+        let escapedWords = fillerWordsToRemove
+            .map { NSRegularExpression.escapedPattern(for: $0.trimmingCharacters(in: .whitespaces)) }
+            .filter { !$0.isEmpty }
+
+        guard !escapedWords.isEmpty else { return text }
+
+        let pattern = "\\b(" + escapedWords.joined(separator: "|") + ")\\b"
+
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            let range = NSRange(text.startIndex..., in: text)
+            var result = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+
+            // Clean up multiple spaces that may result from removal
+            while result.contains("  ") {
+                result = result.replacingOccurrences(of: "  ", with: " ")
+            }
+
+            // Clean up spaces before punctuation
+            result = result.replacingOccurrences(of: " ,", with: ",")
+            result = result.replacingOccurrences(of: " .", with: ".")
+            result = result.replacingOccurrences(of: " !", with: "!")
+            result = result.replacingOccurrences(of: " ?", with: "?")
+
+            return result.trimmingCharacters(in: .whitespaces)
+        } catch {
+            // If regex fails, return original text
+            return text
+        }
     }
 
     /// Returns a human-readable name for a key code

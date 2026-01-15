@@ -7,17 +7,7 @@ struct ModelsView: View {
     @State private var showErrorAlert = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            header
-                .padding(.horizontal, 24)
-                .padding(.top, 20)
-                .padding(.bottom, 16)
-
-            Divider()
-                .background(Color.white.opacity(0.1))
-
-            // Content
+        NavigationStack {
             VStack(spacing: 24) {
                 Spacer()
 
@@ -32,6 +22,25 @@ struct ModelsView: View {
                 Spacer()
             }
             .padding(24)
+            .navigationTitle("Speech Model")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: { viewModel.state = .ready }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Back")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 8)
+                    .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
+                    .disabled(!viewModel.modelManager.isModelDownloaded)
+                }
+            }
         }
         .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
@@ -52,40 +61,6 @@ struct ModelsView: View {
         }
         .onChange(of: viewModel.modelManager.errorMessage) { _, newValue in
             showErrorAlert = newValue != nil
-        }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Button(action: { viewModel.state = .ready }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Back")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .foregroundStyle(.white.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-            .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
-            .disabled(!viewModel.modelManager.isModelDownloaded)
-
-            Spacer()
-
-            Text("Speech Model")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white)
-
-            Spacer()
-
-            // Spacer to balance the back button
-            HStack(spacing: 4) {
-                Image(systemName: "chevron.left")
-                Text("Back")
-            }
-            .opacity(0)
         }
     }
 
