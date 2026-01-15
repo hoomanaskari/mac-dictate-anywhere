@@ -171,12 +171,16 @@ final class MicrophoneManager {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        var name: CFString = "" as CFString
-        var dataSize = UInt32(MemoryLayout<CFString>.size)
+        var name: Unmanaged<CFString>?
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
 
         let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &name)
 
-        return status == noErr ? name as String : nil
+        guard status == noErr, let cfString = name?.takeRetainedValue() else {
+            return nil
+        }
+
+        return cfString as String
     }
 
     // MARK: - Device Change Listener

@@ -3,6 +3,46 @@ import WhisperKit
 import CoreAudio
 import Accelerate
 
+/// Actor to manage recording state atomically (Swift 6 compatible)
+private actor RecordingStateManager {
+    enum State {
+        case idle
+        case starting
+        case recording
+        case stopping
+    }
+
+    private var state: State = .idle
+
+    func tryStart() -> Bool {
+        guard state == .idle else { return false }
+        state = .starting
+        return true
+    }
+
+    func setRecording() {
+        state = .recording
+    }
+
+    func tryStop() -> Bool {
+        guard state == .recording else { return false }
+        state = .stopping
+        return true
+    }
+
+    func setIdle() {
+        state = .idle
+    }
+
+    func isRecording() -> Bool {
+        state == .recording
+    }
+
+    func reset() {
+        state = .idle
+    }
+}
+
 @Observable
 final class TranscriptionService {
     // MARK: - Properties
@@ -10,15 +50,7 @@ final class TranscriptionService {
     private var whisperKit: WhisperKit?
     private var transcriptionTask: Task<Void, Never>?
     private var isTranscribing = false
-    private let recordingLock = NSLock()
-    private var recordingState: RecordingState = .idle
-
-    private enum RecordingState {
-        case idle
-        case starting
-        case recording
-        case stopping
-    }
+    private let stateManager = RecordingStateManager()
 
     // Observable state
     var isModelDownloaded: Bool = false
@@ -85,19 +117,11 @@ final class TranscriptionService {
     /// Starts live recording and transcription
     func startRecording(deviceID: AudioDeviceID? = nil) async {
         // Atomically check and set state to prevent multiple starts
-        recordingLock.lock()
-        guard recordingState == .idle else {
-            recordingLock.unlock()
-            return
-        }
-        recordingState = .starting
-        recordingLock.unlock()
+        guard await stateManager.tryStart() else { return }
 
         guard let whisperKit = whisperKit else {
             errorMessage = "WhisperKit not initialized"
-            recordingLock.lock()
-            recordingState = .idle
-            recordingLock.unlock()
+            await stateManager.reset()
             return
         }
 
@@ -111,7 +135,7 @@ final class TranscriptionService {
 
         // Start audio capture with specified device ID
         do {
-            try await audioProcessor.startRecordingLive(inputDeviceID: deviceID) { _ in
+            try audioProcessor.startRecordingLive(inputDeviceID: deviceID) { _ in
                 // Buffer callback - we process periodically instead
             }
         } catch {
@@ -119,16 +143,12 @@ final class TranscriptionService {
                 self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
                 self.isRecording = false
             }
-            recordingLock.lock()
-            recordingState = .idle
-            recordingLock.unlock()
+            await stateManager.reset()
             return
         }
 
         // Successfully started - update state
-        recordingLock.lock()
-        recordingState = .recording
-        recordingLock.unlock()
+        await stateManager.setRecording()
 
         // Start transcription loop
         isTranscribing = true
@@ -160,18 +180,12 @@ final class TranscriptionService {
     /// Stops recording and returns the final transcript
     func stopRecording() async -> String {
         // Atomically check and set state to prevent multiple stops
-        recordingLock.lock()
-        guard recordingState == .recording else {
-            recordingLock.unlock()
+        guard await stateManager.tryStop() else {
             return currentTranscript
         }
-        recordingState = .stopping
-        recordingLock.unlock()
 
         guard let whisperKit = whisperKit else {
-            recordingLock.lock()
-            recordingState = .idle
-            recordingLock.unlock()
+            await stateManager.reset()
             return currentTranscript
         }
 
@@ -197,9 +211,7 @@ final class TranscriptionService {
         audioProcessor.purgeAudioSamples(keepingLast: 0)
 
         // Reset state to idle
-        recordingLock.lock()
-        recordingState = .idle
-        recordingLock.unlock()
+        await stateManager.setIdle()
 
         return finalTranscript
     }
