@@ -124,16 +124,10 @@ final class DictationViewModel {
             return
         }
 
-        // Step 4: Download model if not downloaded
+        // Step 4: If no model downloaded, show model settings screen
         if !modelManager.isModelDownloaded {
-            state = .downloadingModel
-
-            do {
-                try await modelManager.downloadModel()
-            } catch {
-                state = .error("Failed to download model: \(error.localizedDescription)")
-                return
-            }
+            state = .modelManagement
+            return
         }
 
         // Step 5: Sync transcription service with the model

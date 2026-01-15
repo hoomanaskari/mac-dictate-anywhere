@@ -8,7 +8,7 @@ struct ModelDownloadView: View {
             // Icon
             Image(systemName: "arrow.down.circle")
                 .font(.system(size: 36))
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
 
             // Title
             VStack(spacing: 8) {
@@ -32,7 +32,7 @@ struct ModelDownloadView: View {
 
                         // Progress fill
                         Capsule()
-                            .fill(.blue)
+                            .fill(Color.accentColor)
                             .frame(width: geometry.size.width * viewModel.downloadProgress, height: 6)
                     }
                 }
@@ -65,7 +65,7 @@ struct InitializingView: View {
         VStack(spacing: 24) {
             ProgressView()
                 .scaleEffect(1.2)
-                .tint(.blue)
+                .tint(Color.accentColor)
 
             VStack(spacing: 8) {
                 Text("Initializing")

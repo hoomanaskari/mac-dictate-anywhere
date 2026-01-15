@@ -46,7 +46,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.2)
-                .tint(.blue)
+                .tint(Color.accentColor)
 
             Text(message)
                 .foregroundStyle(.secondary)
@@ -79,10 +79,10 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
                 .background {
                     Capsule()
-                        .stroke(.blue, lineWidth: 1.5)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
                 }
             }
             .buttonStyle(.plain)
