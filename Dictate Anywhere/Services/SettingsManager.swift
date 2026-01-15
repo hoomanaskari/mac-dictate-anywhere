@@ -19,6 +19,7 @@ final class SettingsManager {
         static let showTextPreview = "showTextPreview"
         static let selectedLanguage = "selectedLanguage"
         static let isAutoStopEnabled = "isAutoStopEnabled"
+        static let isHandsFreeEnabled = "isHandsFreeEnabled"
         static let soundEffectsEnabled = "soundEffectsEnabled"
         static let soundEffectsVolume = "soundEffectsVolume"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
@@ -100,6 +101,15 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Hands-Free Mode Settings
+
+    /// Whether hands-free mode is enabled (tap once to start, EOU or tap again to stop)
+    var isHandsFreeEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isHandsFreeEnabled, forKey: Keys.isHandsFreeEnabled)
+        }
+    }
+
     // MARK: - Sound Effects Settings
 
     /// Whether sound effects are enabled for dictation start/stop
@@ -174,6 +184,9 @@ final class SettingsManager {
 
         // Load auto-stop setting (default: enabled)
         isAutoStopEnabled = UserDefaults.standard.object(forKey: Keys.isAutoStopEnabled) as? Bool ?? true
+
+        // Load hands-free mode setting (default: disabled)
+        isHandsFreeEnabled = UserDefaults.standard.object(forKey: Keys.isHandsFreeEnabled) as? Bool ?? false
 
         // Load sound effects settings (default: enabled at 30% volume)
         soundEffectsEnabled = UserDefaults.standard.object(forKey: Keys.soundEffectsEnabled) as? Bool ?? true

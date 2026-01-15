@@ -201,7 +201,43 @@ struct SettingsView: View {
                 .foregroundStyle(.white.opacity(0.5))
                 .textCase(.uppercase)
 
-            // Auto-Stop Toggle
+            // Hands-Free Mode Toggle
+            settingsRow(
+                icon: "hand.tap",
+                title: "Hands-Free Mode",
+                description: "Tap once to start, tap again or pause speaking to stop"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.isHandsFreeEnabled },
+                    set: { settings.isHandsFreeEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            // Info tip when hands-free is enabled
+            if settings.isHandsFreeEnabled {
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.blue)
+
+                    Text("Press Escape to cancel without pasting")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.blue.opacity(0.1))
+                }
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            // Auto-Stop Toggle (always visible)
             settingsRow(
                 icon: "stop.circle",
                 title: "Auto-Stop",
