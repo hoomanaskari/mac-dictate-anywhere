@@ -1,6 +1,7 @@
 import Foundation
 import WhisperKit
 import CoreAudio
+import Accelerate
 
 @Observable
 final class TranscriptionService {
@@ -28,6 +29,23 @@ final class TranscriptionService {
 
     // Configuration
     private(set) var modelVariant = "base"
+
+    /// Decoding options optimized to prevent hallucinations on silence
+    private var decodingOptions: DecodingOptions {
+        DecodingOptions(
+            verbose: false,
+            task: .transcribe,
+            language: "en",
+            suppressBlank: true,                  // Suppress blank tokens
+            compressionRatioThreshold: 2.4,       // Detect repetitive/nonsensical output
+            logProbThreshold: -1.0,               // Filter low-confidence segments
+            firstTokenLogProbThreshold: -1.5,     // Filter based on first token probability
+            noSpeechThreshold: 0.6                // Detect silence - key for "thank you" prevention
+        )
+    }
+
+    /// Minimum RMS audio energy required for transcription (prevents hallucinations on silence)
+    private let minAudioEnergy: Float = 0.02
 
     /// Sets the model variant to use (e.g., "base", "small", "large-v3")
     func setModelVariant(_ variant: String) {
@@ -209,15 +227,29 @@ final class TranscriptionService {
             let minNewSamples = 4800
             guard newSampleCount - lastSampleCount > minNewSamples else { continue }
 
-            // Perform transcription
+            let samplesArray = Array(currentSamples)
+
+            // Check if audio has enough energy to contain speech
+            // This prevents hallucinations on silence/ambient noise
+            guard hasSignificantAudio(samplesArray) else {
+                lastSampleCount = newSampleCount
+                continue
+            }
+
+            // Perform transcription with hallucination prevention options
             do {
                 let results = try await whisperKit.transcribe(
-                    audioArray: Array(currentSamples)
+                    audioArray: samplesArray,
+                    decodeOptions: decodingOptions
                 )
 
-                if let text = results.first?.text {
-                    await MainActor.run {
-                        self.currentTranscript = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let result = results.first {
+                    // Additional check: skip if detected as no speech
+                    let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        await MainActor.run {
+                            self.currentTranscript = text
+                        }
                     }
                 }
             } catch {
@@ -235,19 +267,29 @@ final class TranscriptionService {
         }
 
         let audioProcessor = whisperKit.audioProcessor
-        let audioSamples = audioProcessor.audioSamples
+        let audioSamples = Array(audioProcessor.audioSamples)
 
         // Skip if too short (less than 0.5 seconds)
         guard audioSamples.count > 8000 else {
             return currentTranscript
         }
 
+        // Skip if audio doesn't have enough energy (just silence/ambient noise)
+        guard hasSignificantAudio(audioSamples) else {
+            return ""  // Return empty for silent recordings
+        }
+
         do {
             let results = try await whisperKit.transcribe(
-                audioArray: Array(audioSamples)
+                audioArray: audioSamples,
+                decodeOptions: decodingOptions
             )
 
-            return results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? currentTranscript
+            if let result = results.first {
+                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return text
+            }
+            return currentTranscript
         } catch {
             print("Final transcription error: \(error)")
             return currentTranscript
@@ -261,6 +303,26 @@ final class TranscriptionService {
         isTranscribing = false
         whisperKit = nil
         isModelLoaded = false
+    }
+
+    /// Calculates RMS (Root Mean Square) energy of audio samples
+    /// - Parameter samples: Array of audio samples
+    /// - Returns: RMS energy value
+    private func calculateAudioEnergy(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+
+        var rms: Float = 0
+        vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
+
+        return rms
+    }
+
+    /// Checks if the audio has enough energy to contain speech
+    /// - Parameter samples: Audio samples to check
+    /// - Returns: true if energy exceeds minimum threshold
+    private func hasSignificantAudio(_ samples: [Float]) -> Bool {
+        let energy = calculateAudioEnergy(samples)
+        return energy > minAudioEnergy
     }
 }
 
