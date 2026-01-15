@@ -12,8 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMainWindow()
         setupNotificationObservers()
 
-        // Start as regular app to show window initially
-        NSApp.setActivationPolicy(.regular)
+        // Apply initial appearance mode from settings
+        applyAppearanceMode()
     }
 
     private func setupNotificationObservers() {
@@ -23,6 +23,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .dismissMenusForPaste,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppearanceModeChanged),
+            name: .appAppearanceModeChanged,
+            object: nil
+        )
+    }
+
+    @objc private func handleAppearanceModeChanged() {
+        applyAppearanceMode()
+    }
+
+    private func applyAppearanceMode() {
+        let settings = SettingsManager.shared
+        switch settings.appAppearanceMode {
+        case .menuBarOnly:
+            // Only show in menu bar (accessory mode hides from dock)
+            // But keep regular mode while window is visible for better UX
+            if mainWindow?.isVisible == false {
+                NSApp.setActivationPolicy(.accessory)
+            } else {
+                NSApp.setActivationPolicy(.regular)
+            }
+        case .dockAndMenuBar:
+            // Always show in both dock and menu bar
+            NSApp.setActivationPolicy(.regular)
+        }
     }
 
     @objc private func dismissMenusForPaste() {
@@ -36,9 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        // When app loses focus and window is not visible, go to accessory mode
+        // When app loses focus and window is not visible, apply appearance mode
         if mainWindow?.isVisible == false {
-            NSApp.setActivationPolicy(.accessory)
+            applyAppearanceMode()
         }
     }
 
@@ -201,9 +229,9 @@ extension AppDelegate: NSWindowDelegate {
         // Notify that the main window is closing (so viewModel can exit settings/modelManagement)
         NotificationCenter.default.post(name: .mainWindowWillClose, object: nil)
 
-        // Hide from dock when window closes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            NSApp.setActivationPolicy(.accessory)
+        // Apply appearance mode setting when window closes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.applyAppearanceMode()
         }
     }
 

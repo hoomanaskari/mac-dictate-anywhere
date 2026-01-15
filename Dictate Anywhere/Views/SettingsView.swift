@@ -10,6 +10,9 @@ struct SettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    // App Behavior Section
+                    appBehaviorSection
+
                     // Keyboard Shortcuts Section
                     keyboardShortcutsSection
 
@@ -62,6 +65,93 @@ struct SettingsView: View {
         }
         .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+    }
+
+    // MARK: - App Behavior Section
+
+    private var appBehaviorSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("App Behavior")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Launch at Login Toggle
+            settingsRow(
+                icon: "power",
+                title: "Launch at Login",
+                description: "Open automatically when you sign in"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.launchAtLogin },
+                    set: { settings.launchAtLogin = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            // App Appears In Picker
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("App Appears In")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+
+                    Text("Minimal footprint. Relaunch from Applications")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Picker("", selection: Binding(
+                    get: { settings.appAppearanceMode },
+                    set: { settings.appAppearanceMode = $0 }
+                )) {
+                    ForEach(AppAppearanceMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 150)
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+
+            // Help Improve Toggle
+            settingsRow(
+                icon: "chart.bar",
+                title: "Help Improve",
+                description: "Share anonymous usage data. No audio or text ever leaves your Mac"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.analyticsEnabled },
+                    set: { settings.analyticsEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
     }
 
     // MARK: - Keyboard Shortcuts Section

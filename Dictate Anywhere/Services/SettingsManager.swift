@@ -1,5 +1,20 @@
 import Foundation
 import AppKit
+import ServiceManagement
+
+// MARK: - App Appearance Mode
+
+enum AppAppearanceMode: String, CaseIterable {
+    case menuBarOnly = "menuBarOnly"
+    case dockAndMenuBar = "dockAndMenuBar"
+
+    var displayName: String {
+        switch self {
+        case .menuBarOnly: return "Menu Bar Only"
+        case .dockAndMenuBar: return "Dock and Menu Bar"
+        }
+    }
+}
 
 @Observable
 final class SettingsManager {
@@ -24,6 +39,9 @@ final class SettingsManager {
         static let soundEffectsVolume = "soundEffectsVolume"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
+        static let launchAtLogin = "launchAtLogin"
+        static let appAppearanceMode = "appAppearanceMode"
+        static let analyticsEnabled = "analyticsEnabled"
     }
 
     // MARK: - Fn Key Settings
@@ -145,6 +163,31 @@ final class SettingsManager {
     /// Default filler words
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
+    // MARK: - App Behavior Settings
+
+    /// Whether to launch the app at login
+    var launchAtLogin: Bool {
+        didSet {
+            UserDefaults.standard.set(launchAtLogin, forKey: Keys.launchAtLogin)
+            updateLoginItem()
+        }
+    }
+
+    /// How the app appears (menu bar only or dock and menu bar)
+    var appAppearanceMode: AppAppearanceMode {
+        didSet {
+            UserDefaults.standard.set(appAppearanceMode.rawValue, forKey: Keys.appAppearanceMode)
+            NotificationCenter.default.post(name: .appAppearanceModeChanged, object: nil)
+        }
+    }
+
+    /// Whether anonymous analytics are enabled (infrastructure only)
+    var analyticsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(analyticsEnabled, forKey: Keys.analyticsEnabled)
+        }
+    }
+
     // MARK: - Computed Properties
 
     /// Returns true if a custom shortcut has been configured
@@ -195,6 +238,16 @@ final class SettingsManager {
         // Load filler word removal settings (default: disabled, with default words)
         isFillerWordRemovalEnabled = UserDefaults.standard.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = UserDefaults.standard.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // Load app behavior settings
+        // For launch at login, check actual SMAppService status rather than just UserDefaults
+        let savedLaunchAtLogin = UserDefaults.standard.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+        launchAtLogin = savedLaunchAtLogin
+
+        let appearanceModeString = UserDefaults.standard.string(forKey: Keys.appAppearanceMode) ?? AppAppearanceMode.menuBarOnly.rawValue
+        appAppearanceMode = AppAppearanceMode(rawValue: appearanceModeString) ?? .menuBarOnly
+
+        analyticsEnabled = UserDefaults.standard.object(forKey: Keys.analyticsEnabled) as? Bool ?? false
     }
 
     // MARK: - Methods
@@ -229,6 +282,21 @@ final class SettingsManager {
         customShortcutModifiers = modifiers.intersection(.deviceIndependentFlagsMask)
         customShortcutDisplayName = Self.displayNameForModifiers(modifiers)
         isModifierOnlyShortcut = true
+    }
+
+    // MARK: - Login Item Management
+
+    /// Updates the login item registration based on current setting
+    private func updateLoginItem() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Failed to update login item: \(error)")
+        }
     }
 
     /// Generates a human-readable display name for a keyboard shortcut
@@ -358,4 +426,10 @@ final class SettingsManager {
 
         return keyNames[keyCode] ?? "Key\(keyCode)"
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let appAppearanceModeChanged = Notification.Name("appAppearanceModeChanged")
 }
