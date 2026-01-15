@@ -41,7 +41,7 @@ struct ModelsView: View {
                 deleteModel()
             }
         } message: {
-            Text("This will remove the downloaded model (\(WhisperModel.defaultModel.size)). You can download it again anytime.")
+            Text("This will remove the downloaded model (~500 MB). You can download it again anytime.")
         }
         .alert("Error", isPresented: $showErrorAlert) {
             Button("OK", role: .cancel) {
@@ -104,7 +104,7 @@ struct ModelsView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
 
-                Text(WhisperModel.defaultModel.size)
+                Text("~500 MB")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -151,7 +151,7 @@ struct ModelsView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
 
-                Text(WhisperModel.defaultModel.size)
+                Text("~500 MB")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -192,7 +192,7 @@ struct ModelsView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
 
-                Text(WhisperModel.defaultModel.size)
+                Text("~500 MB")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -226,9 +226,12 @@ struct ModelsView: View {
     private func downloadModel() {
         Task {
             do {
-                try await viewModel.modelManager.downloadModel()
+                let models = try await viewModel.modelManager.downloadAndLoadModels()
                 // Reinitialize transcription service after download
-                await viewModel.initializeAfterDownload()
+                try await viewModel.transcriptionService.initialize(with: models)
+                viewModel.transcriptionService.setLanguage(SettingsManager.shared.selectedLanguage)
+                viewModel.keyboardMonitor.startMonitoring()
+                viewModel.state = .ready
             } catch {
                 // Error is handled by ModelManager and shown via alert
             }
@@ -236,12 +239,14 @@ struct ModelsView: View {
     }
 
     private func deleteModel() {
+        // Clean up transcription service first
+        viewModel.transcriptionService.cleanup()
+
+        // Actually delete model files from disk
         do {
-            // Clean up transcription service first
-            viewModel.transcriptionService.cleanup()
-            try viewModel.modelManager.deleteModel()
+            try viewModel.modelManager.deleteModelFiles()
         } catch {
-            // Error handled by ModelManager
+            viewModel.modelManager.errorMessage = "Failed to delete model: \(error.localizedDescription)"
         }
     }
 }

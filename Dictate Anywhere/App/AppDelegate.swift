@@ -10,9 +10,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
         configureMainWindow()
+        setupNotificationObservers()
 
         // Start as regular app to show window initially
         NSApp.setActivationPolicy(.regular)
+    }
+
+    private func setupNotificationObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(dismissMenusForPaste),
+            name: .dismissMenusForPaste,
+            object: nil
+        )
+    }
+
+    @objc private func dismissMenusForPaste() {
+        // Cancel menu tracking so paste goes to the correct app
+        statusItem?.menu?.cancelTracking()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -33,8 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "waveform.and.mic", accessibilityDescription: "Dictate Anywhere")
-            button.image?.isTemplate = true
+            button.image = NSImage(named: "MenuBarIcon")
         }
 
         let menu = NSMenu()
@@ -224,4 +238,5 @@ extension AppDelegate: NSMenuItemValidation {
 
 extension Notification.Name {
     static let mainWindowWillClose = Notification.Name("mainWindowWillClose")
+    static let dismissMenusForPaste = Notification.Name("dismissMenusForPaste")
 }

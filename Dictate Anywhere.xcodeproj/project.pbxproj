@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		E2WHISPER0001 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = E2WHISPER0002 /* WhisperKit */; };
+		E2FLUID0001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E2FLUID0002 /* FluidAudio */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,7 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E2WHISPER0001 /* WhisperKit in Frameworks */,
+				E2FLUID0001 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,7 +70,7 @@
 			);
 			name = "Dictate Anywhere";
 			packageProductDependencies = (
-				E2WHISPER0002 /* WhisperKit */,
+				E2FLUID0002 /* FluidAudio */,
 			);
 			productName = "Dictate Anywhere";
 			productReference = E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */;
@@ -101,7 +101,7 @@
 			mainGroup = E2A66B4F2F18203C00DABF41;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E2WHISPER0003 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				E2FLUID0003 /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E2A66B592F18203C00DABF41 /* Products */;
@@ -346,21 +346,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		E2WHISPER0003 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+		E2FLUID0003 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.9.0;
+				minimumVersion = 0.7.9;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		E2WHISPER0002 /* WhisperKit */ = {
+		E2FLUID0002 /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E2WHISPER0003 /* XCRemoteSwiftPackageReference "WhisperKit" */;
-			productName = WhisperKit;
+			package = E2FLUID0003 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

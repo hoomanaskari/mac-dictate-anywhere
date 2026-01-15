@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var viewModel: DictationViewModel
     private let settings = SettingsManager.shared
+    @State private var showLanguagePicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +19,15 @@ struct SettingsView: View {
                     // Keyboard Shortcuts Section
                     keyboardShortcutsSection
 
+                    // Language Section
+                    languageSection
+
+                    // Dictation Section (Auto-stop)
+                    dictationSection
+
+                    // Sound Effects Section
+                    soundEffectsSection
+
                     // Overlay Section
                     overlaySection
 
@@ -26,7 +36,16 @@ struct SettingsView: View {
                 .padding(24)
             }
         }
-        .frame(width: 500, height: 500)
+        .sheet(isPresented: $showLanguagePicker) {
+            LanguagePickerView(selectedLanguage: Binding(
+                get: { settings.selectedLanguage },
+                set: {
+                    settings.selectedLanguage = $0
+                    viewModel.transcriptionService.setLanguage($0)
+                }
+            ))
+        }
+        .frame(width: 500, height: 580)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
     }
 
@@ -65,7 +84,8 @@ struct SettingsView: View {
             .opacity(0)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.top, 54)  // Clear the traffic light buttons
+        .padding(.bottom, 16)
     }
 
     // MARK: - Keyboard Shortcuts Section
@@ -129,6 +149,157 @@ struct SettingsView: View {
             // Warning if both are disabled
             if !settings.isFnKeyEnabled && !settings.isCustomShortcutEnabled {
                 warningBanner
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+
+    // MARK: - Language Section
+
+    private var languageSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Language")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Language Picker Button
+            Button(action: { showLanguagePicker = true }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(width: 24)
+
+                    HStack(spacing: 8) {
+                        Text(settings.selectedLanguage.flag)
+                            .font(.title3)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(settings.selectedLanguage.displayName)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white)
+
+                            Text(settings.selectedLanguage.nativeName)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+
+    // MARK: - Dictation Section
+
+    private var dictationSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Dictation")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Auto-Stop Toggle
+            settingsRow(
+                icon: "stop.circle",
+                title: "Auto-Stop",
+                description: "Automatically stop when you pause speaking"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.isAutoStopEnabled },
+                    set: { settings.isAutoStopEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+        }
+        .padding(16)
+        .background {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+
+    // MARK: - Sound Effects Section
+
+    private var soundEffectsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Section Header
+            Text("Sound Effects")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .textCase(.uppercase)
+
+            // Sound Effects Toggle
+            settingsRow(
+                icon: "speaker.wave.2",
+                title: "Sound Effects",
+                description: "Play sounds when dictation starts and stops"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.soundEffectsEnabled },
+                    set: { settings.soundEffectsEnabled = $0 }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            // Volume Slider (shown when sound effects enabled)
+            if settings.soundEffectsEnabled {
+                HStack(spacing: 12) {
+                    Image(systemName: "speaker.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.4))
+
+                    Slider(
+                        value: Binding(
+                            get: { settings.soundEffectsVolume },
+                            set: { settings.soundEffectsVolume = $0 }
+                        ),
+                        in: 0.0...1.0
+                    )
+                    .tint(.white.opacity(0.6))
+
+                    Image(systemName: "speaker.wave.3.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.4))
+
+                    Text("\(Int(settings.soundEffectsVolume * 100))%")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
+                .padding(.leading, 36)
             }
         }
         .padding(16)

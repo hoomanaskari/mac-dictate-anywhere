@@ -57,10 +57,11 @@ final class DictationViewModel {
     // MARK: - Services
 
     let permissionChecker = PermissionChecker()
-    let transcriptionService = TranscriptionService()
+    let transcriptionService = FluidTranscriptionService()
     let keyboardMonitor = KeyboardMonitorService()
     let microphoneManager = MicrophoneManager.shared
-    let modelManager = ModelManager()
+    let modelManager = FluidModelManager()
+    let settings = SettingsManager.shared
 
     // Services for auto-insert and overlay
     let audioLevelMonitor = AudioLevelMonitor()
@@ -138,7 +139,7 @@ final class DictationViewModel {
         }
     }
 
-    /// Initializes the app: checks permissions, downloads model, initializes WhisperKit
+    /// Initializes the app: checks permissions, downloads model, initializes FluidAudio
     func initialize() {
         setupTask?.cancel()
         setupTask = Task { @MainActor in
@@ -147,44 +148,44 @@ final class DictationViewModel {
     }
 
     private func performSetup() async {
-        // Stay in .loading state while doing quick checks
-        // This ensures user sees "Loading..." before any specific screen
-
-        // Step 1: Check permissions (quick)
+        // Check permissions
         permissionChecker.checkPermissions()
 
-        // Step 2: Check if model exists on disk
-        modelManager.checkModelStatus()
-
-        // Now decide which screen to show based on checks
-
-        // Step 3: If permissions missing, show permissions screen
+        // If permissions missing, show permissions screen
         if !permissionChecker.allPermissionsGranted {
             state = .permissionsMissing
             return
         }
 
-        // Step 4: If no model downloaded, show model settings screen
-        if !modelManager.isModelDownloaded {
-            state = .modelManagement
-            return
+        // Check if model already exists on disk
+        let modelExistsOnDisk = modelManager.checkModelExistsOnDisk()
+
+        // Show appropriate state based on whether model needs downloading
+        if modelExistsOnDisk {
+            state = .initializingModel
+        } else {
+            state = .downloadingModel
         }
 
-        // Step 5: Sync transcription service with the model
-        transcriptionService.setModelVariant(WhisperModel.defaultModel.whisperKitVariant)
-        transcriptionService.isModelDownloaded = true
-
-        // Step 6: Initialize WhisperKit
-        state = .initializingModel
-
         do {
-            try await transcriptionService.initializeWhisperKit()
+            let models = try await modelManager.downloadAndLoadModels()
+
+            // Initialize FluidAudio
+            if state != .initializingModel {
+                state = .initializingModel
+            }
+
+            try await transcriptionService.initialize(with: models)
+
+            // Sync language setting
+            transcriptionService.setLanguage(settings.selectedLanguage)
+
         } catch {
             state = .error("Failed to initialize: \(error.localizedDescription)")
             return
         }
 
-        // Step 7: Start keyboard monitoring
+        // Start keyboard monitoring
         keyboardMonitor.startMonitoring()
 
         // Ready!
@@ -203,11 +204,21 @@ final class DictationViewModel {
         // Show overlay with loading state
         overlayController.show(state: .loading)
 
+        // Configure EOU callback for auto-stop if enabled
+        if settings.isAutoStopEnabled {
+            transcriptionService.onEndOfUtterance = { [weak self] in
+                Task { @MainActor in
+                    await self?.handleEndOfUtterance()
+                }
+            }
+        } else {
+            transcriptionService.onEndOfUtterance = nil
+        }
+
         // Start recording
         await transcriptionService.startRecording(deviceID: microphoneManager.selectedDeviceID)
 
         // Wait for microphone to actually start capturing audio
-        // This ensures the user sees "Listening" only when we're truly ready
         let audioReady = await transcriptionService.waitForAudioReady(timeout: 2.0)
 
         // Check if user released FN key while we were waiting
@@ -215,6 +226,7 @@ final class DictationViewModel {
 
         guard audioReady else {
             // Timeout waiting for audio - something may be wrong with the microphone
+            await transcriptionService.forceCancel()
             overlayController.hide()
             state = .ready
             return
@@ -223,20 +235,16 @@ final class DictationViewModel {
         // Start audio level monitoring
         audioLevelMonitor.startMonitoring(samplesProvider: transcriptionService)
 
+        // Play sound to indicate microphone is ready
+        settings.playSound("Funk")
+
         // Update overlay to listening state - microphone is confirmed ready
         overlayController.show(state: .listening(level: 0, transcript: ""))
 
         // Start combined audio level + transcript update loop for overlay (~30 FPS)
-        // Also acts as a watchdog - if key is released but we're still here, force stop
         audioLevelTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            while self.transcriptionService.isRecording && !Task.isCancelled {
-                // Watchdog: if key is no longer held but we're still recording, force stop
-                if !self.keyboardMonitor.isHoldingKey {
-                    await self.forceStopDictation()
-                    return
-                }
-
+            while self.state == .listening && !Task.isCancelled {
                 let level = self.audioLevelMonitor.smoothedLevel
                 let transcript = self.transcriptionService.currentTranscript
                 self.currentTranscript = transcript
@@ -255,36 +263,33 @@ final class DictationViewModel {
     func stopDictation() async {
         guard case .listening = state else { return }
 
-        // IMMEDIATELY hide overlay and stop monitoring - user released Fn key
-        // This ensures the app is responsive even if cleanup takes time
+        // IMMEDIATELY update state to prevent race with watchdog
+        state = .processing
+
+        // Stop monitoring and cancel watchdog task
         overlayController.hide()
         audioLevelMonitor.stopMonitoring()
         audioLevelTask?.cancel()
         audioLevelTask = nil
 
-        // Check if we were still in the "preparing" phase (no audio yet)
-        // In that case, just cancel everything and return to ready
-        if !transcriptionService.isRecording || transcriptionService.currentTranscript.isEmpty {
-            // Force cancel - handles cases where recording didn't fully start
-            await transcriptionService.forceCancel()
-            state = .ready
-            return
-        }
-
-        // Normal stop - we have audio to process
-        state = .processing
+        // Show processing overlay
         overlayController.show(state: .processing)
 
-        // Get final transcript
+        // Get final transcript (stopRecording handles the case where recording already stopped)
         let finalTranscript = await transcriptionService.stopRecording()
         currentTranscript = finalTranscript
 
-        // Store for menu bar access
+        // Store for menu bar access (even if empty, so user knows dictation happened)
         ClipboardManager.shared.lastTranscript = finalTranscript
 
         // Insert text into focused input (uses clipboard + Cmd+V)
         if !finalTranscript.isEmpty {
+            // Dismiss any open menus to ensure paste goes to correct app
+            dismissMenus()
+            try? await Task.sleep(for: .milliseconds(50))
             _ = await textInsertionService.insertText(finalTranscript)
+            // Play sound to indicate completion
+            settings.playSound("Pop")
         }
 
         // Show success state
@@ -294,6 +299,17 @@ final class DictationViewModel {
         overlayController.hide(afterDelay: 0.5)
 
         state = .ready
+    }
+
+    /// Called when end-of-utterance is detected (user stopped speaking)
+    private func handleEndOfUtterance() async {
+        guard case .listening = state else { return }
+
+        // Small delay to catch any trailing words
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // Auto-stop dictation
+        await stopDictation()
     }
 
     /// Force stops dictation regardless of current state - used as emergency recovery
@@ -373,12 +389,22 @@ final class DictationViewModel {
     func initializeAfterDownload() async {
         state = .initializingModel
 
-        // Sync transcription service with the model
-        transcriptionService.setModelVariant(WhisperModel.defaultModel.whisperKitVariant)
-        transcriptionService.isModelDownloaded = true
-
         do {
-            try await transcriptionService.initializeWhisperKit()
+            // Get the loaded models from the model manager
+            guard let models = modelManager.getLoadedModels() else {
+                // If not loaded yet, download and load
+                let loadedModels = try await modelManager.downloadAndLoadModels()
+                try await transcriptionService.initialize(with: loadedModels)
+                transcriptionService.setLanguage(settings.selectedLanguage)
+                keyboardMonitor.startMonitoring()
+                state = .ready
+                return
+            }
+
+            try await transcriptionService.initialize(with: models)
+
+            // Sync language setting
+            transcriptionService.setLanguage(settings.selectedLanguage)
 
             // Start keyboard monitoring if not already started
             keyboardMonitor.startMonitoring()
@@ -404,5 +430,13 @@ final class DictationViewModel {
         keyboardMonitor.startMonitoring()
 
         state = .ready
+    }
+
+    // MARK: - Helpers
+
+    /// Dismisses any open menus to ensure paste goes to the correct app
+    private func dismissMenus() {
+        // Post notification for AppDelegate to dismiss its menu
+        NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
     }
 }
