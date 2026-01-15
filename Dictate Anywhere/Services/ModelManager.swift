@@ -68,7 +68,9 @@ final class ModelManager {
                 self.downloadProgress = 0.97
             }
 
-            guard folder != nil, checkModelExistsOnDisk() else {
+            // Use folder to silence unused variable warning, then verify on disk
+            _ = folder
+            guard checkModelExistsOnDisk() else {
                 throw ModelManagerError.verificationFailed
             }
 
