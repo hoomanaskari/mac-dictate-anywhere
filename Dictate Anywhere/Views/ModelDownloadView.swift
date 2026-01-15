@@ -16,7 +16,7 @@ struct ModelDownloadView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("This is a one-time download (~74 MB)")
+                Text("This is a one-time download (\(WhisperModel.defaultModel.size))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -85,7 +85,7 @@ struct InitializingView: View {
 
 #Preview("Download") {
     let vm = DictationViewModel()
-    vm.downloadProgress = 0.45
+    vm.modelManager.downloadProgress = 0.45
     return ModelDownloadView(viewModel: vm)
 }
 

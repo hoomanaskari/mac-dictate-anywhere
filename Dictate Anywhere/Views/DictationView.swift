@@ -73,7 +73,7 @@ struct DictationView: View {
     private var microphoneSelector: some View {
         HStack(spacing: 8) {
             Image(systemName: "mic.circle")
-                .font(.system(size: 14))
+                .font(.system(size: 18))
                 .foregroundStyle(.secondary)
 
             Picker("Microphone", selection: Binding(
@@ -190,16 +190,11 @@ struct DictationView: View {
                 Image(systemName: "cube.box")
                     .font(.system(size: 14))
 
-                if let currentModel = viewModel.modelManager.currentModel {
-                    Text("Model: \(currentModel.displayName)")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("(\(currentModel.size))")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Select Model")
-                        .font(.system(size: 13, weight: .medium))
-                }
+                Text("Model: \(WhisperModel.defaultModel.displayName)")
+                    .font(.system(size: 13, weight: .medium))
+                Text("(\(WhisperModel.defaultModel.size))")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 

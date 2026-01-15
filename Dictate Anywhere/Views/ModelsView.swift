@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Main view for managing WhisperKit models
+/// View for managing the speech recognition model
 struct ModelsView: View {
     @Bindable var viewModel: DictationViewModel
     @State private var showDeleteConfirmation = false
+    @State private var showErrorAlert = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,36 +18,40 @@ struct ModelsView: View {
                 .background(Color.white.opacity(0.1))
 
             // Content
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Current Model Section
-                    if let currentModel = viewModel.modelManager.currentModel {
-                        currentModelSection(currentModel)
-                    } else {
-                        noModelSection
-                    }
+            VStack(spacing: 24) {
+                Spacer()
 
-                    // Divider
-                    Rectangle()
-                        .fill(Color.white.opacity(0.1))
-                        .frame(height: 1)
-                        .padding(.horizontal, 8)
-
-                    // Available Models Section
-                    availableModelsSection
+                if viewModel.modelManager.isDownloading {
+                    downloadingSection
+                } else if viewModel.modelManager.isModelDownloaded {
+                    modelDownloadedSection
+                } else {
+                    noModelSection
                 }
-                .padding(24)
+
+                Spacer()
             }
+            .padding(24)
         }
         .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
         .alert("Delete Model?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
-                deleteCurrentModel()
+                deleteModel()
             }
         } message: {
-            Text("This will remove the downloaded model. You'll need to download a model again to use transcription.")
+            Text("This will remove the downloaded model (\(WhisperModel.defaultModel.size)). You can download it again anytime.")
+        }
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {
+                viewModel.modelManager.errorMessage = nil
+            }
+        } message: {
+            Text(viewModel.modelManager.errorMessage ?? "An error occurred.")
+        }
+        .onChange(of: viewModel.modelManager.errorMessage) { _, newValue in
+            showErrorAlert = newValue != nil
         }
     }
 
@@ -64,10 +69,12 @@ struct ModelsView: View {
                 .foregroundStyle(.blue)
             }
             .buttonStyle(.plain)
+            .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
+            .disabled(!viewModel.modelManager.isModelDownloaded)
 
             Spacer()
 
-            Text("Models")
+            Text("Speech Model")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
 
@@ -82,98 +89,161 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: - Current Model Section
+    // MARK: - Model Downloaded Section
 
-    private func currentModelSection(_ model: WhisperModel) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Current Model")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
+    private var modelDownloadedSection: some View {
+        VStack(spacing: 20) {
+            // Success icon
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.green)
 
-            CurrentModelCard(model: model) {
-                showDeleteConfirmation = true
+            // Model info
+            VStack(spacing: 8) {
+                Text(WhisperModel.defaultModel.displayName)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Text(WhisperModel.defaultModel.size)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+
+                Text(WhisperModel.defaultModel.description)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
             }
+
+            // Delete button
+            Button(action: { showDeleteConfirmation = true }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                    Text("Delete Model")
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.red)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background {
+                    Capsule()
+                        .stroke(.red.opacity(0.5), lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
         }
     }
 
     // MARK: - No Model Section
 
     private var noModelSection: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "square.stack.3d.up.slash")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
+        VStack(spacing: 20) {
+            // Icon
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.blue)
 
-            Text("No Model Downloaded")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.white)
+            // Info
+            VStack(spacing: 8) {
+                Text("Speech Model Required")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
 
-            Text("Select a model below to get started")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                Text("Download the speech recognition model to start using dictation.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+
+                Text(WhisperModel.defaultModel.size)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Download button
+            Button(action: { downloadModel() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Download Model")
                 }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background {
+                    Capsule()
+                        .fill(.blue)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
         }
     }
 
-    // MARK: - Available Models Section
+    // MARK: - Downloading Section
 
-    private var availableModelsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Choose a Model")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
+    private var downloadingSection: some View {
+        VStack(spacing: 20) {
+            // Icon
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.blue)
 
-            // Group models by category
-            VStack(spacing: 10) {
-                ForEach(WhisperModel.allModels.filter { $0.id != viewModel.modelManager.currentModel?.id }) { model in
-                    ModelCardView(
-                        model: model,
-                        isCurrent: false,
-                        isDownloading: viewModel.modelManager.downloadingModelId == model.id,
-                        downloadProgress: viewModel.modelManager.downloadingModelId == model.id
-                            ? viewModel.modelManager.downloadProgress : 0,
-                        onSelect: {
-                            selectModel(model)
-                        },
-                        onDelete: nil
-                    )
-                }
+            // Title
+            VStack(spacing: 8) {
+                Text("Downloading Model")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Text(WhisperModel.defaultModel.displayName)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
             }
+
+            // Progress bar
+            VStack(spacing: 8) {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.1))
+                            .frame(height: 6)
+
+                        Capsule()
+                            .fill(.blue)
+                            .frame(width: geometry.size.width * viewModel.modelManager.downloadProgress, height: 6)
+                    }
+                }
+                .frame(height: 6)
+
+                Text("\(Int(viewModel.modelManager.downloadProgress * 100))%")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 60)
         }
     }
 
     // MARK: - Actions
 
-    private func selectModel(_ model: WhisperModel) {
+    private func downloadModel() {
         Task {
             do {
-                try await viewModel.modelManager.selectModel(model)
-                // Re-initialize transcription service with new model
-                await viewModel.reinitializeWithNewModel(model)
+                try await viewModel.modelManager.downloadModel()
+                // Reinitialize transcription service after download
+                await viewModel.initializeAfterDownload()
             } catch {
-                // Error is handled by ModelManager
+                // Error is handled by ModelManager and shown via alert
             }
         }
     }
 
-    private func deleteCurrentModel() {
+    private func deleteModel() {
         do {
-            try viewModel.modelManager.deleteCurrentModel()
-            // Go back to download state since no model is available
-            viewModel.state = .downloadingModel
+            // Clean up transcription service first
+            viewModel.transcriptionService.cleanup()
+            try viewModel.modelManager.deleteModel()
         } catch {
             // Error handled by ModelManager
         }

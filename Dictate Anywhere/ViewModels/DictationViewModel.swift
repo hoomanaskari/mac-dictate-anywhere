@@ -14,7 +14,7 @@ final class DictationViewModel {
         case ready
         case listening
         case processing
-        case modelManagement      // Model selection screen
+        case modelManagement      // Model settings screen
         case error(String)
 
         var statusText: String {
@@ -36,7 +36,7 @@ final class DictationViewModel {
             case .processing:
                 return "Processing..."
             case .modelManagement:
-                return "Model Management"
+                return "Model Settings"
             case .error(let message):
                 return "Error: \(message)"
             }
@@ -45,7 +45,11 @@ final class DictationViewModel {
 
     var state: AppState = .loading
     var currentTranscript: String = ""
-    var downloadProgress: Double = 0.0
+
+    /// Download progress - delegates to ModelManager for single source of truth
+    var downloadProgress: Double {
+        modelManager.downloadProgress
+    }
 
     // MARK: - Services
 
@@ -109,8 +113,8 @@ final class DictationViewModel {
         // Step 1: Check permissions (quick)
         permissionChecker.checkPermissions()
 
-        // Step 2: Check if model exists on disk (quick sync check)
-        transcriptionService.checkModelExists()
+        // Step 2: Check if model exists on disk
+        modelManager.checkModelStatus()
 
         // Now decide which screen to show based on checks
 
@@ -120,26 +124,23 @@ final class DictationViewModel {
             return
         }
 
-        // Step 4: Download model if needed
-        if !transcriptionService.isModelDownloaded {
+        // Step 4: Download model if not downloaded
+        if !modelManager.isModelDownloaded {
             state = .downloadingModel
 
             do {
-                try await transcriptionService.downloadModelIfNeeded()
-
-                // Update progress from service
-                while !transcriptionService.isModelDownloaded && state == .downloadingModel {
-                    downloadProgress = transcriptionService.downloadProgress
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                downloadProgress = 1.0
+                try await modelManager.downloadModel()
             } catch {
                 state = .error("Failed to download model: \(error.localizedDescription)")
                 return
             }
         }
 
-        // Step 5: Initialize WhisperKit
+        // Step 5: Sync transcription service with the model
+        transcriptionService.setModelVariant(WhisperModel.defaultModel.whisperKitVariant)
+        transcriptionService.isModelDownloaded = true
+
+        // Step 6: Initialize WhisperKit
         state = .initializingModel
 
         do {
@@ -149,7 +150,7 @@ final class DictationViewModel {
             return
         }
 
-        // Step 6: Start keyboard monitoring
+        // Step 7: Start keyboard monitoring
         keyboardMonitor.startMonitoring()
 
         // Ready!
@@ -258,25 +259,27 @@ final class DictationViewModel {
 
     // MARK: - Model Management
 
-    /// Navigates to the model management screen
+    /// Navigates to the model settings screen
     func showModelManagement() {
         guard case .ready = state else { return }
         state = .modelManagement
     }
 
-    /// Reinitializes the transcription service with a new model
-    /// Called after user selects a different model in ModelsView
-    func reinitializeWithNewModel(_ model: WhisperModel) async {
+    /// Initializes the transcription service after model download
+    /// Called after user downloads the model from ModelsView
+    func initializeAfterDownload() async {
         state = .initializingModel
 
-        // Clean up current transcription service
-        transcriptionService.cleanup()
-
-        // Update transcription service with new model variant
-        transcriptionService.setModelVariant(model.whisperKitVariant)
+        // Sync transcription service with the model
+        transcriptionService.setModelVariant(WhisperModel.defaultModel.whisperKitVariant)
+        transcriptionService.isModelDownloaded = true
 
         do {
             try await transcriptionService.initializeWhisperKit()
+
+            // Start keyboard monitoring if not already started
+            keyboardMonitor.startMonitoring()
+
             state = .ready
         } catch {
             state = .error("Failed to initialize model: \(error.localizedDescription)")

@@ -1,25 +1,19 @@
 import Foundation
 import WhisperKit
 
-/// Manages WhisperKit model downloads, deletion, and selection
+/// Manages WhisperKit model download and deletion
 @Observable
 final class ModelManager {
     // MARK: - Observable State
 
-    /// All available models with their download status
-    var availableModels: [WhisperModel] = WhisperModel.allModels
-
-    /// Currently downloaded and active model (nil if none)
-    var currentModel: WhisperModel?
-
-    /// ID of model currently being downloaded (nil if not downloading)
-    var downloadingModelId: String?
+    /// Whether the model is downloaded and ready
+    var isModelDownloaded: Bool = false
 
     /// Download progress (0.0 to 1.0)
     var downloadProgress: Double = 0.0
 
     /// Whether a download is in progress
-    var isDownloading: Bool { downloadingModelId != nil }
+    private(set) var isDownloading: Bool = false
 
     /// Error message if something went wrong
     var errorMessage: String?
@@ -31,67 +25,62 @@ final class ModelManager {
     // MARK: - Initialization
 
     init() {
-        checkCurrentModel()
+        checkModelStatus()
     }
 
     // MARK: - Public Methods
 
-    /// Checks which model is currently downloaded
-    func checkCurrentModel() {
-        let fileManager = FileManager.default
-
-        for model in availableModels {
-            if isModelDownloaded(model) {
-                currentModel = model
-                return
-            }
-        }
-
-        currentModel = nil
+    /// Checks if the model is currently downloaded
+    func checkModelStatus() {
+        isModelDownloaded = checkModelExistsOnDisk()
     }
 
-    /// Selects a new model - downloads it and deletes the old one
-    /// - Parameter model: The model to download and activate
-    func selectModel(_ model: WhisperModel) async throws {
+    /// Downloads the speech recognition model
+    func downloadModel() async throws {
         guard !isDownloading else {
             throw ModelManagerError.downloadInProgress
         }
 
-        guard model.id != currentModel?.id else {
-            return // Already the current model
+        guard !isModelDownloaded else {
+            return // Already downloaded
         }
 
         await MainActor.run {
-            downloadingModelId = model.id
+            isDownloading = true
             downloadProgress = 0.0
             errorMessage = nil
         }
 
         do {
-            // Download the new model
-            _ = try await WhisperKit.download(
-                variant: model.whisperKitVariant,
+            // Download the model
+            // Scale progress to 0.95 max during download, leaving room for verification phase
+            let folder = try await WhisperKit.download(
+                variant: WhisperModel.defaultModel.whisperKitVariant,
                 progressCallback: { [weak self] progress in
                     Task { @MainActor in
-                        self?.downloadProgress = progress.fractionCompleted
+                        self?.downloadProgress = min(progress.fractionCompleted * 0.95, 0.95)
                     }
                 }
             )
 
-            // Delete old model if exists
-            if let oldModel = currentModel {
-                try? deleteModelFiles(oldModel)
+            // Verify the model was actually downloaded
+            await MainActor.run {
+                self.downloadProgress = 0.97
+            }
+
+            guard folder != nil, checkModelExistsOnDisk() else {
+                throw ModelManagerError.verificationFailed
             }
 
             await MainActor.run {
-                self.currentModel = model
-                self.downloadingModelId = nil
+                self.isModelDownloaded = true
+                self.isDownloading = false
                 self.downloadProgress = 1.0
             }
 
         } catch {
             await MainActor.run {
-                self.downloadingModelId = nil
+                self.isDownloading = false
                 self.downloadProgress = 0.0
                 self.errorMessage = "Download failed: \(error.localizedDescription)"
             }
@@ -99,9 +88,9 @@ final class ModelManager {
         }
     }
 
-    /// Deletes the currently downloaded model
-    func deleteCurrentModel() throws {
-        guard let model = currentModel else {
+    /// Deletes the downloaded model
+    func deleteModel() throws {
+        guard isModelDownloaded else {
             throw ModelManagerError.noModelToDelete
         }
 
@@ -109,24 +98,24 @@ final class ModelManager {
             throw ModelManagerError.downloadInProgress
         }
 
-        try deleteModelFiles(model)
-        currentModel = nil
+        try deleteModelFiles()
+        isModelDownloaded = false
     }
 
     /// Cancels any in-progress download
     func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
-        downloadingModelId = nil
+        isDownloading = false
         downloadProgress = 0.0
     }
 
     // MARK: - Private Methods
 
-    /// Checks if a specific model is downloaded
-    private func isModelDownloaded(_ model: WhisperModel) -> Bool {
+    /// Checks if the model files exist on disk
+    private func checkModelExistsOnDisk() -> Bool {
         let fileManager = FileManager.default
-        let possiblePaths = getModelPaths(for: model)
+        let possiblePaths = getModelPaths()
 
         for path in possiblePaths {
             let audioEncoderPath = path.appendingPathComponent("AudioEncoder.mlmodelc")
@@ -138,17 +127,11 @@ final class ModelManager {
         return false
     }
 
-    /// Gets possible storage paths for a model
-    private func getModelPaths(for model: WhisperModel) -> [URL] {
+    /// Gets possible storage paths for the model
+    private func getModelPaths() -> [URL] {
         let fileManager = FileManager.default
         var paths: [URL] = []
-
-        let modelName: String
-        if model.id.hasPrefix("openai_whisper-") {
-            modelName = "openai_whisper-\(model.whisperKitVariant)"
-        } else {
-            modelName = model.id
-        }
+        let modelName = WhisperModel.defaultModel.id
 
         // Documents/huggingface (non-sandboxed)
         if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -169,9 +152,9 @@ final class ModelManager {
     }
 
     /// Deletes model files from disk
-    private func deleteModelFiles(_ model: WhisperModel) throws {
+    private func deleteModelFiles() throws {
         let fileManager = FileManager.default
-        let paths = getModelPaths(for: model)
+        let paths = getModelPaths()
 
         var deleted = false
 
@@ -194,7 +177,7 @@ enum ModelManagerError: LocalizedError {
     case downloadInProgress
     case noModelToDelete
     case modelNotFound
-    case deletionFailed
+    case verificationFailed
 
     var errorDescription: String? {
         switch self {
@@ -204,8 +187,8 @@ enum ModelManagerError: LocalizedError {
             return "No model is currently downloaded."
         case .modelNotFound:
             return "Could not find the model files to delete."
-        case .deletionFailed:
-            return "Failed to delete the model files."
+        case .verificationFailed:
+            return "Model download could not be verified. Please try again."
         }
     }
 }

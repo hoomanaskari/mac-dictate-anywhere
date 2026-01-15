@@ -22,7 +22,6 @@ final class TranscriptionService {
     // Observable state
     var isModelDownloaded: Bool = false
     var isModelLoaded: Bool = false
-    var downloadProgress: Double = 0.0
     var currentTranscript: String = ""
     var isRecording: Bool = false
     var errorMessage: String?
@@ -43,87 +42,6 @@ final class TranscriptionService {
 
     // MARK: - Model Management
 
-    /// Checks if the model already exists on disk (synchronous check)
-    /// Call this before showing download UI to avoid flash of download screen
-    func checkModelExists() {
-        // WhisperKit stores models in huggingface cache directories
-        // Check multiple possible locations
-        let fileManager = FileManager.default
-        let modelName = "openai_whisper-\(modelVariant)"
-
-        // Possible base directories where WhisperKit might store models
-        var possiblePaths: [URL] = []
-
-        // 1. Documents/huggingface (non-sandboxed)
-        if let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
-            possiblePaths.append(docs.appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml/\(modelName)"))
-        }
-
-        // 2. Home directory .cache (common huggingface location)
-        let homeCache = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".cache/huggingface/hub/models--argmaxinc--whisperkit-coreml/snapshots")
-        possiblePaths.append(homeCache)
-
-        // 3. Application Support (legacy check)
-        if let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            possiblePaths.append(appSupport.appendingPathComponent("WhisperKit/Models/\(modelVariant)"))
-        }
-
-        // 4. Sandboxed container (if model was downloaded when sandboxed)
-        let containerPath = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.pixelforty.Dictate-Anywhere/Data/Documents/huggingface/models/argmaxinc/whisperkit-coreml/\(modelName)")
-        possiblePaths.append(containerPath)
-
-        // Check if AudioEncoder.mlmodelc exists in any location (key model file)
-        for basePath in possiblePaths {
-            let audioEncoderPath = basePath.appendingPathComponent("AudioEncoder.mlmodelc")
-            if fileManager.fileExists(atPath: audioEncoderPath.path) {
-                isModelDownloaded = true
-                return
-            }
-
-            // Also check if the base directory exists and has contents
-            if fileManager.fileExists(atPath: basePath.path) {
-                if let contents = try? fileManager.contentsOfDirectory(atPath: basePath.path),
-                   contents.contains(where: { $0.hasSuffix(".mlmodelc") }) {
-                    isModelDownloaded = true
-                    return
-                }
-            }
-        }
-
-        isModelDownloaded = false
-    }
-
-    /// Downloads the Whisper model if not already cached
-    func downloadModelIfNeeded() async throws {
-        // Check if model already exists
-        let modelPath = try getModelPath()
-
-        if FileManager.default.fileExists(atPath: modelPath.path) {
-            isModelDownloaded = true
-            return
-        }
-
-        // Download the model
-        downloadProgress = 0.0
-
-        let folder = try await WhisperKit.download(
-            variant: modelVariant,
-            progressCallback: { [weak self] progress in
-                Task { @MainActor in
-                    self?.downloadProgress = progress.fractionCompleted
-                }
-            }
-        )
-
-        if folder != nil {
-            await MainActor.run {
-                self.isModelDownloaded = true
-                self.downloadProgress = 1.0
-            }
-        }
-    }
-
     /// Initializes WhisperKit with the downloaded model
     func initializeWhisperKit() async throws {
         guard isModelDownloaded else {
@@ -141,19 +59,6 @@ final class TranscriptionService {
 
         await MainActor.run {
             self.isModelLoaded = true
-        }
-    }
-
-    /// Full setup: download if needed and initialize
-    func setup() async throws {
-        do {
-            try await downloadModelIfNeeded()
-            try await initializeWhisperKit()
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-            }
-            throw error
         }
     }
 
@@ -329,20 +234,6 @@ final class TranscriptionService {
         }
     }
 
-    /// Gets the path where models are stored
-    private func getModelPath() throws -> URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            throw TranscriptionError.fileSystemError
-        }
-
-        let modelDir = appSupport
-            .appendingPathComponent("WhisperKit")
-            .appendingPathComponent("Models")
-            .appendingPathComponent(modelVariant)
-
-        return modelDir
-    }
-
     /// Cleans up resources
     func cleanup() {
         transcriptionTask?.cancel()
@@ -357,15 +248,12 @@ final class TranscriptionService {
 
 enum TranscriptionError: LocalizedError {
     case modelNotDownloaded
-    case fileSystemError
     case initializationFailed
 
     var errorDescription: String? {
         switch self {
         case .modelNotDownloaded:
             return "The transcription model has not been downloaded yet."
-        case .fileSystemError:
-            return "Could not access the file system for model storage."
         case .initializationFailed:
             return "Failed to initialize the transcription engine."
         }
