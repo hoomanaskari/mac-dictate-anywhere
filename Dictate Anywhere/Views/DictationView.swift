@@ -21,8 +21,11 @@ struct DictationView: View {
             Divider()
                 .background(Color.white.opacity(0.1))
 
-            // Models button
-            modelsButton
+            // Bottom buttons
+            VStack(spacing: 8) {
+                modelsButton
+                settingsButton
+            }
         }
         .padding(24)
         .frame(width: 500, height: 500)
@@ -121,18 +124,47 @@ struct DictationView: View {
             Image(systemName: "keyboard")
                 .font(.caption)
             Text("Press and hold")
-            Text("fn")
-                .fontWeight(.semibold)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background {
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                }
+            shortcutKeyView
             Text("anywhere to dictate")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var shortcutKeyView: some View {
+        let settings = SettingsManager.shared
+
+        if settings.isFnKeyEnabled && settings.isCustomShortcutEnabled && settings.hasCustomShortcut {
+            // Both enabled - show both
+            HStack(spacing: 4) {
+                keyBadge("fn")
+                Text("or")
+                    .foregroundStyle(.secondary)
+                keyBadge(settings.customShortcutDisplayName)
+            }
+        } else if settings.isFnKeyEnabled {
+            // Only Fn enabled
+            keyBadge("fn")
+        } else if settings.isCustomShortcutEnabled && settings.hasCustomShortcut {
+            // Only custom shortcut enabled
+            keyBadge(settings.customShortcutDisplayName)
+        } else {
+            // Nothing enabled
+            Text("(no shortcut)")
+                .foregroundStyle(.red.opacity(0.8))
+        }
+    }
+
+    private func keyBadge(_ text: String) -> some View {
+        Text(text)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            }
     }
 
     // MARK: - Models Button
@@ -146,6 +178,42 @@ struct DictationView: View {
                     .font(.system(size: 14))
 
                 Text("Speech Model")
+                    .font(.system(size: 13, weight: .medium))
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isReady)
+        .opacity(isReady ? 1 : 0.5)
+    }
+
+    // MARK: - Settings Button
+
+    private var settingsButton: some View {
+        Button(action: {
+            viewModel.showSettings()
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+
+                Text("Settings")
                     .font(.system(size: 13, weight: .medium))
 
                 Spacer()

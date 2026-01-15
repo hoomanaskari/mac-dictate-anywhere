@@ -15,6 +15,7 @@ final class DictationViewModel {
         case listening
         case processing
         case modelManagement      // Model settings screen
+        case settings             // Keyboard settings screen
         case error(String)
 
         var statusText: String {
@@ -37,6 +38,8 @@ final class DictationViewModel {
                 return "Processing..."
             case .modelManagement:
                 return "Model Settings"
+            case .settings:
+                return "Settings"
             case .error(let message):
                 return "Error: \(message)"
             }
@@ -302,5 +305,22 @@ final class DictationViewModel {
         } catch {
             state = .error("Failed to initialize model: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - Settings
+
+    /// Navigates to the settings screen
+    func showSettings() {
+        guard case .ready = state else { return }
+        state = .settings
+    }
+
+    /// Returns from settings and restarts keyboard monitoring with new settings
+    func hideSettings() {
+        // Restart keyboard monitoring with potentially new settings
+        keyboardMonitor.stopMonitoring()
+        keyboardMonitor.startMonitoring()
+
+        state = .ready
     }
 }

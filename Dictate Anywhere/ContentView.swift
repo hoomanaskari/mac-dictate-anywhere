@@ -34,6 +34,9 @@ struct ContentView: View {
             case .modelManagement:
                 ModelsView(viewModel: viewModel)
 
+            case .settings:
+                SettingsView(viewModel: viewModel)
+
             case .error(let message):
                 errorView(message)
             }
