@@ -72,7 +72,6 @@ final class DictationViewModel {
     private var setupTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
     private var windowCloseObserver: Any?
-    private var forceResetObserver: Any?
 
     // MARK: - Initialization
 
@@ -88,9 +87,6 @@ final class DictationViewModel {
         if let observer = windowCloseObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        if let observer = forceResetObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
     }
 
     /// Sets up observers for app notifications
@@ -102,15 +98,6 @@ final class DictationViewModel {
             queue: .main
         ) { [weak self] _ in
             self?.handleWindowClose()
-        }
-
-        // Force reset observer (from menu bar)
-        forceResetObserver = NotificationCenter.default.addObserver(
-            forName: .forceResetRequested,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.forceReset()
         }
     }
 
@@ -142,6 +129,11 @@ final class DictationViewModel {
         keyboardMonitor.onFnKeyUp = { [weak self] in
             Task { @MainActor in
                 await self?.stopDictation()
+
+                // Ensure overlay is hidden if we're not actively transcribing
+                // This handles edge cases where state gets out of sync
+                try? await Task.sleep(for: .milliseconds(100))
+                self?.ensureOverlayHiddenIfInactive()
             }
         }
     }
@@ -326,17 +318,16 @@ final class DictationViewModel {
         }
     }
 
-    /// Public method to force reset the app state - callable from menu bar
-    func forceReset() {
-        Task { @MainActor in
-            await forceStopDictation()
-
-            // Reset keyboard monitor internal state
-            keyboardMonitor.resetState()
-
-            // Restart keyboard monitoring to ensure clean state
-            keyboardMonitor.stopMonitoring()
-            keyboardMonitor.startMonitoring()
+    /// Ensures overlay is hidden when not in active dictation states
+    /// Called after key release to guarantee cleanup
+    private func ensureOverlayHiddenIfInactive() {
+        switch state {
+        case .listening, .processing:
+            // Still active, don't hide
+            break
+        default:
+            // Not in active dictation, ensure overlay is hidden
+            overlayController.hide(afterDelay: 0)
         }
     }
 

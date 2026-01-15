@@ -68,16 +68,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let forceResetItem = NSMenuItem(
-            title: "Force Reset",
-            action: #selector(forceReset),
-            keyEquivalent: "r"
-        )
-        forceResetItem.target = self
-        menu.addItem(forceResetItem)
-
-        menu.addItem(NSMenuItem.separator())
-
         let quitItem = NSMenuItem(
             title: "Quit",
             action: #selector(quitApp),
@@ -148,11 +138,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !transcript.isEmpty {
             ClipboardManager.shared.copyToClipboard(transcript)
         }
-    }
-
-    @objc private func forceReset() {
-        // Post notification to force reset the app state
-        NotificationCenter.default.post(name: .forceResetRequested, object: nil)
     }
 
     @objc private func quitApp() {
@@ -239,5 +224,4 @@ extension AppDelegate: NSMenuItemValidation {
 
 extension Notification.Name {
     static let mainWindowWillClose = Notification.Name("mainWindowWillClose")
-    static let forceResetRequested = Notification.Name("forceResetRequested")
 }
