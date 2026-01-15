@@ -74,6 +74,9 @@ final class DictationViewModel {
     private var audioLevelTask: Task<Void, Never>?
     private var windowCloseObserver: Any?
 
+    /// Tracks if the current dictation session is using hands-free mode
+    private var isHandsFreeSession: Bool = false
+
     // MARK: - Initialization
 
     init() {
@@ -123,18 +126,44 @@ final class DictationViewModel {
     private func setupKeyboardCallbacks() {
         keyboardMonitor.onFnKeyDown = { [weak self] in
             Task { @MainActor in
-                await self?.startDictation()
+                guard let self = self else { return }
+
+                // In hands-free mode, a second press while listening stops dictation
+                if self.settings.isHandsFreeEnabled && self.state == .listening {
+                    await self.stopDictation()
+                } else if self.state == .ready {
+                    await self.startDictation()
+                }
             }
         }
 
         keyboardMonitor.onFnKeyUp = { [weak self] in
             Task { @MainActor in
-                await self?.stopDictation()
+                guard let self = self else { return }
+
+                // In hands-free mode, ignore key release during dictation
+                if self.settings.isHandsFreeEnabled && self.state == .listening {
+                    return
+                }
+
+                await self.stopDictation()
 
                 // Ensure overlay is hidden if we're not actively transcribing
                 // This handles edge cases where state gets out of sync
                 try? await Task.sleep(for: .milliseconds(100))
-                self?.ensureOverlayHiddenIfInactive()
+                self.ensureOverlayHiddenIfInactive()
+            }
+        }
+
+        // Escape key callback for hands-free mode cancellation
+        keyboardMonitor.onEscapeKeyPressed = { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+
+                // Only handle Escape during hands-free dictation
+                if self.isHandsFreeSession && self.state == .listening {
+                    await self.cancelDictation()
+                }
             }
         }
     }
@@ -198,13 +227,22 @@ final class DictationViewModel {
     func startDictation() async {
         guard case .ready = state else { return }
 
+        // Track if this is a hands-free session
+        isHandsFreeSession = settings.isHandsFreeEnabled
+
         state = .listening
         currentTranscript = ""
 
         // Show overlay with loading state
         overlayController.show(state: .loading)
 
+        // In hands-free mode, start Escape key monitoring for cancellation
+        if isHandsFreeSession {
+            keyboardMonitor.startEscapeMonitoring()
+        }
+
         // Configure EOU callback for auto-stop if enabled
+        // This works the same in both hold mode and hands-free mode
         if settings.isAutoStopEnabled {
             transcriptionService.onEndOfUtterance = { [weak self] in
                 Task { @MainActor in
@@ -266,6 +304,11 @@ final class DictationViewModel {
         // IMMEDIATELY update state to prevent race with watchdog
         state = .processing
 
+        // Stop Escape monitoring if in hands-free mode
+        if isHandsFreeSession {
+            keyboardMonitor.stopEscapeMonitoring()
+        }
+
         // Stop monitoring and cancel watchdog task
         overlayController.hide()
         audioLevelMonitor.stopMonitoring()
@@ -301,6 +344,9 @@ final class DictationViewModel {
         // Hide overlay after delay (0.5 seconds)
         overlayController.hide(afterDelay: 0.5)
 
+        // Reset hands-free session flag
+        isHandsFreeSession = false
+
         state = .ready
     }
 
@@ -313,6 +359,29 @@ final class DictationViewModel {
 
         // Auto-stop dictation
         await stopDictation()
+    }
+
+    /// Cancels dictation without pasting text (used for Escape in hands-free mode)
+    func cancelDictation() async {
+        guard case .listening = state else { return }
+
+        // Stop Escape monitoring
+        keyboardMonitor.stopEscapeMonitoring()
+
+        // Stop monitoring and cancel tasks
+        overlayController.hide()
+        audioLevelMonitor.stopMonitoring()
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
+
+        // Force cancel transcription (discards audio, no final transcription)
+        await transcriptionService.forceCancel()
+
+        // Reset hands-free session flag
+        isHandsFreeSession = false
+
+        // Return to ready state - no text insertion, no success overlay
+        state = .ready
     }
 
     /// Force stops dictation regardless of current state - used as emergency recovery

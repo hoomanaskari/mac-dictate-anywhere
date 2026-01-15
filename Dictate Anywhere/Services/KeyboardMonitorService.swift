@@ -21,6 +21,11 @@ final class KeyboardMonitorService {
     private var modifierGlobalMonitor: Any?
     private var modifierLocalMonitor: Any?
 
+    // MARK: - Escape Key Monitors (for hands-free mode cancellation)
+
+    private var escapeGlobalMonitor: Any?
+    private var escapeLocalMonitor: Any?
+
     // MARK: - State
 
     private let lock = NSLock()
@@ -34,6 +39,9 @@ final class KeyboardMonitorService {
     // Callbacks for key events (used by both Fn and custom shortcut)
     var onFnKeyDown: (() -> Void)?
     var onFnKeyUp: (() -> Void)?
+
+    // Callback for Escape key (hands-free mode cancellation)
+    var onEscapeKeyPressed: (() -> Void)?
 
     init() {}
 
@@ -309,6 +317,42 @@ final class KeyboardMonitorService {
                 self?.isHoldingKey = false
                 self?.onFnKeyUp?()
             }
+        }
+    }
+
+    // MARK: - Escape Key Monitoring (Hands-Free Mode)
+
+    /// Starts monitoring for Escape key press (used to cancel hands-free dictation)
+    func startEscapeMonitoring() {
+        // Global monitor for when app is NOT focused
+        escapeGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Escape key code
+                DispatchQueue.main.async {
+                    self?.onEscapeKeyPressed?()
+                }
+            }
+        }
+
+        // Local monitor for when app IS focused
+        escapeLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Escape key code
+                DispatchQueue.main.async {
+                    self?.onEscapeKeyPressed?()
+                }
+            }
+            return event
+        }
+    }
+
+    /// Stops monitoring for Escape key press
+    func stopEscapeMonitoring() {
+        if let monitor = escapeGlobalMonitor {
+            NSEvent.removeMonitor(monitor)
+            escapeGlobalMonitor = nil
+        }
+        if let monitor = escapeLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            escapeLocalMonitor = nil
         }
     }
 }
