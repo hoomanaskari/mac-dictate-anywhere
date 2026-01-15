@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
+import CoreAudio
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
+    private var microphoneMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
@@ -36,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
 
         let showItem = NSMenuItem(
             title: "Open Dictate Anywhere",
@@ -44,6 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         showItem.target = self
         menu.addItem(showItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Microphone submenu
+        microphoneMenuItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let microphoneSubmenu = NSMenu()
+        microphoneMenuItem?.submenu = microphoneSubmenu
+        menu.addItem(microphoneMenuItem!)
+
+        updateMicrophoneMenu()
 
         menu.addItem(NSMenuItem.separator())
 
@@ -115,6 +128,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quitApp() {
         NSApp.terminate(nil)
     }
+
+    // MARK: - Microphone Menu
+
+    private func updateMicrophoneMenu() {
+        guard let submenu = microphoneMenuItem?.submenu else { return }
+        submenu.removeAllItems()
+
+        let manager = MicrophoneManager.shared
+        for mic in manager.availableMicrophones {
+            let title = mic.isDefault ? "Default System Microphone" : mic.name
+
+            let item = NSMenuItem(title: title, action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mic.id
+            item.state = (mic.id == manager.selectedMicrophone?.id) ? .on : .off
+            submenu.addItem(item)
+        }
+
+        // Update parent menu title to show current selection
+        if let selected = manager.selectedMicrophone {
+            let displayName = selected.isDefault ? "Default System Microphone" : selected.name
+            microphoneMenuItem?.title = "Microphone: \(displayName)"
+        } else {
+            microphoneMenuItem?.title = "Microphone"
+        }
+    }
+
+    @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        guard let deviceID = sender.representedObject as? AudioDeviceID else { return }
+        let manager = MicrophoneManager.shared
+        if let mic = manager.availableMicrophones.first(where: { $0.id == deviceID }) {
+            manager.selectMicrophone(mic)
+            updateMicrophoneMenu()
+        }
+    }
 }
 
 // MARK: - NSWindowDelegate
@@ -132,5 +180,13 @@ extension AppDelegate: NSWindowDelegate {
         if let window = notification.object as? NSWindow {
             window.level = .floating
         }
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension AppDelegate: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        updateMicrophoneMenu()
     }
 }

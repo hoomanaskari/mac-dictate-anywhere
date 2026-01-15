@@ -4,6 +4,10 @@ import CoreAudio
 
 @Observable
 final class MicrophoneManager {
+    // MARK: - Singleton
+
+    static let shared = MicrophoneManager()
+
     // MARK: - Types
 
     struct Microphone: Identifiable, Equatable, Hashable {
@@ -27,7 +31,7 @@ final class MicrophoneManager {
 
     // MARK: - Initialization
 
-    init() {
+    private init() {
         refreshMicrophones()
         setupDeviceChangeListener()
     }

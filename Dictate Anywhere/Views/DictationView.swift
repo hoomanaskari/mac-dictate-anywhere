@@ -81,15 +81,8 @@ struct DictationView: View {
                 }
             )) {
                 ForEach(viewModel.microphoneManager.availableMicrophones) { mic in
-                    HStack {
-                        Text(mic.name)
-                        if mic.isDefault {
-                            Text("(Default)")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
-                        }
-                    }
-                    .tag(Optional(mic))
+                    Text(microphoneDisplayName(for: mic))
+                        .tag(Optional(mic))
                 }
             }
             .pickerStyle(.menu)
@@ -97,6 +90,13 @@ struct DictationView: View {
         }
         .disabled(!isMicrophoneSelectionEnabled)
         .opacity(isMicrophoneSelectionEnabled ? 1 : 0.6)
+    }
+
+    private func microphoneDisplayName(for mic: MicrophoneManager.Microphone) -> String {
+        if mic.isDefault {
+            return "Default System Microphone"
+        }
+        return mic.name
     }
 
     private var isMicrophoneSelectionEnabled: Bool {
