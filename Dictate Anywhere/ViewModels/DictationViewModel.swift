@@ -166,10 +166,24 @@ final class DictationViewModel {
         // Start recording
         await transcriptionService.startRecording(deviceID: microphoneManager.selectedDeviceID)
 
+        // Wait for microphone to actually start capturing audio
+        // This ensures the user sees "Listening" only when we're truly ready
+        let audioReady = await transcriptionService.waitForAudioReady(timeout: 2.0)
+
+        // Check if user released FN key while we were waiting
+        guard case .listening = state else { return }
+
+        guard audioReady else {
+            // Timeout waiting for audio - something may be wrong with the microphone
+            overlayController.hide()
+            state = .ready
+            return
+        }
+
         // Start audio level monitoring
         audioLevelMonitor.startMonitoring(samplesProvider: transcriptionService)
 
-        // Update overlay to listening state with empty transcript
+        // Update overlay to listening state - microphone is confirmed ready
         overlayController.show(state: .listening(level: 0, transcript: ""))
 
         // Start combined audio level + transcript update loop for overlay (~30 FPS)

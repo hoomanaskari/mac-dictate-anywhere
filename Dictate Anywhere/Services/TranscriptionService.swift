@@ -119,6 +119,26 @@ final class TranscriptionService {
         }
     }
 
+    /// Waits until audio samples are flowing from the microphone
+    /// Returns true if audio is ready, false if timeout occurred
+    func waitForAudioReady(timeout: TimeInterval = 2.0) async -> Bool {
+        guard let whisperKit = whisperKit else { return false }
+
+        let audioProcessor = whisperKit.audioProcessor
+        let startTime = Date()
+        let minSamples = 160  // ~10ms of audio at 16kHz - enough to confirm mic is working
+
+        while Date().timeIntervalSince(startTime) < timeout {
+            if audioProcessor.audioSamples.count >= minSamples {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Timeout - but if we have ANY samples, consider it ready
+        return audioProcessor.audioSamples.count > 0
+    }
+
     /// Stops recording and returns the final transcript
     func stopRecording() async -> String {
         // Atomically check and set state to prevent multiple stops
