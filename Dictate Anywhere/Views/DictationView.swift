@@ -34,14 +34,21 @@ struct DictationView: View {
 
     // MARK: - Status View
 
+    @ViewBuilder
     private var statusView: some View {
-        HStack(spacing: 10) {
-            statusIndicator
+        // Only show status indicator when not in ready state
+        // Ready state doesn't need visual indication - everything is fine
+        if case .ready = viewModel.state {
+            EmptyView()
+        } else {
+            HStack(spacing: 10) {
+                statusIndicator
 
-            Text(viewModel.state.statusText)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(statusColor)
+                Text(viewModel.state.statusText)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(statusColor)
+            }
         }
     }
 

@@ -66,7 +66,7 @@ struct ModelsView: View {
                     Text("Back")
                         .font(.system(size: 14, weight: .medium))
                 }
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.white.opacity(0.7))
             }
             .buttonStyle(.plain)
             .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
