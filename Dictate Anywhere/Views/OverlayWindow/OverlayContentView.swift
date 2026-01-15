@@ -37,7 +37,7 @@ struct OverlayContentView: View {
     private var frameHeight: CGFloat {
         switch state {
         case .listening:
-            return 120
+            return 140
         default:
             return 60
         }
@@ -69,14 +69,27 @@ struct ListeningView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // Live transcript text
-            Text(transcript.isEmpty ? "Listening..." : transcript)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white.opacity(0.95))
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
+            // Live transcript text - auto-scrolls to show most recent words
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    Text(transcript.isEmpty ? "Listening..." : transcript)
+                        .font(.system(size: 19, weight: .light))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .id("transcript")
+                }
+                .frame(height: 66)
+                .onChange(of: transcript) { _, _ in
+                    // Auto-scroll to bottom when transcript changes
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        proxy.scrollTo("transcript", anchor: .bottom)
+                    }
+                }
+                .onAppear {
+                    proxy.scrollTo("transcript", anchor: .bottom)
+                }
+            }
 
             // Audio waveform
             AudioWaveformView(audioLevel: audioLevel)
