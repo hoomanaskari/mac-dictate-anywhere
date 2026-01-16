@@ -84,6 +84,12 @@ final class FluidTranscriptionService {
     private var isTranscribing = false
     private let stateManager = RecordingStateManager()
 
+    /// Serial queue for audio engine operations to prevent concurrent setup/stop race conditions
+    private let audioEngineQueue = DispatchQueue(label: "com.dictate-anywhere.audio-engine", qos: .userInitiated)
+
+    /// Lock for protecting audio engine reference access
+    private let audioEngineLock = NSLock()
+
     /// Actor for thread-safe audio buffer access
     private let audioBuffer = AudioBufferActor()
 
@@ -189,10 +195,18 @@ final class FluidTranscriptionService {
     }
 
     /// Sets up and starts the AVAudioEngine for recording
+    /// Uses serial queue to prevent concurrent setup/stop race conditions
     private func setupAndStartAudioEngine(deviceID: AudioDeviceID?) throws {
+        // Ensure any previous engine is fully stopped before creating a new one
+        stopAudioEngineSync()
+
         // Create a fresh audio engine
         let engine = AVAudioEngine()
+
+        // Protect access to audioEngine reference
+        audioEngineLock.lock()
         self.audioEngine = engine
+        audioEngineLock.unlock()
 
         let inputNode = engine.inputNode
 
@@ -380,23 +394,53 @@ final class FluidTranscriptionService {
         return finalTranscript
     }
 
-    /// Stops the audio engine with proper cleanup
-    private func stopAudioEngine() {
-        guard let engine = audioEngine else { return }
-
-        // Remove tap first
-        engine.inputNode.removeTap(onBus: 0)
-
-        // Stop the engine
-        if engine.isRunning {
-            engine.stop()
-        }
-
-        // Reset to release resources
-        engine.reset()
-
-        // Clear reference
+    /// Stops the audio engine with proper cleanup (synchronous version for use within setup)
+    private func stopAudioEngineSync() {
+        audioEngineLock.lock()
+        let engine = audioEngine
         audioEngine = nil
+        audioEngineLock.unlock()
+
+        guard let engine = engine else { return }
+
+        // Use serial queue to prevent concurrent audio engine operations
+        audioEngineQueue.sync {
+            // Remove tap first - this must happen before stopping
+            engine.inputNode.removeTap(onBus: 0)
+
+            // Stop the engine
+            if engine.isRunning {
+                engine.stop()
+            }
+
+            // Reset to release resources
+            engine.reset()
+        }
+    }
+
+    /// Stops the audio engine with proper cleanup (called from async context)
+    private func stopAudioEngine() {
+        audioEngineLock.lock()
+        let engine = audioEngine
+        audioEngine = nil
+        audioEngineLock.unlock()
+
+        guard let engine = engine else { return }
+
+        // Use serial queue to prevent concurrent audio engine operations
+        // Use async to avoid blocking the caller
+        audioEngineQueue.async {
+            // Remove tap first - this must happen before stopping
+            engine.inputNode.removeTap(onBus: 0)
+
+            // Stop the engine
+            if engine.isRunning {
+                engine.stop()
+            }
+
+            // Reset to release resources
+            engine.reset()
+        }
     }
 
     /// Force cancels recording from any state
@@ -539,7 +583,7 @@ final class FluidTranscriptionService {
         transcriptionTask?.cancel()
         transcriptionTask = nil
         isTranscribing = false
-        stopAudioEngine()
+        stopAudioEngineSync()  // Use sync version for complete cleanup
         asrManager?.cleanup()
         asrManager = nil
         loadedModels = nil
