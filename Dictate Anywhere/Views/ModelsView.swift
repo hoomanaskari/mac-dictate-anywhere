@@ -37,6 +37,7 @@ struct ModelsView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .opacity(viewModel.modelManager.isModelDownloaded ? 1 : 0)
@@ -88,21 +89,10 @@ struct ModelsView: View {
 
             // Delete button
             Button(action: { showDeleteConfirmation = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "trash")
-                    Text("Delete Model")
-                }
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.red)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background {
-                    Capsule()
-                        .stroke(.red.opacity(0.5), lineWidth: 1)
-                }
-                .contentShape(Capsule())
+                Label("Delete Model", systemImage: "trash")
+                    .foregroundStyle(.red)
             }
-            .buttonStyle(.plain)
+            .glassButtonStyle()
             .padding(.top, 8)
         }
     }
@@ -135,21 +125,9 @@ struct ModelsView: View {
 
             // Download button
             Button(action: { downloadModel() }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("Download Model")
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background {
-                    Capsule()
-                        .fill(Color.accentColor)
-                }
-                .contentShape(Capsule())
+                Label("Download Model", systemImage: "arrow.down.circle.fill")
             }
-            .buttonStyle(.plain)
+            .glassProminentButtonStyle()
             .padding(.top, 8)
         }
     }
@@ -219,15 +197,17 @@ struct ModelsView: View {
                         NSWorkspace.shared.open(url)
                     }
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "link")
-                            .font(.system(size: 10))
+                    Label {
                         Text("View on GitHub")
-                            .font(.system(size: 11, weight: .medium))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8, weight: .semibold))
+                    } icon: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "link")
+                                .font(.system(size: 10))
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 8, weight: .semibold))
+                        }
                     }
-                    .foregroundStyle(.blue.opacity(0.8))
+                    .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
             }

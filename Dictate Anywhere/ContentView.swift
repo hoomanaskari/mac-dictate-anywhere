@@ -76,19 +76,9 @@ struct ContentView: View {
             Button(action: {
                 viewModel.initialize()
             }) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Text("Try Again")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .foregroundStyle(Color.accentColor)
-                .background {
-                    Capsule()
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                }
+                Label("Try Again", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.plain)
+            .glassButtonStyle()
         }
         .padding(32)
         .frame(width: 500, height: 500)

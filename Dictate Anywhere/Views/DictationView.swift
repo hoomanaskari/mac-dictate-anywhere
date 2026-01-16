@@ -204,74 +204,132 @@ struct DictationView: View {
 
     // MARK: - Models Button
 
+    @ViewBuilder
     private var modelsButton: some View {
-        Button(action: {
-            viewModel.showModelManagement()
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "cube.box")
-                    .font(.system(size: 14))
+        if #available(macOS 26.0, *) {
+            Button(action: {
+                viewModel.showModelManagement()
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.box")
+                        .font(.system(size: 14))
 
-                Text("Speech Model")
-                    .font(.system(size: 13, weight: .medium))
+                    Text("Speech Model")
+                        .font(.system(size: 13, weight: .medium))
 
-                Spacer()
+                    Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.white.opacity(0.9))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.05))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    }
+            .buttonStyle(.plain)
+            .glassEffect(in: .rect(cornerRadius: 10))
+            .disabled(!isReady)
+            .opacity(isReady ? 1 : 0.5)
+        } else {
+            Button(action: {
+                viewModel.showModelManagement()
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "cube.box")
+                        .font(.system(size: 14))
+
+                    Text("Speech Model")
+                        .font(.system(size: 13, weight: .medium))
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.05))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        }
+                }
             }
+            .buttonStyle(.plain)
+            .disabled(!isReady)
+            .opacity(isReady ? 1 : 0.5)
         }
-        .buttonStyle(.plain)
-        .disabled(!isReady)
-        .opacity(isReady ? 1 : 0.5)
     }
 
     // MARK: - Settings Button
 
+    @ViewBuilder
     private var settingsButton: some View {
-        Button(action: {
-            viewModel.showSettings()
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14))
+        if #available(macOS 26.0, *) {
+            Button(action: {
+                viewModel.showSettings()
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
 
-                Text("Settings")
-                    .font(.system(size: 13, weight: .medium))
+                    Text("Settings")
+                        .font(.system(size: 13, weight: .medium))
 
-                Spacer()
+                    Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.white.opacity(0.9))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.05))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    }
+            .buttonStyle(.plain)
+            .glassEffect(in: .rect(cornerRadius: 10))
+            .disabled(!isReady)
+            .opacity(isReady ? 1 : 0.5)
+        } else {
+            Button(action: {
+                viewModel.showSettings()
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+
+                    Text("Settings")
+                        .font(.system(size: 13, weight: .medium))
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+                .background {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.05))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        }
+                }
             }
+            .buttonStyle(.plain)
+            .disabled(!isReady)
+            .opacity(isReady ? 1 : 0.5)
         }
-        .buttonStyle(.plain)
-        .disabled(!isReady)
-        .opacity(isReady ? 1 : 0.5)
     }
 }
 

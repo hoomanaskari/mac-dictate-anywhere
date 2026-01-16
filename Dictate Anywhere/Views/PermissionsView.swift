@@ -21,65 +21,75 @@ struct PermissionsView: View {
                     .multilineTextAlignment(.center)
             }
 
-            VStack(spacing: 16) {
-                // Microphone permission
-                permissionRow(
-                    icon: "mic",
-                    title: "Microphone",
-                    description: "Required to capture your voice for transcription",
-                    isGranted: viewModel.permissionChecker.hasMicrophonePermission,
-                    action: {
-                        Task {
-                            await viewModel.requestMicrophonePermission()
-                        }
-                    }
-                )
+            permissionsContainer
 
-                Divider()
-                    .background(.white.opacity(0.1))
-
-                // Accessibility permission
-                permissionRow(
-                    icon: "accessibility",
-                    title: "Accessibility",
-                    description: "Required to detect fn key press globally",
-                    isGranted: viewModel.permissionChecker.hasAccessibilityPermission,
-                    action: {
-                        viewModel.openAccessibilitySettings()
-                    }
-                )
-            }
-            .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.05))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    }
-            }
-
-            // Recheck button
-            Button(action: {
-                viewModel.recheckPermissions()
-            }) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                    Text("Recheck Permissions")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .foregroundStyle(Color.accentColor)
-                .background {
-                    Capsule()
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                }
-            }
-            .buttonStyle(.plain)
+            recheckButton
         }
         .padding(24)
         .frame(width: 500, height: 500)
         .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+    }
+    
+    @ViewBuilder
+    private var permissionsContainer: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: 20) {
+                permissionsContent
+                    .padding()
+                    .glassEffect(in: .rect(cornerRadius: 12))
+            }
+        } else {
+            permissionsContent
+                .padding()
+                .background {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.05))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        }
+                }
+        }
+    }
+    
+    private var permissionsContent: some View {
+        VStack(spacing: 16) {
+            // Microphone permission
+            permissionRow(
+                icon: "mic",
+                title: "Microphone",
+                description: "Required to capture your voice for transcription",
+                isGranted: viewModel.permissionChecker.hasMicrophonePermission,
+                action: {
+                    Task {
+                        await viewModel.requestMicrophonePermission()
+                    }
+                }
+            )
+
+            Divider()
+                .background(.white.opacity(0.1))
+
+            // Accessibility permission
+            permissionRow(
+                icon: "accessibility",
+                title: "Accessibility",
+                description: "Required to detect fn key press globally",
+                isGranted: viewModel.permissionChecker.hasAccessibilityPermission,
+                action: {
+                    viewModel.openAccessibilitySettings()
+                }
+            )
+        }
+    }
+    
+    private var recheckButton: some View {
+        Button(action: {
+            viewModel.recheckPermissions()
+        }) {
+            Label("Recheck Permissions", systemImage: "arrow.clockwise")
+        }
+        .glassButtonStyle()
     }
 
     private func permissionRow(
@@ -120,17 +130,9 @@ struct PermissionsView: View {
             if !isGranted {
                 Button(action: action) {
                     Text(title == "Accessibility" ? "Open Settings" : "Grant")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .foregroundStyle(Color.accentColor)
-                        .background {
-                            Capsule()
-                                .stroke(Color.accentColor, lineWidth: 1)
-                        }
                 }
-                .buttonStyle(.plain)
+                .glassProminentButtonStyle()
+                .controlSize(.small)
             }
         }
     }
