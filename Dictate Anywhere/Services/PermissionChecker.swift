@@ -7,25 +7,55 @@ final class PermissionChecker {
     var hasMicrophonePermission: Bool = false
     var hasAccessibilityPermission: Bool = false
 
+    /// Background queue for permission checks to avoid blocking MainActor
+    private let permissionQueue = DispatchQueue(label: "com.dictate-anywhere.permissions", qos: .userInitiated)
+
     init() {
-        checkPermissions()
+        // Check permissions in background to avoid blocking MainActor on startup
+        permissionQueue.async { [weak self] in
+            self?.checkPermissionsSync()
+        }
     }
 
+    /// Checks permissions asynchronously (runs off MainActor)
     func checkPermissions() {
-        checkMicrophonePermission()
-        checkAccessibilityPermission()
+        permissionQueue.async { [weak self] in
+            self?.checkPermissionsSync()
+        }
+    }
+
+    /// Checks permissions and waits for completion (async version)
+    func checkPermissionsAsync() async {
+        await withCheckedContinuation { continuation in
+            permissionQueue.async { [weak self] in
+                self?.checkPermissionsSync()
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Synchronous version for background queue use only
+    private func checkPermissionsSync() {
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        let hasMic = micStatus == .authorized
+        let hasAx = AXIsProcessTrusted()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.hasMicrophonePermission = hasMic
+            self?.hasAccessibilityPermission = hasAx
+        }
     }
 
     // MARK: - Microphone Permission
 
     func checkMicrophonePermission() {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            hasMicrophonePermission = true
-        case .notDetermined, .denied, .restricted:
-            hasMicrophonePermission = false
-        @unknown default:
-            hasMicrophonePermission = false
+        permissionQueue.async { [weak self] in
+            let status = AVCaptureDevice.authorizationStatus(for: .audio)
+            let hasMic = status == .authorized
+
+            DispatchQueue.main.async {
+                self?.hasMicrophonePermission = hasMic
+            }
         }
     }
 
@@ -34,7 +64,9 @@ final class PermissionChecker {
 
         switch status {
         case .authorized:
-            hasMicrophonePermission = true
+            await MainActor.run {
+                hasMicrophonePermission = true
+            }
             return true
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
@@ -43,7 +75,9 @@ final class PermissionChecker {
             }
             return granted
         case .denied, .restricted:
-            hasMicrophonePermission = false
+            await MainActor.run {
+                hasMicrophonePermission = false
+            }
             return false
         @unknown default:
             return false
@@ -53,7 +87,13 @@ final class PermissionChecker {
     // MARK: - Accessibility Permission
 
     func checkAccessibilityPermission() {
-        hasAccessibilityPermission = AXIsProcessTrusted()
+        permissionQueue.async { [weak self] in
+            let hasAx = AXIsProcessTrusted()
+
+            DispatchQueue.main.async {
+                self?.hasAccessibilityPermission = hasAx
+            }
+        }
     }
 
     func requestAccessibilityPermission() {

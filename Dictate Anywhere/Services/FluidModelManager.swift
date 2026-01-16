@@ -16,6 +16,9 @@ final class FluidModelManager {
     private let isModelDownloadedKey = "isFluidModelDownloaded"
     private let hasCleanedUpWhisperKitKey = "hasCleanedUpWhisperKitModels"
 
+    /// Background queue for file system operations to avoid blocking MainActor
+    private let fileQueue = DispatchQueue(label: "com.dictate-anywhere.model-files", qos: .userInitiated)
+
     // MARK: - Observable State
 
     /// Whether the model is downloaded and ready
@@ -24,11 +27,27 @@ final class FluidModelManager {
     // MARK: - Initialization
 
     init() {
-        // Check if models actually exist on disk on init
-        isModelDownloaded = checkModelExistsOnDisk()
+        // Use cached value initially for fast startup (avoid blocking MainActor)
+        isModelDownloaded = UserDefaults.standard.bool(forKey: isModelDownloadedKey)
 
-        // One-time cleanup of old WhisperKit models
-        cleanupOldWhisperKitModels()
+        // Verify actual disk state in background, then cleanup old models
+        fileQueue.async { [weak self] in
+            guard let self = self else { return }
+            let exists = self.checkModelExistsOnDiskSync()
+            let needsCleanup = !UserDefaults.standard.bool(forKey: self.hasCleanedUpWhisperKitKey)
+
+            DispatchQueue.main.async {
+                self.isModelDownloaded = exists
+                if !exists {
+                    UserDefaults.standard.set(false, forKey: self.isModelDownloadedKey)
+                }
+            }
+
+            // One-time cleanup of old WhisperKit models (in background)
+            if needsCleanup {
+                self.cleanupOldWhisperKitModelsSync()
+            }
+        }
     }
 
     /// Download progress (0.0 to 1.0)
@@ -53,8 +72,18 @@ final class FluidModelManager {
         return homeDir.appendingPathComponent("Library/Application Support/FluidAudio/Models")
     }
 
-    /// Checks if model files exist on disk (regardless of in-memory state)
-    func checkModelExistsOnDisk() -> Bool {
+    /// Checks if model files exist on disk (async version - runs off MainActor)
+    func checkModelExistsOnDisk() async -> Bool {
+        return await withCheckedContinuation { continuation in
+            fileQueue.async {
+                let exists = self.checkModelExistsOnDiskSync()
+                continuation.resume(returning: exists)
+            }
+        }
+    }
+
+    /// Checks if model files exist on disk (synchronous - for background queue use only)
+    private func checkModelExistsOnDiskSync() -> Bool {
         let fileManager = FileManager.default
         let cachePath = getFluidAudioCachePath()
 
@@ -67,8 +96,29 @@ final class FluidModelManager {
         return false
     }
 
-    /// Deletes the FluidAudio model files from disk
-    func deleteModelFiles() throws {
+    /// Deletes the FluidAudio model files from disk (async - runs off MainActor)
+    func deleteModelFiles() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            fileQueue.async {
+                do {
+                    try self.deleteModelFilesSync()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+
+        // Update UI state on MainActor
+        await MainActor.run {
+            self.loadedModels = nil
+            self.isModelDownloaded = false
+            UserDefaults.standard.set(false, forKey: self.isModelDownloadedKey)
+        }
+    }
+
+    /// Deletes the FluidAudio model files from disk (synchronous - for background queue use only)
+    private func deleteModelFilesSync() throws {
         let fileManager = FileManager.default
         let cachePath = getFluidAudioCachePath()
 
@@ -82,17 +132,10 @@ final class FluidModelManager {
                 }
             }
         }
-
-        // Clear in-memory state
-        loadedModels = nil
-        isModelDownloaded = false
-        UserDefaults.standard.set(false, forKey: isModelDownloadedKey)
     }
 
-    /// Cleans up old WhisperKit model files (one-time migration)
-    private func cleanupOldWhisperKitModels() {
-        guard !UserDefaults.standard.bool(forKey: hasCleanedUpWhisperKitKey) else { return }
-
+    /// Cleans up old WhisperKit model files (synchronous - for background queue use only)
+    private func cleanupOldWhisperKitModelsSync() {
         let fileManager = FileManager.default
         let homeDir = fileManager.homeDirectoryForCurrentUser
 
@@ -108,7 +151,9 @@ final class FluidModelManager {
             }
         }
 
-        UserDefaults.standard.set(true, forKey: hasCleanedUpWhisperKitKey)
+        DispatchQueue.main.async {
+            UserDefaults.standard.set(true, forKey: self.hasCleanedUpWhisperKitKey)
+        }
     }
 
     // MARK: - Public Methods
@@ -127,8 +172,8 @@ final class FluidModelManager {
             throw FluidModelError.downloadInProgress
         }
 
-        // Check if models exist on disk (will be fast if cached)
-        let modelsExist = checkModelExistsOnDisk()
+        // Check if models exist on disk (runs off MainActor)
+        let modelsExist = await checkModelExistsOnDisk()
 
         await MainActor.run {
             isDownloading = true
