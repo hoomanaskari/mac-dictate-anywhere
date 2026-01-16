@@ -1,6 +1,63 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Dictation Operation Actor
+
+/// Actor to manage dictation operation state atomically and prevent race conditions
+private actor DictationOperationManager {
+    enum OperationState {
+        case idle
+        case starting
+        case active
+        case stopping
+    }
+
+    private var state: OperationState = .idle
+    private var operationID: UInt64 = 0
+
+    /// Attempts to start a new dictation operation. Returns operation ID if successful, nil if already in progress.
+    func tryStart() -> UInt64? {
+        guard state == .idle else { return nil }
+        state = .starting
+        operationID += 1
+        return operationID
+    }
+
+    /// Marks the operation as fully active (recording started successfully)
+    func setActive() {
+        if state == .starting {
+            state = .active
+        }
+    }
+
+    /// Attempts to stop the current operation. Returns true if this call should handle the stop.
+    func tryStop() -> Bool {
+        guard state == .starting || state == .active else { return false }
+        state = .stopping
+        return true
+    }
+
+    /// Resets to idle state
+    func reset() {
+        state = .idle
+    }
+
+    /// Returns current state for checking
+    func currentState() -> OperationState {
+        return state
+    }
+
+    /// Checks if a given operation ID is still the current one
+    func isCurrentOperation(_ id: UInt64) -> Bool {
+        return operationID == id
+    }
+
+    /// Force reset for emergency recovery - always succeeds
+    func forceReset() {
+        state = .idle
+    }
+}
+
 @Observable
 final class DictationViewModel {
     // MARK: - State
@@ -75,14 +132,14 @@ final class DictationViewModel {
     private var watchdogTask: Task<Void, Never>?
     private var windowCloseObserver: Any?
 
+    /// Tracked task for hotkey-triggered dictation to prevent accumulation
+    private var hotkeyTask: Task<Void, Never>?
+
     /// Tracks if the current dictation session is using hands-free mode
     private var isHandsFreeSession: Bool = false
 
-    /// Lock to prevent concurrent start/stop operations causing race conditions
-    private var isDictationOperationInProgress: Bool = false
-
-    /// Maximum time to wait for recording loop completion (seconds)
-    private let maxRecordingWaitTime: TimeInterval = 5.0
+    /// Actor-based lock to prevent concurrent start/stop operations causing race conditions
+    private let operationManager = DictationOperationManager()
 
     /// Watchdog timeout for stuck dictation sessions (seconds)
     private let watchdogTimeout: TimeInterval = 30.0
@@ -98,6 +155,7 @@ final class DictationViewModel {
         setupTask?.cancel()
         audioLevelTask?.cancel()
         watchdogTask?.cancel()
+        hotkeyTask?.cancel()
         keyboardMonitor.stopMonitoring()
         if let observer = windowCloseObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -136,8 +194,13 @@ final class DictationViewModel {
     /// Sets up keyboard monitoring callbacks
     private func setupKeyboardCallbacks() {
         keyboardMonitor.onFnKeyDown = { [weak self] in
-            Task { @MainActor in
-                guard let self = self else { return }
+            guard let self = self else { return }
+
+            // Cancel any pending hotkey task to prevent accumulation
+            self.hotkeyTask?.cancel()
+
+            self.hotkeyTask = Task { @MainActor [weak self] in
+                guard let self = self, !Task.isCancelled else { return }
 
                 // In hands-free mode, a second press while listening stops dictation
                 if self.settings.isHandsFreeEnabled && self.state == .listening {
@@ -149,8 +212,13 @@ final class DictationViewModel {
         }
 
         keyboardMonitor.onFnKeyUp = { [weak self] in
-            Task { @MainActor in
-                guard let self = self else { return }
+            guard let self = self else { return }
+
+            // Cancel any pending hotkey task to prevent accumulation
+            self.hotkeyTask?.cancel()
+
+            self.hotkeyTask = Task { @MainActor [weak self] in
+                guard let self = self, !Task.isCancelled else { return }
 
                 // In hands-free mode, ignore key release during dictation
                 if self.settings.isHandsFreeEnabled && self.state == .listening {
@@ -161,15 +229,17 @@ final class DictationViewModel {
 
                 // Ensure overlay is hidden if we're not actively transcribing
                 // This handles edge cases where state gets out of sync
+                guard !Task.isCancelled else { return }
                 try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
                 self.ensureOverlayHiddenIfInactive()
             }
         }
 
         // Escape key callback for hands-free mode cancellation
         keyboardMonitor.onEscapeKeyPressed = { [weak self] in
-            Task { @MainActor in
-                guard let self = self else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, !Task.isCancelled else { return }
 
                 // Only handle Escape during hands-free dictation
                 if self.isHandsFreeSession && self.state == .listening {
@@ -236,11 +306,17 @@ final class DictationViewModel {
 
     /// Starts dictation (recording and live transcription)
     func startDictation() async {
-        // Prevent concurrent start/stop operations
-        guard !isDictationOperationInProgress else { return }
-        guard case .ready = state else { return }
+        // Atomically acquire the operation lock via actor
+        guard let operationID = await operationManager.tryStart() else {
+            // Another operation is in progress - ignore this request
+            return
+        }
 
-        isDictationOperationInProgress = true
+        // Check app state
+        guard case .ready = state else {
+            await operationManager.reset()
+            return
+        }
 
         // Track if this is a hands-free session
         isHandsFreeSession = settings.isHandsFreeEnabled
@@ -251,7 +327,7 @@ final class DictationViewModel {
         // Show overlay with loading state
         overlayController.show(state: .loading)
 
-        // Start watchdog timer for emergency recovery
+        // Start watchdog timer for emergency recovery (runs off MainActor)
         startWatchdog()
 
         // In hands-free mode, start Escape key monitoring for cancellation
@@ -263,7 +339,8 @@ final class DictationViewModel {
         // This works the same in both hold mode and hands-free mode
         if settings.isAutoStopEnabled {
             transcriptionService.onEndOfUtterance = { [weak self] in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
+                    guard !Task.isCancelled else { return }
                     await self?.handleEndOfUtterance()
                 }
             }
@@ -271,18 +348,25 @@ final class DictationViewModel {
             transcriptionService.onEndOfUtterance = nil
         }
 
-        // Start recording
+        // Start recording (this is an async operation that may take time)
         await transcriptionService.startRecording(deviceID: microphoneManager.selectedDeviceID)
+
+        // Check if operation was cancelled while we were starting recording
+        guard await operationManager.isCurrentOperation(operationID) else {
+            await transcriptionService.forceCancel()
+            return
+        }
 
         // Wait for microphone to actually start capturing audio
         let audioReady = await transcriptionService.waitForAudioReady(timeout: 2.0)
 
-        // Check if user released FN key while we were waiting
-        guard case .listening = state else {
+        // Check if operation was cancelled or state changed while we were waiting
+        guard await operationManager.isCurrentOperation(operationID),
+              case .listening = state else {
             // State changed during wait (user released key early) - cleanup required
             await transcriptionService.forceCancel()
             stopWatchdog()
-            isDictationOperationInProgress = false
+            await operationManager.reset()
             return
         }
 
@@ -291,10 +375,13 @@ final class DictationViewModel {
             await transcriptionService.forceCancel()
             overlayController.hide()
             stopWatchdog()
-            isDictationOperationInProgress = false
+            await operationManager.reset()
             state = .ready
             return
         }
+
+        // Mark operation as fully active
+        await operationManager.setActive()
 
         // Start audio level monitoring
         audioLevelMonitor.startMonitoring(samplesProvider: transcriptionService)
@@ -306,6 +393,7 @@ final class DictationViewModel {
         overlayController.show(state: .listening(level: 0, transcript: ""))
 
         // Start combined audio level + transcript update loop for overlay (~30 FPS)
+        // This task will self-terminate when state changes from .listening
         audioLevelTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             while self.state == .listening && !Task.isCancelled {
@@ -317,29 +405,20 @@ final class DictationViewModel {
             }
         }
 
-        // Wait for recording to complete (with timeout to prevent hanging)
-        let waitStartTime = Date()
-        while transcriptionService.isRecording {
-            // Check for timeout to prevent infinite hang
-            if Date().timeIntervalSince(waitStartTime) > maxRecordingWaitTime {
-                // Emergency timeout - force stop recording
-                await transcriptionService.forceCancel()
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-
-        // Clear the lock after recording loop completes
-        isDictationOperationInProgress = false
+        // NOTE: We no longer block here waiting for recording to complete.
+        // The stopDictation() method will handle stopping the recording when user releases the key.
+        // This prevents MainActor starvation from the blocking while loop.
     }
 
     /// Stops dictation and inserts transcript into focused input (or clipboard)
     func stopDictation() async {
         guard case .listening = state else { return }
 
-        // If a dictation operation is in progress (startDictation is running),
-        // use force stop instead to avoid deadlock
-        if isDictationOperationInProgress {
+        // Atomically try to acquire stop lock via actor
+        let canStop = await operationManager.tryStop()
+        if !canStop {
+            // Operation not in a stoppable state - might be starting or already stopping
+            // Use force stop as fallback
             await forceStopDictation()
             return
         }
@@ -365,6 +444,7 @@ final class DictationViewModel {
         overlayController.show(state: .processing)
 
         // Get final transcript (stopRecording handles the case where recording already stopped)
+        // This runs the transcription on a background thread via the service
         let rawTranscript = await transcriptionService.stopRecording()
 
         // Apply filler word removal if enabled
@@ -392,6 +472,9 @@ final class DictationViewModel {
 
         // Reset hands-free session flag
         isHandsFreeSession = false
+
+        // Reset the operation lock
+        await operationManager.reset()
 
         state = .ready
     }
@@ -429,8 +512,8 @@ final class DictationViewModel {
         // Reset hands-free session flag
         isHandsFreeSession = false
 
-        // Clear the lock if it was set
-        isDictationOperationInProgress = false
+        // Force reset the operation lock
+        await operationManager.forceReset()
 
         // Return to ready state - no text insertion, no success overlay
         state = .ready
@@ -444,6 +527,8 @@ final class DictationViewModel {
         // Cancel all tasks
         audioLevelTask?.cancel()
         audioLevelTask = nil
+        hotkeyTask?.cancel()
+        hotkeyTask = nil
 
         // Stop Escape monitoring (in case hands-free mode was active)
         keyboardMonitor.stopEscapeMonitoring()
@@ -458,8 +543,8 @@ final class DictationViewModel {
         // Reset hands-free session flag
         isHandsFreeSession = false
 
-        // Clear the dictation operation lock
-        isDictationOperationInProgress = false
+        // Force reset the operation lock
+        await operationManager.forceReset()
 
         // Reset to ready state (only if we were in a dictation-related state)
         switch state {
@@ -486,27 +571,48 @@ final class DictationViewModel {
     // MARK: - Watchdog Timer
 
     /// Starts a watchdog timer that triggers emergency recovery if dictation hangs
+    /// IMPORTANT: Runs on a detached task (not MainActor) so it can execute even when MainActor is starved
     private func startWatchdog() {
         watchdogTask?.cancel()
-        watchdogTask = Task { @MainActor [weak self] in
-            guard let self = self else { return }
 
-            try? await Task.sleep(for: .seconds(self.watchdogTimeout))
+        // Capture timeout value before detaching
+        let timeout = watchdogTimeout
+
+        // Use detached task so watchdog can fire even if MainActor is blocked
+        watchdogTask = Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
 
             guard !Task.isCancelled else { return }
+            guard let self = self else { return }
 
-            // If still in dictation state after timeout, force recovery
-            switch self.state {
-            case .listening:
-                // Dictation stuck in listening state - force stop
+            // Check state and perform recovery on MainActor
+            await MainActor.run {
+                // If still in dictation state after timeout, force recovery
+                switch self.state {
+                case .listening, .processing:
+                    // Dictation stuck - need emergency recovery
+                    // We'll trigger force stop which handles all cleanup
+                    break
+                default:
+                    // Not stuck, watchdog can exit
+                    return
+                }
+            }
+
+            // If we get here, we need to force stop
+            // Check again in case state changed
+            let needsRecovery = await MainActor.run {
+                switch self.state {
+                case .listening, .processing:
+                    return true
+                default:
+                    return false
+                }
+            }
+
+            if needsRecovery {
+                // Perform force stop - this will reset state properly
                 await self.forceStopDictation()
-            case .processing:
-                // Stuck in processing - force return to ready
-                self.overlayController.hide(afterDelay: 0)
-                self.isDictationOperationInProgress = false
-                self.state = .ready
-            default:
-                break
             }
         }
     }
