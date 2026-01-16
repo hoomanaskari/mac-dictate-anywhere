@@ -29,30 +29,49 @@ final class MicrophoneManager {
     var availableMicrophones: [Microphone] = []
     var selectedMicrophone: Microphone?
 
+    /// Background queue for CoreAudio operations to avoid blocking MainActor
+    private let audioQueue = DispatchQueue(label: "com.dictate-anywhere.microphone-manager", qos: .userInitiated)
+
     // MARK: - Initialization
 
     private init() {
-        refreshMicrophones()
+        // Refresh microphones in background to avoid blocking MainActor on startup
+        audioQueue.async { [weak self] in
+            self?.refreshMicrophonesSync()
+        }
         setupDeviceChangeListener()
     }
 
     // MARK: - Public Methods
 
-    /// Refreshes the list of available microphones
+    /// Refreshes the list of available microphones (runs CoreAudio queries off MainActor)
     func refreshMicrophones() {
-        availableMicrophones = getInputDevices()
-
-        // Select default microphone if none selected
-        if selectedMicrophone == nil {
-            selectedMicrophone = availableMicrophones.first(where: { $0.isDefault })
-                ?? availableMicrophones.first
+        audioQueue.async { [weak self] in
+            self?.refreshMicrophonesSync()
         }
+    }
 
-        // Verify selected microphone still exists
-        if let selected = selectedMicrophone,
-           !availableMicrophones.contains(where: { $0.id == selected.id }) {
-            selectedMicrophone = availableMicrophones.first(where: { $0.isDefault })
-                ?? availableMicrophones.first
+    /// Synchronous version for background queue use only
+    private func refreshMicrophonesSync() {
+        let devices = getInputDevices()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            self.availableMicrophones = devices
+
+            // Select default microphone if none selected
+            if self.selectedMicrophone == nil {
+                self.selectedMicrophone = devices.first(where: { $0.isDefault })
+                    ?? devices.first
+            }
+
+            // Verify selected microphone still exists
+            if let selected = self.selectedMicrophone,
+               !devices.contains(where: { $0.id == selected.id }) {
+                self.selectedMicrophone = devices.first(where: { $0.isDefault })
+                    ?? devices.first
+            }
         }
     }
 
@@ -227,9 +246,8 @@ final class MicrophoneManager {
         )
 
         listenerBlock = { [weak self] _, _ in
-            DispatchQueue.main.async {
-                self?.refreshMicrophones()
-            }
+            // Refresh in background queue (which will then update main)
+            self?.refreshMicrophones()
         }
 
         if let block = listenerBlock {
