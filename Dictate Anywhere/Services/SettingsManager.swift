@@ -22,6 +22,9 @@ final class SettingsManager {
 
     static let shared = SettingsManager()
 
+    /// Background queue for sound playback to avoid blocking MainActor
+    private let soundQueue = DispatchQueue(label: "com.dictate-anywhere.sounds", qos: .userInteractive)
+
     // MARK: - UserDefaults Keys
 
     private enum Keys {
@@ -252,12 +255,16 @@ final class SettingsManager {
 
     // MARK: - Methods
 
-    /// Plays a sound effect if enabled, with the configured volume
+    /// Plays a sound effect if enabled, with the configured volume (runs off MainActor)
     func playSound(_ name: String) {
         guard soundEffectsEnabled else { return }
-        guard let sound = NSSound(named: name) else { return }
-        sound.volume = soundEffectsVolume
-        sound.play()
+        let volume = soundEffectsVolume
+
+        soundQueue.async {
+            guard let sound = NSSound(named: name) else { return }
+            sound.volume = volume
+            sound.play()
+        }
     }
 
     /// Clears the custom shortcut

@@ -258,8 +258,8 @@ final class DictationViewModel {
     }
 
     private func performSetup() async {
-        // Check permissions
-        permissionChecker.checkPermissions()
+        // Check permissions (runs off MainActor)
+        await permissionChecker.checkPermissionsAsync()
 
         // If permissions missing, show permissions screen
         if !permissionChecker.allPermissionsGranted {
@@ -267,8 +267,8 @@ final class DictationViewModel {
             return
         }
 
-        // Check if model already exists on disk
-        let modelExistsOnDisk = modelManager.checkModelExistsOnDisk()
+        // Check if model already exists on disk (runs off MainActor)
+        let modelExistsOnDisk = await modelManager.checkModelExistsOnDisk()
 
         // Show appropriate state based on whether model needs downloading
         if modelExistsOnDisk {
