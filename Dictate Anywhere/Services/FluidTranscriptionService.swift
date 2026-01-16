@@ -347,7 +347,10 @@ final class FluidTranscriptionService {
     /// Stops recording and returns the final transcript
     func stopRecording() async -> String {
         // Atomically check and set state to prevent multiple stops
-        guard await stateManager.tryStop() else {
+        let canStop = await stateManager.tryStop()
+        if !canStop {
+            // May be in .starting or .idle state - force cleanup to ensure clean state
+            await forceCancel()
             return currentTranscript
         }
 
@@ -398,6 +401,11 @@ final class FluidTranscriptionService {
 
     /// Force cancels recording from any state
     func forceCancel() async {
+        // IMMEDIATELY set isRecording to false to unblock any wait loops
+        await MainActor.run {
+            self.isRecording = false
+        }
+
         // Stop the transcription loop
         isTranscribing = false
         transcriptionTask?.cancel()
@@ -406,8 +414,8 @@ final class FluidTranscriptionService {
         // Stop audio capture
         stopAudioEngine()
 
+        // Clear transcript
         await MainActor.run {
-            self.isRecording = false
             self.currentTranscript = ""
         }
 
