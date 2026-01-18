@@ -236,10 +236,12 @@ struct ModelsView: View {
         viewModel.transcriptionService.cleanup()
 
         // Actually delete model files from disk
-        do {
-            try viewModel.modelManager.deleteModelFiles()
-        } catch {
-            viewModel.modelManager.errorMessage = "Failed to delete model: \(error.localizedDescription)"
+        Task {
+            do {
+                try await viewModel.modelManager.deleteModelFiles()
+            } catch {
+                viewModel.modelManager.errorMessage = "Failed to delete model: \(error.localizedDescription)"
+            }
         }
     }
 }
