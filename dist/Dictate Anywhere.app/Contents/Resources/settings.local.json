@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:argmaxinc.github.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:blog.rampatra.com)",
+      "Bash(xcodebuild:*)",
+      "Bash(xargs:*)",
+      "WebFetch(domain:swiftpackageindex.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(find:*)",
+      "Bash(open:*)",
+      "Bash(cd:*)",
+      "Skill(frontend-design)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(curl:*)",
+      "Bash(grep:*)",
+      "Bash(codesign:*)",
+      "Bash(xattr:*)",
+      "Bash(spctl --assess --type execute --verbose:*)",
+      "Bash(log show:*)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(plutil:*)",
+      "Bash(git clone:*)",
+      "WebFetch(domain:forums.swift.org)"
+    ]
+  }
+}
