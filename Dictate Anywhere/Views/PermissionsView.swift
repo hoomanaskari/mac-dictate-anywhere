@@ -84,10 +84,18 @@ struct PermissionsView: View {
     }
     
     private var recheckButton: some View {
-        Button(action: {
-            viewModel.recheckPermissions()
+        let allGranted = viewModel.permissionChecker.allPermissionsGranted
+
+        return Button(action: {
+            Task {
+                await viewModel.recheckPermissions()
+            }
         }) {
-            Label("Recheck Permissions", systemImage: "arrow.clockwise")
+            if allGranted {
+                Label("Continue", systemImage: "arrow.right")
+            } else {
+                Label("Recheck Permissions", systemImage: "arrow.clockwise")
+            }
         }
         .glassButtonStyle()
     }

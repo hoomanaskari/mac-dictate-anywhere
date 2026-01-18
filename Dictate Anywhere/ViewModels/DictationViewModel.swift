@@ -654,8 +654,9 @@ final class DictationViewModel {
     }
 
     /// Rechecks permissions (useful after user grants them in System Settings)
-    func recheckPermissions() {
-        permissionChecker.checkPermissions()
+    /// Waits for the async check to complete before evaluating the result
+    func recheckPermissions() async {
+        await permissionChecker.checkPermissionsAsync()
 
         if permissionChecker.allPermissionsGranted && state == .permissionsMissing {
             initialize()
