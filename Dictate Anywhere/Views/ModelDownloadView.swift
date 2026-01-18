@@ -27,7 +27,7 @@ struct ModelDownloadView: View {
                     ZStack(alignment: .leading) {
                         // Background track
                         Capsule()
-                            .fill(Color.white.opacity(0.1))
+                            .fill(AppTheme.progressTrack)
                             .frame(height: 6)
 
                         // Progress fill
@@ -56,7 +56,7 @@ struct ModelDownloadView: View {
         }
         .padding(32)
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 }
 
@@ -79,7 +79,7 @@ struct InitializingView: View {
         }
         .padding(32)
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 }
 

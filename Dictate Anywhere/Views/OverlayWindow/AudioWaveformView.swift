@@ -111,5 +111,5 @@ struct AudioWaveformView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     .padding()
-    .background(.black)
+    .appBackground()
 }

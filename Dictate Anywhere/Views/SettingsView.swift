@@ -65,7 +65,7 @@ struct SettingsView: View {
             ))
         }
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 
     // MARK: - App Behavior Section
@@ -75,7 +75,7 @@ struct SettingsView: View {
             // Section Header
             Text("App Behavior")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Launch at Login Toggle
@@ -93,19 +93,19 @@ struct SettingsView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // App Appears In Picker
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "macwindow")
                     .font(.system(size: 16))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(AppTheme.textMediumEmphasis)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("App Appears In")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
 
                     Text("Minimal footprint. Relaunch from Applications")
                         .font(.system(size: 12))
@@ -128,7 +128,7 @@ struct SettingsView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Help Improve Toggle
             settingsRow(
@@ -145,14 +145,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Keyboard Shortcuts Section
@@ -162,7 +155,7 @@ struct SettingsView: View {
             // Section Header
             Text("Keyboard Shortcuts")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Fn Key Toggle
@@ -180,7 +173,7 @@ struct SettingsView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Custom Shortcut Toggle
             settingsRow(
@@ -219,14 +212,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Language Section
@@ -236,7 +222,7 @@ struct SettingsView: View {
             // Section Header
             Text("Language")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Language Picker Button
@@ -244,7 +230,7 @@ struct SettingsView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "globe")
                         .font(.system(size: 16))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(AppTheme.textMediumEmphasis)
                         .frame(width: 24)
 
                     HStack(spacing: 8) {
@@ -254,7 +240,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(settings.selectedLanguage.displayName)
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.primary)
 
                             Text(settings.selectedLanguage.nativeName)
                                 .font(.system(size: 12))
@@ -272,14 +258,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Dictation Section
@@ -289,7 +268,7 @@ struct SettingsView: View {
             // Section Header
             Text("Dictation")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Hands-Free Mode Toggle
@@ -326,7 +305,7 @@ struct SettingsView: View {
             }
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Auto-Stop Toggle (always visible)
             settingsRow(
@@ -343,14 +322,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Text Processing Section
@@ -360,7 +332,7 @@ struct SettingsView: View {
             // Section Header
             Text("Text Processing")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Filler Word Removal Toggle
@@ -384,17 +356,18 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
 
-                    TextField("um, uh, erm, er, hmm", text: $fillerWordsText)
-                        .textFieldStyle(.plain)
+                    TextEditor(text: $fillerWordsText)
                         .font(.system(size: 13))
-                        .foregroundStyle(.white)
-                        .padding(10)
+                        .foregroundStyle(.primary)
+                        .scrollContentBackground(.hidden)
+                        .frame(height: 60)
+                        .padding(8)
                         .background {
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.white.opacity(0.05))
+                                .fill(AppTheme.buttonFill)
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                        .stroke(AppTheme.border, lineWidth: 1)
                                 }
                         }
                         .onAppear {
@@ -420,7 +393,7 @@ struct SettingsView: View {
                             Text("Reset to Defaults")
                                 .font(.system(size: 12))
                         }
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(AppTheme.textLowEmphasis)
                     }
                     .buttonStyle(.plain)
                 }
@@ -428,14 +401,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Sound Effects Section
@@ -445,7 +411,7 @@ struct SettingsView: View {
             // Section Header
             Text("Sound Effects")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Sound Effects Toggle
@@ -467,7 +433,7 @@ struct SettingsView: View {
                 HStack(spacing: 12) {
                     Image(systemName: "speaker.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(AppTheme.textSubtle)
 
                     Slider(
                         value: Binding(
@@ -476,11 +442,11 @@ struct SettingsView: View {
                         ),
                         in: 0.0...1.0
                     )
-                    .tint(.white.opacity(0.6))
+                    .tint(AppTheme.textMediumEmphasis)
 
                     Image(systemName: "speaker.wave.3.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(AppTheme.textSubtle)
 
                     Text("\(Int(settings.soundEffectsVolume * 100))%")
                         .font(.system(size: 12, weight: .medium))
@@ -491,14 +457,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Overlay Section
@@ -508,7 +467,7 @@ struct SettingsView: View {
             // Section Header
             Text("Overlay")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(AppTheme.textLowEmphasis)
                 .textCase(.uppercase)
 
             // Show Text Preview Toggle
@@ -526,14 +485,7 @@ struct SettingsView: View {
             }
         }
         .padding(16)
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.03))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                }
-        }
+        .containerBackground()
     }
 
     // MARK: - Settings Row
@@ -547,13 +499,13 @@ struct SettingsView: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 16))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(AppTheme.textMediumEmphasis)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text(description)
                     .font(.system(size: 12))

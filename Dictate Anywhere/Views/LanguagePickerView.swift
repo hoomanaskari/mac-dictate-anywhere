@@ -29,7 +29,7 @@ struct LanguagePickerView: View {
             header
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Search field
             searchField

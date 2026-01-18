@@ -53,10 +53,10 @@ struct ShortcutRecorderView: View {
                 .padding(.vertical, 6)
                 .background {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isRecording ? Color.red.opacity(0.1) : Color.white.opacity(0.05))
+                        .fill(isRecording ? Color.red.opacity(0.1) : AppTheme.buttonFill)
                         .overlay {
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(isRecording ? Color.red.opacity(0.5) : Color.white.opacity(0.2), lineWidth: 1)
+                                .stroke(isRecording ? Color.red.opacity(0.5) : AppTheme.borderProminent, lineWidth: 1)
                         }
                 }
             }
@@ -189,5 +189,5 @@ struct ShortcutRecorderView: View {
     }
     .padding()
     .frame(width: 320)
-    .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+    .appBackground()
 }
