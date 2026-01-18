@@ -144,6 +144,18 @@ final class DictationViewModel {
     /// Watchdog timeout for stuck dictation sessions (seconds)
     private let watchdogTimeout: TimeInterval = 30.0
 
+    // MARK: - Low Volume Detection
+
+    /// System microphone input volume threshold below which we show a warning (25%)
+    private let systemVolumeWarningThreshold: Float = 0.25
+
+    /// Tracks whether we're currently showing the low volume warning
+    private var isShowingLowVolumeWarning = false
+
+    /// Counter for periodic volume checks (every ~1 second at 30 FPS)
+    private var volumeCheckCounter = 0
+    private let volumeCheckInterval = 30  // Check every 30 frames (~1 second)
+
     // MARK: - Initialization
 
     init() {
@@ -392,6 +404,13 @@ final class DictationViewModel {
         // Update overlay to listening state - microphone is confirmed ready
         overlayController.show(state: .listening(level: 0, transcript: ""))
 
+        // Reset low volume detection state
+        isShowingLowVolumeWarning = false
+        volumeCheckCounter = 0
+
+        // Check system mic volume immediately on start
+        checkAndUpdateLowVolumeWarning()
+
         // Start combined audio level + transcript update loop for overlay (~30 FPS)
         // This task will self-terminate when state changes from .listening
         audioLevelTask = Task { @MainActor [weak self] in
@@ -400,7 +419,21 @@ final class DictationViewModel {
                 let level = self.audioLevelMonitor.smoothedLevel
                 let transcript = self.transcriptionService.currentTranscript
                 self.currentTranscript = transcript
-                self.overlayController.show(state: .listening(level: level, transcript: transcript))
+
+                // Periodically check system mic volume (every ~1 second)
+                self.volumeCheckCounter += 1
+                if self.volumeCheckCounter >= self.volumeCheckInterval {
+                    self.volumeCheckCounter = 0
+                    self.checkAndUpdateLowVolumeWarning()
+                }
+
+                // Show appropriate overlay state based on volume warning status
+                if self.isShowingLowVolumeWarning {
+                    self.overlayController.show(state: .listeningLowVolume(level: level))
+                } else {
+                    self.overlayController.show(state: .listening(level: level, transcript: transcript))
+                }
+
                 try? await Task.sleep(for: .milliseconds(33))
             }
         }
@@ -725,5 +758,19 @@ final class DictationViewModel {
     private func dismissMenus() {
         // Post notification for AppDelegate to dismiss its menu
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
+    }
+
+    /// Checks system microphone volume and updates warning state
+    /// Only shows warning if volume is below threshold and device supports volume control
+    private func checkAndUpdateLowVolumeWarning() {
+        // Get system microphone input volume
+        guard let systemVolume = microphoneManager.getSelectedMicrophoneInputVolume() else {
+            // Device doesn't support volume control (USB mics, etc.) - no warning needed
+            isShowingLowVolumeWarning = false
+            return
+        }
+
+        // Update warning state based on threshold
+        isShowingLowVolumeWarning = systemVolume < systemVolumeWarningThreshold
     }
 }

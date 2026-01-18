@@ -85,6 +85,49 @@ final class MicrophoneManager {
         selectedMicrophone?.id
     }
 
+    /// Gets the input volume (gain) of the selected microphone (0.0 to 1.0)
+    /// Returns nil if volume cannot be determined (some devices don't support volume control)
+    func getSelectedMicrophoneInputVolume() -> Float? {
+        guard let deviceID = selectedDeviceID else { return nil }
+        return getInputVolume(for: deviceID)
+    }
+
+    /// Gets the input volume for a specific device
+    private func getInputVolume(for deviceID: AudioDeviceID) -> Float? {
+        // Try to get the main volume for input scope
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain  // Main/master channel
+        )
+
+        // Check if this property exists for the device
+        if AudioObjectHasProperty(deviceID, &propertyAddress) {
+            var volume: Float32 = 0
+            var dataSize = UInt32(MemoryLayout<Float32>.size)
+
+            let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &volume)
+            if status == noErr {
+                return volume
+            }
+        }
+
+        // Try channel 1 if main doesn't work
+        propertyAddress.mElement = 1
+        if AudioObjectHasProperty(deviceID, &propertyAddress) {
+            var volume: Float32 = 0
+            var dataSize = UInt32(MemoryLayout<Float32>.size)
+
+            let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, &volume)
+            if status == noErr {
+                return volume
+            }
+        }
+
+        // Device doesn't support volume control (common for USB mics, built-in mics)
+        return nil
+    }
+
     // MARK: - Private Methods
 
     private func getInputDevices() -> [Microphone] {

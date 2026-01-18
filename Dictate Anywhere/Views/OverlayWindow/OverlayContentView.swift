@@ -33,6 +33,8 @@ struct OverlayContentView: View {
         switch state {
         case .listening:
             return showTextPreview ? 320 : 200
+        case .listeningLowVolume:
+            return 200
         case .copiedOnly:
             return 220
         default:
@@ -45,6 +47,8 @@ struct OverlayContentView: View {
         switch state {
         case .listening:
             return showTextPreview ? 140 : 60
+        case .listeningLowVolume:
+            return 60
         default:
             return 60
         }
@@ -59,6 +63,9 @@ struct OverlayContentView: View {
 
         case .listening(let level, let transcript):
             ListeningView(audioLevel: level, transcript: transcript, showTextPreview: showTextPreview)
+
+        case .listeningLowVolume(let level):
+            LowVolumeWarningView(audioLevel: level)
 
         case .processing:
             ProcessingIndicatorView()
@@ -110,6 +117,31 @@ struct ListeningView: View {
         } else {
             // Compact view with waveform only
             AudioWaveformView(audioLevel: audioLevel)
+        }
+    }
+}
+
+/// Warning view shown when microphone volume is too low for reliable transcription
+struct LowVolumeWarningView: View {
+    let audioLevel: Float
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Warning icon
+            Image(systemName: "speaker.wave.1")
+                .font(.system(size: 18))
+                .foregroundStyle(.orange)
+
+            // Warning text
+            Text("Volume too low")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(AppTheme.textHighEmphasis)
+
+            Spacer()
+
+            // Small waveform showing actual level
+            AudioWaveformView(audioLevel: audioLevel)
+                .frame(width: 40)
         }
     }
 }
@@ -196,6 +228,11 @@ struct CopiedOnlyIndicatorView: View {
 #Preview("Listening - Compact (No Text)") {
     // Note: Toggle showTextPreview in SettingsManager to see this preview
     OverlayContentView(state: .listening(level: 0.5, transcript: ""))
+        .appBackground()
+}
+
+#Preview("Low Volume Warning") {
+    OverlayContentView(state: .listeningLowVolume(level: 0.05))
         .appBackground()
 }
 

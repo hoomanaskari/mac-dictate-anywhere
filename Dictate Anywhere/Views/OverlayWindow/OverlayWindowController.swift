@@ -5,6 +5,7 @@ import SwiftUI
 enum OverlayState: Equatable {
     case loading                                        // Spinner while initializing microphone
     case listening(level: Float, transcript: String)    // Waveform with audio level and live transcript
+    case listeningLowVolume(level: Float)              // Warning when microphone volume is too low
     case processing                                     // Brief processing indicator
     case success                                        // Checkmark before hiding
     case copiedOnly                                     // Text copied but auto-paste failed
@@ -179,6 +180,9 @@ final class OverlayWindowController {
             } else {
                 return (200, 60)
             }
+        case .listeningLowVolume:
+            // Same as compact listening size
+            return (200, 60)
         case .copiedOnly:
             // Wider to show the "Press Cmd+V" message
             return (220, 60)

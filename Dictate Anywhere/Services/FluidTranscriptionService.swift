@@ -110,7 +110,8 @@ final class FluidTranscriptionService {
 
     // Configuration
     /// Minimum RMS audio energy required for transcription (prevents hallucinations on silence)
-    private let minAudioEnergy: Float = 0.02
+    /// Lowered from 0.02 to 0.005 to support quieter microphone volumes (~25%)
+    private let minAudioEnergy: Float = 0.005
 
     /// Transcription interval in milliseconds
     private let transcriptionIntervalMs: UInt64 = 500
