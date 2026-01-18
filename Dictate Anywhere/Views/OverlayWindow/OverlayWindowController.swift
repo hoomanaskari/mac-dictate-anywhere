@@ -7,6 +7,7 @@ enum OverlayState: Equatable {
     case listening(level: Float, transcript: String)    // Waveform with audio level and live transcript
     case processing                                     // Brief processing indicator
     case success                                        // Checkmark before hiding
+    case copiedOnly                                     // Text copied but auto-paste failed
 }
 
 /// Controls the floating, non-interactive overlay window
@@ -178,6 +179,9 @@ final class OverlayWindowController {
             } else {
                 return (200, 60)
             }
+        case .copiedOnly:
+            // Wider to show the "Press Cmd+V" message
+            return (220, 60)
         default:
             // Loading, processing, success all use compact size
             return (180, 60)
