@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 // MARK: - Dictation Operation Actor
 

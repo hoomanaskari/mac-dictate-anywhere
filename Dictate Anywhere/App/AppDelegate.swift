@@ -135,9 +135,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         mainWindow = window
 
-        // Keep window on top (floating)
-        window.level = .floating
-
         // Window styling
         window.isMovableByWindowBackground = true
         window.titlebarAppearsTransparent = true
@@ -166,11 +163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Show the window
         if let window = mainWindow {
-            window.level = .floating
             window.makeKeyAndOrderFront(nil)
         } else if let window = NSApp.windows.first {
             mainWindow = window
-            window.level = .floating
             window.makeKeyAndOrderFront(nil)
         }
     }
@@ -236,10 +231,7 @@ extension AppDelegate: NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // Ensure window stays floating
-        if let window = notification.object as? NSWindow {
-            window.level = .floating
-        }
+        // Window became key - no special handling needed
     }
 }
 
