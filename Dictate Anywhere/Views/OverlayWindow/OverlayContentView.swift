@@ -17,7 +17,7 @@ struct OverlayContentView: View {
                 .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        .stroke(AppTheme.borderProminent, lineWidth: 1)
                 )
 
             // Content based on state
@@ -87,7 +87,7 @@ struct ListeningView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         Text(transcript.isEmpty ? "Listening..." : transcript)
                             .font(.system(size: 19, weight: .light))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .foregroundStyle(AppTheme.textHighEmphasis)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .id("transcript")
@@ -122,11 +122,11 @@ struct LoadingIndicatorView: View {
         HStack(spacing: 12) {
             ProgressView()
                 .scaleEffect(0.8)
-                .tint(.white)
+                .tint(.primary)
 
             Text("Preparing...")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
         }
     }
 }
@@ -141,7 +141,7 @@ struct ProcessingIndicatorView: View {
 
             Text("Processing...")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
         }
     }
 }
@@ -156,7 +156,7 @@ struct SuccessIndicatorView: View {
 
             Text("Done")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
         }
     }
 }
@@ -171,7 +171,7 @@ struct CopiedOnlyIndicatorView: View {
 
             Text("Press Cmd+V")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
         }
     }
 }
@@ -180,36 +180,36 @@ struct CopiedOnlyIndicatorView: View {
 
 #Preview("Loading") {
     OverlayContentView(state: .loading)
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Listening - Empty") {
     OverlayContentView(state: .listening(level: 0.2, transcript: ""))
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Listening - With Text") {
     OverlayContentView(state: .listening(level: 0.6, transcript: "Hello, this is a test of the live transcription feature"))
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Listening - Compact (No Text)") {
     // Note: Toggle showTextPreview in SettingsManager to see this preview
     OverlayContentView(state: .listening(level: 0.5, transcript: ""))
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Processing") {
     OverlayContentView(state: .processing)
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Success") {
     OverlayContentView(state: .success)
-        .background(.black)
+        .appBackground()
 }
 
 #Preview("Copied Only") {
     OverlayContentView(state: .copiedOnly)
-        .background(.black)
+        .appBackground()
 }

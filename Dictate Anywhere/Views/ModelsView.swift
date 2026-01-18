@@ -46,7 +46,7 @@ struct ModelsView: View {
             }
         }
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
         .alert("Delete Model?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
@@ -80,7 +80,7 @@ struct ModelsView: View {
             VStack(spacing: 8) {
                 Text("Model Downloaded")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text("~500 MB")
                     .font(.system(size: 14))
@@ -110,7 +110,7 @@ struct ModelsView: View {
             VStack(spacing: 8) {
                 Text("Speech Model Required")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text("Download the speech recognition model to start using dictation.")
                     .font(.system(size: 13))
@@ -145,7 +145,7 @@ struct ModelsView: View {
             VStack(spacing: 8) {
                 Text("Downloading Model")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.primary)
 
                 Text("~500 MB")
                     .font(.system(size: 14))
@@ -157,7 +157,7 @@ struct ModelsView: View {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(Color.white.opacity(0.1))
+                            .fill(AppTheme.progressTrack)
                             .frame(height: 6)
 
                         Capsule()
@@ -181,7 +181,7 @@ struct ModelsView: View {
     private var fluidAudioAttribution: some View {
         VStack(spacing: 12) {
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             VStack(spacing: 8) {
                 Text("Powered by FluidAudio")
@@ -190,7 +190,7 @@ struct ModelsView: View {
 
                 Text("Parakeet ASR · On-device processing")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(AppTheme.textSubtle)
 
                 Button(action: {
                     if let url = URL(string: "https://github.com/FluidInference/FluidAudio") {

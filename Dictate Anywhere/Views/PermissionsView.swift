@@ -27,7 +27,7 @@ struct PermissionsView: View {
         }
         .padding(24)
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
     
     @ViewBuilder
@@ -41,14 +41,7 @@ struct PermissionsView: View {
         } else {
             permissionsContent
                 .padding()
-                .background {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        }
-                }
+                .containerBackground()
         }
     }
     
@@ -68,7 +61,7 @@ struct PermissionsView: View {
             )
 
             Divider()
-                .background(.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Accessibility permission
             permissionRow(

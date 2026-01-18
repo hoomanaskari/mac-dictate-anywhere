@@ -22,7 +22,7 @@ struct DictationView: View {
             Spacer()
 
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(AppTheme.divider)
 
             // Bottom buttons
             VStack(spacing: 8) {
@@ -32,7 +32,7 @@ struct DictationView: View {
         }
         .padding(24)
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 
     // MARK: - Status View
@@ -144,10 +144,10 @@ struct DictationView: View {
         .padding(.vertical, 4)
         .background {
             Capsule()
-                .fill(Color.white.opacity(0.05))
+                .fill(AppTheme.buttonFill)
                 .overlay {
                     Capsule()
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        .stroke(AppTheme.border, lineWidth: 1)
                 }
         }
     }
@@ -198,7 +198,7 @@ struct DictationView: View {
             .padding(.vertical, 2)
             .background {
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    .stroke(AppTheme.borderProminent, lineWidth: 1)
             }
     }
 
@@ -248,18 +248,11 @@ struct DictationView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .contentShape(Rectangle())
-                .background {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        }
-                }
+                .buttonBackground()
             }
             .buttonStyle(.plain)
             .disabled(!isReady)
@@ -313,18 +306,11 @@ struct DictationView: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(AppTheme.textHighEmphasis)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .contentShape(Rectangle())
-                .background {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        }
-                }
+                .buttonBackground()
             }
             .buttonStyle(.plain)
             .disabled(!isReady)

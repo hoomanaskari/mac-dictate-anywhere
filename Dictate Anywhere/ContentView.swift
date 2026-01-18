@@ -42,7 +42,7 @@ struct ContentView: View {
             }
         }
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 
     private func loadingView(_ message: String) -> some View {
@@ -55,7 +55,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 
     private func errorView(_ message: String) -> some View {
@@ -82,7 +82,7 @@ struct ContentView: View {
         }
         .padding(32)
         .frame(width: 500, height: 500)
-        .background(Color(red: 0x21/255, green: 0x21/255, blue: 0x26/255))
+        .appBackground()
     }
 }
 
