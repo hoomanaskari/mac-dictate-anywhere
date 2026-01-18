@@ -455,20 +455,30 @@ final class DictationViewModel {
         ClipboardManager.shared.lastTranscript = finalTranscript
 
         // Insert text into focused input (uses clipboard + Cmd+V)
+        var insertionResult: TextInsertionResult = .failed
         if !finalTranscript.isEmpty {
             // Dismiss any open menus to ensure paste goes to correct app
             dismissMenus()
             try? await Task.sleep(for: .milliseconds(50))
-            _ = await textInsertionService.insertText(finalTranscript)
+            insertionResult = await textInsertionService.insertText(finalTranscript)
             // Play sound to indicate completion
             settings.playSound("Pop")
         }
 
-        // Show success state
-        overlayController.show(state: .success)
-
-        // Hide overlay after delay (0.5 seconds)
-        overlayController.hide(afterDelay: 0.5)
+        // Show appropriate state based on insertion result
+        if insertionResult.didAutoPaste || finalTranscript.isEmpty {
+            // Auto-paste succeeded or nothing to paste
+            overlayController.show(state: .success)
+            overlayController.hide(afterDelay: 0.5)
+        } else if insertionResult.didCopyToClipboard {
+            // Text copied but auto-paste failed - show hint to user
+            overlayController.show(state: .copiedOnly)
+            overlayController.hide(afterDelay: 1.5)  // Longer delay so user sees the message
+        } else {
+            // Complete failure
+            overlayController.show(state: .success)
+            overlayController.hide(afterDelay: 0.5)
+        }
 
         // Reset hands-free session flag
         isHandsFreeSession = false

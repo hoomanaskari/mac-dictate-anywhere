@@ -33,6 +33,8 @@ struct OverlayContentView: View {
         switch state {
         case .listening:
             return showTextPreview ? 320 : 200
+        case .copiedOnly:
+            return 220
         default:
             return 180
         }
@@ -63,6 +65,9 @@ struct OverlayContentView: View {
 
         case .success:
             SuccessIndicatorView()
+
+        case .copiedOnly:
+            CopiedOnlyIndicatorView()
         }
     }
 }
@@ -156,6 +161,21 @@ struct SuccessIndicatorView: View {
     }
 }
 
+/// Shown when text was copied but auto-paste failed
+struct CopiedOnlyIndicatorView: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 18))
+                .foregroundStyle(.orange)
+
+            Text("Press Cmd+V")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+    }
+}
+
 // MARK: - Previews
 
 #Preview("Loading") {
@@ -186,5 +206,10 @@ struct SuccessIndicatorView: View {
 
 #Preview("Success") {
     OverlayContentView(state: .success)
+        .background(.black)
+}
+
+#Preview("Copied Only") {
+    OverlayContentView(state: .copiedOnly)
         .background(.black)
 }
