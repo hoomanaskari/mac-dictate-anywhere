@@ -369,3 +369,6 @@ This is an Xcode project. Build using:
 - **No network calls:** Audio never leaves the device
 - **Clipboard access:** Only writes when user triggers dictation
 - **Accessibility API:** Only reads focused element type, never content
+
+## When asked to create .dmg:
+Use create-dmg installed via Home Brew to create a DMG
