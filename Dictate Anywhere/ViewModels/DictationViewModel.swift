@@ -130,7 +130,6 @@ final class DictationViewModel {
 
     private var setupTask: Task<Void, Never>?
     private var audioLevelTask: Task<Void, Never>?
-    private var watchdogTask: Task<Void, Never>?
     private var windowCloseObserver: Any?
 
     /// Tracked task for hotkey-triggered dictation to prevent accumulation
@@ -141,9 +140,6 @@ final class DictationViewModel {
 
     /// Actor-based lock to prevent concurrent start/stop operations causing race conditions
     private let operationManager = DictationOperationManager()
-
-    /// Watchdog timeout for stuck dictation sessions (seconds)
-    private let watchdogTimeout: TimeInterval = 30.0
 
     // MARK: - Low Volume Detection
 
@@ -167,7 +163,6 @@ final class DictationViewModel {
     deinit {
         setupTask?.cancel()
         audioLevelTask?.cancel()
-        watchdogTask?.cancel()
         hotkeyTask?.cancel()
         keyboardMonitor.stopMonitoring()
         if let observer = windowCloseObserver {
@@ -340,9 +335,6 @@ final class DictationViewModel {
         // Show overlay with loading state
         overlayController.show(state: .loading)
 
-        // Start watchdog timer for emergency recovery (runs off MainActor)
-        startWatchdog()
-
         // In hands-free mode, start Escape key monitoring for cancellation
         if isHandsFreeSession {
             keyboardMonitor.startEscapeMonitoring()
@@ -378,7 +370,6 @@ final class DictationViewModel {
               case .listening = state else {
             // State changed during wait (user released key early) - cleanup required
             await transcriptionService.forceCancel()
-            stopWatchdog()
             await operationManager.reset()
             return
         }
@@ -387,7 +378,6 @@ final class DictationViewModel {
             // Timeout waiting for audio - something may be wrong with the microphone
             await transcriptionService.forceCancel()
             overlayController.hide()
-            stopWatchdog()
             await operationManager.reset()
             state = .ready
             return
@@ -457,11 +447,8 @@ final class DictationViewModel {
             return
         }
 
-        // IMMEDIATELY update state to prevent race with watchdog
+        // Update state
         state = .processing
-
-        // Stop watchdog timer
-        stopWatchdog()
 
         // Stop Escape monitoring if in hands-free mode
         if isHandsFreeSession {
@@ -538,9 +525,6 @@ final class DictationViewModel {
     func cancelDictation() async {
         guard case .listening = state else { return }
 
-        // Stop watchdog timer
-        stopWatchdog()
-
         // Stop Escape monitoring
         keyboardMonitor.stopEscapeMonitoring()
 
@@ -565,9 +549,6 @@ final class DictationViewModel {
 
     /// Force stops dictation regardless of current state - used as emergency recovery
     func forceStopDictation() async {
-        // Stop watchdog timer
-        stopWatchdog()
-
         // Cancel all tasks
         audioLevelTask?.cancel()
         audioLevelTask = nil
@@ -610,61 +591,6 @@ final class DictationViewModel {
             // Not in active dictation, ensure overlay is hidden
             overlayController.hide(afterDelay: 0)
         }
-    }
-
-    // MARK: - Watchdog Timer
-
-    /// Starts a watchdog timer that triggers emergency recovery if dictation hangs
-    /// IMPORTANT: Runs on a detached task (not MainActor) so it can execute even when MainActor is starved
-    private func startWatchdog() {
-        watchdogTask?.cancel()
-
-        // Capture timeout value before detaching
-        let timeout = watchdogTimeout
-
-        // Use detached task so watchdog can fire even if MainActor is blocked
-        watchdogTask = Task.detached { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
-
-            guard !Task.isCancelled else { return }
-            guard let self = self else { return }
-
-            // Check state and perform recovery on MainActor
-            await MainActor.run {
-                // If still in dictation state after timeout, force recovery
-                switch self.state {
-                case .listening, .processing:
-                    // Dictation stuck - need emergency recovery
-                    // We'll trigger force stop which handles all cleanup
-                    break
-                default:
-                    // Not stuck, watchdog can exit
-                    return
-                }
-            }
-
-            // If we get here, we need to force stop
-            // Check again in case state changed
-            let needsRecovery = await MainActor.run {
-                switch self.state {
-                case .listening, .processing:
-                    return true
-                default:
-                    return false
-                }
-            }
-
-            if needsRecovery {
-                // Perform force stop - this will reset state properly
-                await self.forceStopDictation()
-            }
-        }
-    }
-
-    /// Stops the watchdog timer
-    private func stopWatchdog() {
-        watchdogTask?.cancel()
-        watchdogTask = nil
     }
 
     // MARK: - Permission Actions
