@@ -49,6 +49,9 @@ Thumbs.db
 # Distribution
 dist/
 
+# Local docs
+RELEASE.md
+
 # User-specific xcconfig files
 *.xcconfig
 !*.shared.xcconfig
