@@ -8,6 +8,14 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 
 <!-- Add a screenshot or demo GIF here -->
 <!-- ![Dictate Anywhere Demo](screenshots/demo.gif) -->
+<!-- Screenshots -->
+<table>
+  <tr>
+    <td><img width="300" alt="Screenshot 1" src="https://github.com/user-attachments/assets/2aff5593-dacc-4574-bcd5-44a1c0299d50" /></td>
+    <td><img width="300" alt="Screenshot 2" src="https://github.com/user-attachments/assets/32edd417-4976-4c41-a939-67a5667560ad" /></td>
+    <td><img width="300" alt="Screenshot 3" src="https://github.com/user-attachments/assets/fa07fdab-18b5-48bf-ad9b-704452a01ea4" /></td>
+  </tr>
+</table>
 
 ## Features
 
