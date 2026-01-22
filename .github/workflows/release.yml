@@ -1,0 +1,29 @@
+# .github/workflows/release.yml
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download `Dictate.Anywhere.dmg` below
+            2. Open the DMG and drag **Dictate Anywhere** to Applications
+            3. Launch and grant Microphone + Accessibility permissions
+
+            ## What's Changed
+
+            <!-- Release notes will be auto-generated above -->
