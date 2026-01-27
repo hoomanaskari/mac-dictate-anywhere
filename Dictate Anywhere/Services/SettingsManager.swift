@@ -45,6 +45,7 @@ final class SettingsManager {
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
         static let analyticsEnabled = "analyticsEnabled"
+        static let useSystemDefaultMicrophone = "useSystemDefaultMicrophone"
     }
 
     // MARK: - Fn Key Settings
@@ -191,6 +192,16 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Microphone Settings
+
+    /// Whether to automatically follow the system default microphone
+    /// When enabled, the app always uses whatever device macOS considers the default input
+    var useSystemDefaultMicrophone: Bool {
+        didSet {
+            UserDefaults.standard.set(useSystemDefaultMicrophone, forKey: Keys.useSystemDefaultMicrophone)
+        }
+    }
+
     // MARK: - Computed Properties
 
     /// Returns true if a custom shortcut has been configured
@@ -251,6 +262,9 @@ final class SettingsManager {
         appAppearanceMode = AppAppearanceMode(rawValue: appearanceModeString) ?? .menuBarOnly
 
         analyticsEnabled = UserDefaults.standard.object(forKey: Keys.analyticsEnabled) as? Bool ?? false
+
+        // Load microphone settings (default: use system default)
+        useSystemDefaultMicrophone = UserDefaults.standard.object(forKey: Keys.useSystemDefaultMicrophone) as? Bool ?? true
     }
 
     // MARK: - Methods

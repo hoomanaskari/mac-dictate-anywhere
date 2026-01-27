@@ -29,6 +29,11 @@ final class MicrophoneManager {
     var availableMicrophones: [Microphone] = []
     var selectedMicrophone: Microphone?
 
+    /// Whether to automatically follow the system default microphone
+    var useSystemDefault: Bool {
+        SettingsManager.shared.useSystemDefaultMicrophone
+    }
+
     /// Background queue for CoreAudio operations to avoid blocking MainActor
     private let audioQueue = DispatchQueue(label: "com.dictate-anywhere.microphone-manager", qos: .userInitiated)
 
@@ -54,23 +59,30 @@ final class MicrophoneManager {
     /// Synchronous version for background queue use only
     private func refreshMicrophonesSync() {
         let devices = getInputDevices()
+        let shouldUseSystemDefault = SettingsManager.shared.useSystemDefaultMicrophone
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
             self.availableMicrophones = devices
 
-            // Select default microphone if none selected
-            if self.selectedMicrophone == nil {
+            if shouldUseSystemDefault {
+                // Always select the current system default microphone
                 self.selectedMicrophone = devices.first(where: { $0.isDefault })
                     ?? devices.first
-            }
+            } else {
+                // Manual mode: only change if selected device is nil or gone
+                if self.selectedMicrophone == nil {
+                    self.selectedMicrophone = devices.first(where: { $0.isDefault })
+                        ?? devices.first
+                }
 
-            // Verify selected microphone still exists
-            if let selected = self.selectedMicrophone,
-               !devices.contains(where: { $0.id == selected.id }) {
-                self.selectedMicrophone = devices.first(where: { $0.isDefault })
-                    ?? devices.first
+                // Verify selected microphone still exists
+                if let selected = self.selectedMicrophone,
+                   !devices.contains(where: { $0.id == selected.id }) {
+                    self.selectedMicrophone = devices.first(where: { $0.isDefault })
+                        ?? devices.first
+                }
             }
         }
     }
@@ -83,6 +95,20 @@ final class MicrophoneManager {
     /// Gets the device ID for the selected microphone (for use with audio capture)
     var selectedDeviceID: AudioDeviceID? {
         selectedMicrophone?.id
+    }
+
+    /// Gets the effective device ID for recording
+    /// In system default mode, queries the current default device ID fresh from CoreAudio
+    /// In manual mode, uses the user's selected device
+    var effectiveDeviceID: AudioDeviceID? {
+        if useSystemDefault {
+            // Query current default device ID at recording time
+            // This ensures we always get the most up-to-date default,
+            // rather than relying on AVAudioEngine's cached default
+            return getDefaultInputDeviceID()
+        } else {
+            return selectedMicrophone?.id
+        }
     }
 
     /// Gets the input volume (gain) of the selected microphone (0.0 to 1.0)
