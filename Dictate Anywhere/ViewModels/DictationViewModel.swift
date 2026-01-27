@@ -354,7 +354,9 @@ final class DictationViewModel {
         }
 
         // Start recording (this is an async operation that may take time)
-        await transcriptionService.startRecording(deviceID: microphoneManager.selectedDeviceID)
+        // Use effectiveDeviceID which returns nil in system default mode,
+        // allowing AVAudioEngine to use the current system default device
+        await transcriptionService.startRecording(deviceID: microphoneManager.effectiveDeviceID)
 
         // Check if operation was cancelled while we were starting recording
         guard await operationManager.isCurrentOperation(operationID) else {

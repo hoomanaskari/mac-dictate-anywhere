@@ -80,34 +80,65 @@ struct DictationView: View {
     // MARK: - Microphone Selector
 
     private var microphoneSelector: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "mic.circle")
-                .font(.system(size: 18))
-                .foregroundStyle(.secondary)
-
-            Picker("Microphone", selection: Binding(
-                get: { viewModel.microphoneManager.selectedMicrophone },
-                set: { mic in
-                    if let mic = mic {
-                        viewModel.microphoneManager.selectMicrophone(mic)
+        VStack(spacing: 8) {
+            // System default toggle
+            HStack(spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { SettingsManager.shared.useSystemDefaultMicrophone },
+                    set: { newValue in
+                        SettingsManager.shared.useSystemDefaultMicrophone = newValue
+                        // Refresh microphones to update selection when toggling
+                        viewModel.microphoneManager.refreshMicrophones()
+                    }
+                )) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text("Use System Default")
+                            .font(.system(size: 12))
                     }
                 }
-            )) {
-                ForEach(viewModel.microphoneManager.availableMicrophones) { mic in
-                    Text(microphoneDisplayName(for: mic))
-                        .tag(Optional(mic))
-                }
+                .toggleStyle(.checkbox)
+                .disabled(!isMicrophoneSelectionEnabled)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
+
+            // Microphone picker
+            HStack(spacing: 8) {
+                Image(systemName: "mic.circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.secondary)
+
+                Picker("Microphone", selection: Binding(
+                    get: { viewModel.microphoneManager.selectedMicrophone },
+                    set: { mic in
+                        if let mic = mic {
+                            viewModel.microphoneManager.selectMicrophone(mic)
+                        }
+                    }
+                )) {
+                    ForEach(viewModel.microphoneManager.availableMicrophones) { mic in
+                        Text(microphoneDisplayName(for: mic))
+                            .tag(Optional(mic))
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .disabled(SettingsManager.shared.useSystemDefaultMicrophone)
+                .opacity(SettingsManager.shared.useSystemDefaultMicrophone ? 0.6 : 1)
+            }
         }
         .disabled(!isMicrophoneSelectionEnabled)
         .opacity(isMicrophoneSelectionEnabled ? 1 : 0.6)
     }
 
     private func microphoneDisplayName(for mic: MicrophoneManager.Microphone) -> String {
+        let settings = SettingsManager.shared
+        if settings.useSystemDefaultMicrophone && mic.isDefault {
+            return "\(mic.name) (System Default)"
+        }
         if mic.isDefault {
-            return "Default System Microphone"
+            return "\(mic.name) (Default)"
         }
         return mic.name
     }
