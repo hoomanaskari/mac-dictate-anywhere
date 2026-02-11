@@ -37,6 +37,8 @@ struct OverlayContentView: View {
             return 200
         case .copiedOnly:
             return 220
+        case .error(let message):
+            return min(max(CGFloat(message.count) * 6.5, 230), 300)
         default:
             return 180
         }
@@ -75,6 +77,9 @@ struct OverlayContentView: View {
 
         case .copiedOnly:
             CopiedOnlyIndicatorView()
+
+        case .error(let message):
+            ErrorIndicatorView(message: message)
         }
     }
 }
@@ -208,6 +213,25 @@ struct CopiedOnlyIndicatorView: View {
     }
 }
 
+/// Shown when microphone startup fails and dictation cannot begin.
+struct ErrorIndicatorView: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "mic.slash.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(.orange)
+
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.textHighEmphasis)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+        }
+    }
+}
+
 // MARK: - Previews
 
 #Preview("Loading") {
@@ -248,5 +272,10 @@ struct CopiedOnlyIndicatorView: View {
 
 #Preview("Copied Only") {
     OverlayContentView(state: .copiedOnly)
+        .appBackground()
+}
+
+#Preview("Error") {
+    OverlayContentView(state: .error(message: "Mic unavailable. Check Sound Input."))
         .appBackground()
 }

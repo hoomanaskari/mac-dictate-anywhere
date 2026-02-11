@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import AppKit
+import CoreAudio
+import os
 
 // MARK: - Dictation Operation Actor
 
@@ -140,6 +142,10 @@ final class DictationViewModel {
 
     /// Actor-based lock to prevent concurrent start/stop operations causing race conditions
     private let operationManager = DictationOperationManager()
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "DictationViewModel"
+    )
 
     // MARK: - Low Volume Detection
 
@@ -152,6 +158,20 @@ final class DictationViewModel {
     /// Counter for periodic volume checks (every ~1 second at 30 FPS)
     private var volumeCheckCounter = 0
     private let volumeCheckInterval = 30  // Check every 30 frames (~1 second)
+
+    // MARK: - Startup Recovery
+
+    private struct StartupRouteAttempt {
+        let label: String
+        let deviceID: AudioDeviceID?
+    }
+
+    private let startupTotalBudgetSec: TimeInterval = 3.0
+    private let attemptStartTimeoutSec: TimeInterval = 0.75
+    private let attemptAudioReadyTimeoutSec: TimeInterval = 0.20
+    private let interAttemptDelaySec: TimeInterval = 0.05
+    private let startupErrorOverlayDurationSec: TimeInterval = 2.0
+    private var startupErrorVisibleUntil: Date?
 
     // MARK: - Initialization
 
@@ -328,6 +348,7 @@ final class DictationViewModel {
 
         // Track if this is a hands-free session
         isHandsFreeSession = settings.isHandsFreeEnabled
+        startupErrorVisibleUntil = nil
 
         state = .listening
         currentTranscript = ""
@@ -353,35 +374,111 @@ final class DictationViewModel {
             transcriptionService.onEndOfUtterance = nil
         }
 
-        // Start recording (this is an async operation that may take time)
-        // Use effectiveDeviceID which returns nil in system default mode,
-        // allowing AVAudioEngine to use the current system default device
-        await transcriptionService.startRecording(deviceID: microphoneManager.effectiveDeviceID)
+        let startupDeadline = Date().addingTimeInterval(startupTotalBudgetSec)
+        let startupAttempts = buildStartupAttempts()
+        var startupFailureReason = "Microphone unavailable."
+        var startedSuccessfully = false
 
-        // Check if operation was cancelled while we were starting recording
-        guard await operationManager.isCurrentOperation(operationID) else {
-            await transcriptionService.forceCancel()
-            return
+        for (index, attempt) in startupAttempts.enumerated() {
+            guard await isCurrentStartupOperation(operationID) else {
+                await transcriptionService.forceCancel()
+                await operationManager.reset()
+                return
+            }
+
+            let remainingBudget = startupDeadline.timeIntervalSinceNow
+            guard remainingBudget > 0 else {
+                startupFailureReason = "Microphone startup timed out."
+                break
+            }
+
+            let startTimeout = min(attemptStartTimeoutSec, remainingBudget)
+            let attemptStart = Date()
+            let deviceID = attempt.deviceID.map(String.init) ?? "system-default"
+
+            logger.info(
+                "Mic startup attempt \(index + 1, privacy: .public)/\(startupAttempts.count, privacy: .public) route=\(attempt.label, privacy: .public) device=\(deviceID, privacy: .public) timeout=\(startTimeout, privacy: .public)s"
+            )
+
+            let startOutcome = await transcriptionService.startRecording(
+                deviceID: attempt.deviceID,
+                startTimeout: startTimeout
+            )
+
+            guard await isCurrentStartupOperation(operationID) else {
+                await transcriptionService.forceCancel()
+                await operationManager.reset()
+                return
+            }
+
+            let attemptElapsed = Date().timeIntervalSince(attemptStart)
+
+            switch startOutcome {
+            case .started:
+                let remainingAfterStart = startupDeadline.timeIntervalSinceNow
+                let audioReadyTimeout = min(
+                    attemptAudioReadyTimeoutSec,
+                    max(remainingAfterStart, 0)
+                )
+                let audioReady = audioReadyTimeout > 0
+                    ? await transcriptionService.waitForAudioReady(timeout: audioReadyTimeout)
+                    : false
+
+                if audioReady {
+                    logger.info(
+                        "Mic startup succeeded route=\(attempt.label, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
+                    )
+                    startedSuccessfully = true
+                    break
+                }
+
+                startupFailureReason = "Microphone started but no audio signal was detected."
+                logger.warning(
+                    "Mic startup produced no audio route=\(attempt.label, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
+                )
+                await transcriptionService.forceCancel()
+
+            case .timedOut:
+                startupFailureReason = "Microphone startup timed out."
+                logger.error(
+                    "Mic startup timeout route=\(attempt.label, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
+                )
+                await transcriptionService.forceCancel()
+
+            case .failed(let message):
+                startupFailureReason = message
+                logger.error(
+                    "Mic startup failed route=\(attempt.label, privacy: .public) reason=\(message, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
+                )
+                await transcriptionService.forceCancel()
+            }
+
+            if startedSuccessfully {
+                break
+            }
+
+            let remainingAfterAttempt = startupDeadline.timeIntervalSinceNow
+            if remainingAfterAttempt <= 0 {
+                break
+            }
+
+            if index < startupAttempts.count - 1 {
+                let interAttemptDelay = min(interAttemptDelaySec, remainingAfterAttempt)
+                let delayNanoseconds = UInt64(max(0, interAttemptDelay) * 1_000_000_000)
+                if delayNanoseconds > 0 {
+                    try? await Task.sleep(nanoseconds: delayNanoseconds)
+                }
+            }
         }
 
-        // Wait for microphone to actually start capturing audio
-        let audioReady = await transcriptionService.waitForAudioReady(timeout: 2.0)
-
-        // Check if operation was cancelled or state changed while we were waiting
-        guard await operationManager.isCurrentOperation(operationID),
-              case .listening = state else {
-            // State changed during wait (user released key early) - cleanup required
+        guard await isCurrentStartupOperation(operationID) else {
             await transcriptionService.forceCancel()
             await operationManager.reset()
             return
         }
 
-        guard audioReady else {
-            // Timeout waiting for audio - something may be wrong with the microphone
-            await transcriptionService.forceCancel()
-            overlayController.hide()
-            await operationManager.reset()
-            state = .ready
+        guard startedSuccessfully else {
+            await handleMicrophoneStartupFailure(reason: startupFailureReason)
             return
         }
 
@@ -585,6 +682,13 @@ final class DictationViewModel {
     /// Ensures overlay is hidden when not in active dictation states
     /// Called after key release to guarantee cleanup
     private func ensureOverlayHiddenIfInactive() {
+        if let visibleUntil = startupErrorVisibleUntil {
+            if Date() < visibleUntil {
+                return
+            }
+            startupErrorVisibleUntil = nil
+        }
+
         switch state {
         case .listening, .processing:
             // Still active, don't hide
@@ -687,6 +791,62 @@ final class DictationViewModel {
     private func dismissMenus() {
         // Post notification for AppDelegate to dismiss its menu
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
+    }
+
+    private func buildStartupAttempts() -> [StartupRouteAttempt] {
+        var attempts: [StartupRouteAttempt] = []
+        var seenKeys = Set<String>()
+
+        func appendAttempt(label: String, deviceID: AudioDeviceID?) {
+            let key = deviceID.map { "id:\($0)" } ?? "id:nil"
+            guard !seenKeys.contains(key) else { return }
+            seenKeys.insert(key)
+            attempts.append(StartupRouteAttempt(label: label, deviceID: deviceID))
+        }
+
+        let configuredDevice = microphoneManager.effectiveDeviceID
+        appendAttempt(
+            label: "Configured (\(microphoneManager.microphoneName(for: configuredDevice)))",
+            deviceID: configuredDevice
+        )
+
+        appendAttempt(
+            label: "System Default (Implicit)",
+            deviceID: nil
+        )
+
+        if let builtInDevice = microphoneManager.builtInInputDeviceID() {
+            appendAttempt(
+                label: "Built-In (\(microphoneManager.microphoneName(for: builtInDevice)))",
+                deviceID: builtInDevice
+            )
+        }
+
+        return attempts
+    }
+
+    private func isCurrentStartupOperation(_ operationID: UInt64) async -> Bool {
+        guard await operationManager.isCurrentOperation(operationID) else { return false }
+        guard case .listening = state else { return false }
+        return true
+    }
+
+    private func handleMicrophoneStartupFailure(reason: String) async {
+        logger.error("Microphone startup failed after retries: \(reason, privacy: .public)")
+
+        await transcriptionService.forceCancel()
+        audioLevelMonitor.stopMonitoring()
+        audioLevelTask?.cancel()
+        audioLevelTask = nil
+        keyboardMonitor.stopEscapeMonitoring()
+
+        isHandsFreeSession = false
+        await operationManager.reset()
+        state = .ready
+
+        startupErrorVisibleUntil = Date().addingTimeInterval(startupErrorOverlayDurationSec)
+        overlayController.show(state: .error(message: "Mic unavailable. Check Sound Input."))
+        overlayController.hide(afterDelay: startupErrorOverlayDurationSec)
     }
 
     /// Checks system microphone volume and updates warning state

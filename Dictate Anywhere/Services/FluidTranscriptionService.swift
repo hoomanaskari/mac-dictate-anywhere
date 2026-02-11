@@ -11,6 +11,7 @@ import FluidAudio
 import AVFoundation
 import CoreAudio
 import Accelerate
+import os
 
 /// Actor to manage recording state atomically (Swift 6 compatible)
 private actor RecordingStateManager {
@@ -22,15 +23,19 @@ private actor RecordingStateManager {
     }
 
     private var state: State = .idle
+    private var startToken: UInt64 = 0
 
-    func tryStart() -> Bool {
-        guard state == .idle else { return false }
+    func tryStart() -> UInt64? {
+        guard state == .idle else { return nil }
         state = .starting
-        return true
+        startToken &+= 1
+        return startToken
     }
 
-    func setRecording() {
+    func completeStart(token: UInt64) -> Bool {
+        guard state == .starting, startToken == token else { return false }
         state = .recording
+        return true
     }
 
     func tryStop() -> Bool {
@@ -49,6 +54,7 @@ private actor RecordingStateManager {
 
     func reset() {
         state = .idle
+        startToken &+= 1
     }
 }
 
@@ -73,6 +79,31 @@ private actor AudioBufferActor {
     }
 }
 
+enum RecordingStartOutcome: Equatable {
+    case started
+    case failed(String)
+    case timedOut
+}
+
+private enum AudioEngineStartupOutcome {
+    case started(AVAudioEngine)
+    case failed(String)
+    case timedOut
+}
+
+private final class StartupOutcomeGate {
+    private let lock = NSLock()
+    private var resolved = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !resolved else { return false }
+        resolved = true
+        return true
+    }
+}
+
 @Observable
 final class FluidTranscriptionService {
     // MARK: - Properties
@@ -83,6 +114,10 @@ final class FluidTranscriptionService {
     private var transcriptionTask: Task<Void, Never>?
     private var isTranscribing = false
     private let stateManager = RecordingStateManager()
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "FluidTranscriptionService"
+    )
 
     /// Serial queue for audio engine operations to prevent concurrent setup/stop race conditions
     private let audioEngineQueue = DispatchQueue(label: "com.dictate-anywhere.audio-engine", qos: .userInitiated)
@@ -149,14 +184,16 @@ final class FluidTranscriptionService {
     // MARK: - Recording & Transcription
 
     /// Starts live recording and transcription
-    func startRecording(deviceID: AudioDeviceID? = nil) async {
+    func startRecording(deviceID: AudioDeviceID? = nil, startTimeout: TimeInterval = 0.75) async -> RecordingStartOutcome {
         // Atomically check and set state to prevent multiple starts
-        guard await stateManager.tryStart() else { return }
+        guard let startToken = await stateManager.tryStart() else {
+            return .failed("Recording is already in progress.")
+        }
 
         guard asrManager != nil else {
             errorMessage = "FluidAudio not initialized"
             await stateManager.reset()
-            return
+            return .failed("FluidAudio not initialized.")
         }
 
         await MainActor.run {
@@ -174,40 +211,50 @@ final class FluidTranscriptionService {
         isCheckingForEOU = false
 
         // Start audio capture
-        do {
-            try setupAndStartAudioEngine(deviceID: deviceID)
-        } catch {
-            await MainActor.run {
-                self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
-                self.isRecording = false
-            }
-            await stateManager.reset()
-            return
-        }
+        let startupOutcome = await setupAndStartAudioEngineWithTimeout(
+            deviceID: deviceID,
+            timeout: startTimeout
+        )
 
-        // Successfully started - update state
-        await stateManager.setRecording()
+        switch startupOutcome {
+        case .timedOut:
+            await handleStartupFailure(message: "Microphone startup timed out.")
+            return .timedOut
+
+        case .failed(let message):
+            await handleStartupFailure(message: "Failed to start recording: \(message)")
+            return .failed(message)
+
+        case .started(let engine):
+            // Prevent stale/lost-race startup tasks from reviving recording state.
+            let didCompleteStart = await stateManager.completeStart(token: startToken)
+            guard didCompleteStart else {
+                logger.warning("Ignored stale startup completion token=\(startToken, privacy: .public)")
+                teardownEngine(engine)
+                await handleStartupFailure(message: "Recording startup became stale.")
+                return .failed("Recording startup became stale.")
+            }
+
+            setActiveAudioEngine(engine)
+        }
 
         // Start transcription loop
         isTranscribing = true
         transcriptionTask = Task { [weak self] in
             await self?.transcriptionLoop()
         }
+
+        return .started
     }
 
     /// Sets up and starts the AVAudioEngine for recording
     /// Uses serial queue to prevent concurrent setup/stop race conditions
-    private func setupAndStartAudioEngine(deviceID: AudioDeviceID?) throws {
+    private func setupAndStartAudioEngine(deviceID: AudioDeviceID?) throws -> AVAudioEngine {
         // Ensure any previous engine is fully stopped before creating a new one
         stopAudioEngineSync()
 
         // Create a fresh audio engine
         let engine = AVAudioEngine()
-
-        // Protect access to audioEngine reference
-        audioEngineLock.lock()
-        self.audioEngine = engine
-        audioEngineLock.unlock()
 
         let inputNode = engine.inputNode
 
@@ -268,6 +315,8 @@ final class FluidTranscriptionService {
         guard engine.isRunning else {
             throw FluidTranscriptionError.audioEngineSetupFailed
         }
+
+        return engine
     }
 
     /// Sets the input device for the audio engine
@@ -419,6 +468,23 @@ final class FluidTranscriptionService {
         }
     }
 
+    private func setActiveAudioEngine(_ engine: AVAudioEngine) {
+        audioEngineLock.lock()
+        audioEngine = engine
+        audioEngineLock.unlock()
+    }
+
+    /// Stops and resets a provided engine instance that was never promoted to active.
+    private func teardownEngine(_ engine: AVAudioEngine) {
+        audioEngineQueue.async {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning {
+                engine.stop()
+            }
+            engine.reset()
+        }
+    }
+
     /// Stops the audio engine with proper cleanup (called from async context)
     private func stopAudioEngine() {
         audioEngineLock.lock()
@@ -469,6 +535,68 @@ final class FluidTranscriptionService {
         cachedSamples = []
 
         // Force reset state to idle
+        await stateManager.reset()
+    }
+
+    private func setupAndStartAudioEngineWithTimeout(
+        deviceID: AudioDeviceID?,
+        timeout: TimeInterval
+    ) async -> AudioEngineStartupOutcome {
+        let effectiveTimeout = max(0.05, timeout)
+
+        return await withCheckedContinuation { continuation in
+            let gate = StartupOutcomeGate()
+            let startupQueue = DispatchQueue(
+                label: "com.dictate-anywhere.audio-startup",
+                qos: .userInitiated
+            )
+
+            startupQueue.async { [weak self] in
+                guard let self = self else {
+                    if gate.claim() {
+                        continuation.resume(returning: .failed("Transcription service was released."))
+                    }
+                    return
+                }
+
+                do {
+                    let engine = try self.setupAndStartAudioEngine(deviceID: deviceID)
+                    if gate.claim() {
+                        continuation.resume(returning: .started(engine))
+                    } else {
+                        self.logger.warning("Discarding late audio engine startup result")
+                        self.teardownEngine(engine)
+                    }
+                } catch {
+                    if gate.claim() {
+                        continuation.resume(returning: .failed(error.localizedDescription))
+                    }
+                }
+            }
+
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + effectiveTimeout
+            ) {
+                if gate.claim() {
+                    continuation.resume(returning: .timedOut)
+                }
+            }
+        }
+    }
+
+    private func handleStartupFailure(message: String) async {
+        await MainActor.run {
+            self.errorMessage = message
+            self.isRecording = false
+            self.currentTranscript = ""
+        }
+
+        isTranscribing = false
+        transcriptionTask?.cancel()
+        transcriptionTask = nil
+        stopAudioEngine()
+        await audioBuffer.clear()
+        cachedSamples = []
         await stateManager.reset()
     }
 
@@ -574,7 +702,7 @@ final class FluidTranscriptionService {
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? currentTranscript : text
         } catch {
-            print("Final transcription error: \(error)")
+            logger.error("Final transcription error: \(error.localizedDescription, privacy: .public)")
             return currentTranscript
         }
     }
