@@ -9,6 +9,7 @@ enum OverlayState: Equatable {
     case processing                                     // Brief processing indicator
     case success                                        // Checkmark before hiding
     case copiedOnly                                     // Text copied but auto-paste failed
+    case error(message: String)                        // Startup failure or mic routing error
 }
 
 /// Controls the floating, non-interactive overlay window
@@ -186,6 +187,10 @@ final class OverlayWindowController {
         case .copiedOnly:
             // Wider to show the "Press Cmd+V" message
             return (220, 60)
+        case .error(let message):
+            // Wider for actionable startup error text
+            let width = min(max(CGFloat(message.count) * 6.5, 230), 300)
+            return (width, 60)
         default:
             // Loading, processing, success all use compact size
             return (180, 60)

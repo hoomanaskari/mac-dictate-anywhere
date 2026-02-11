@@ -105,10 +105,33 @@ final class MicrophoneManager {
             // Query current default device ID at recording time
             // This ensures we always get the most up-to-date default,
             // rather than relying on AVAudioEngine's cached default
-            return getDefaultInputDeviceID()
+            return currentDefaultInputDeviceID()
         } else {
             return selectedMicrophone?.id
         }
+    }
+
+    /// Gets the current system default input device ID, or nil if unavailable.
+    func currentDefaultInputDeviceID() -> AudioDeviceID? {
+        let deviceID = getDefaultInputDeviceID()
+        guard deviceID != 0, deviceID != AudioDeviceID(kAudioObjectUnknown) else {
+            return nil
+        }
+        return deviceID
+    }
+
+    /// Gets the built-in microphone device ID if present.
+    func builtInInputDeviceID() -> AudioDeviceID? {
+        let devices = getInputDevices()
+        return devices.first(where: { isBuiltInInputDevice(deviceID: $0.id) })?.id
+    }
+
+    /// Returns a user-readable name for a microphone device ID.
+    func microphoneName(for deviceID: AudioDeviceID?) -> String {
+        guard let deviceID = deviceID else {
+            return "System Default"
+        }
+        return getDeviceName(deviceID: deviceID) ?? "Device \(deviceID)"
     }
 
     /// Gets the input volume (gain) of the selected microphone (0.0 to 1.0)
@@ -301,6 +324,29 @@ final class MicrophoneManager {
         let aggregateType: UInt32 = 0x67727570  // 'grup'
 
         return transportType != virtualType && transportType != aggregateType
+    }
+
+    private func isBuiltInInputDevice(deviceID: AudioDeviceID) -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+
+        let status = AudioObjectGetPropertyData(
+            deviceID,
+            &propertyAddress,
+            0,
+            nil,
+            &dataSize,
+            &transportType
+        )
+
+        guard status == noErr else { return false }
+        return transportType == kAudioDeviceTransportTypeBuiltIn
     }
 
     // MARK: - Device Change Listener
