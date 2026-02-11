@@ -265,6 +265,10 @@ final class SettingsManager {
 
         // Load microphone settings (default: use system default)
         useSystemDefaultMicrophone = UserDefaults.standard.object(forKey: Keys.useSystemDefaultMicrophone) as? Bool ?? true
+
+        // Property observers are not called during initialization.
+        // Apply side effects explicitly so first-launch behavior matches defaults.
+        updateLoginItem()
     }
 
     // MARK: - Methods
@@ -309,11 +313,31 @@ final class SettingsManager {
 
     /// Updates the login item registration based on current setting
     private func updateLoginItem() {
+        let service = SMAppService.mainApp
+        let status = service.status
+
+        if launchAtLogin {
+            // Already enabled; nothing to do.
+            if status == .enabled {
+                return
+            }
+        } else {
+            // Already disabled or unavailable; nothing to do.
+            switch status {
+            case .notRegistered, .notFound:
+                return
+            case .enabled, .requiresApproval:
+                break
+            @unknown default:
+                break
+            }
+        }
+
         do {
             if launchAtLogin {
-                try SMAppService.mainApp.register()
+                try service.register()
             } else {
-                try SMAppService.mainApp.unregister()
+                try service.unregister()
             }
         } catch {
             print("Failed to update login item: \(error)")

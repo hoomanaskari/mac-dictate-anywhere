@@ -42,10 +42,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .menuBarOnly:
             // Only show in menu bar (accessory mode hides from dock)
             // But keep regular mode while window is visible for better UX
-            if mainWindow?.isVisible == false {
-                NSApp.setActivationPolicy(.accessory)
-            } else {
+            let isAnyWindowVisible = mainWindow?.isVisible
+                ?? NSApp.windows.contains(where: { $0.isVisible })
+            if isAnyWindowVisible {
                 NSApp.setActivationPolicy(.regular)
+            } else {
+                NSApp.setActivationPolicy(.accessory)
             }
         case .dockAndMenuBar:
             // Always show in both dock and menu bar
@@ -150,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up window delegate to handle close
         window.delegate = self
+
+        // Re-apply mode once we have a concrete window reference.
+        applyAppearanceMode()
     }
 
     // MARK: - Menu Actions
