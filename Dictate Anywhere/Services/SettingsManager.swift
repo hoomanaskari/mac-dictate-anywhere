@@ -199,6 +199,7 @@ final class SettingsManager {
     var useSystemDefaultMicrophone: Bool {
         didSet {
             UserDefaults.standard.set(useSystemDefaultMicrophone, forKey: Keys.useSystemDefaultMicrophone)
+            NotificationCenter.default.post(name: .microphoneSelectionModeChanged, object: nil)
         }
     }
 

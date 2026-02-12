@@ -30,10 +30,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .appAppearanceModeChanged,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMicrophoneSelectionModeChanged),
+            name: .microphoneSelectionModeChanged,
+            object: nil
+        )
     }
 
     @objc private func handleAppearanceModeChanged() {
         applyAppearanceMode()
+    }
+
+    @objc private func handleMicrophoneSelectionModeChanged() {
+        updateMicrophoneMenu()
     }
 
     private func applyAppearanceMode() {
@@ -105,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Microphone submenu
         microphoneMenuItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         let microphoneSubmenu = NSMenu()
+        microphoneSubmenu.autoenablesItems = false
         microphoneMenuItem?.submenu = microphoneSubmenu
         menu.addItem(microphoneMenuItem!)
 
@@ -193,32 +205,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu.removeAllItems()
 
         let manager = MicrophoneManager.shared
+        let useSystemDefault = SettingsManager.shared.useSystemDefaultMicrophone
+
+        let useDefaultItem = NSMenuItem(
+            title: "Use System Default",
+            action: #selector(toggleUseSystemDefaultMicrophone(_:)),
+            keyEquivalent: ""
+        )
+        useDefaultItem.target = self
+        useDefaultItem.state = useSystemDefault ? .on : .off
+        submenu.addItem(useDefaultItem)
+        submenu.addItem(NSMenuItem.separator())
+
+        if manager.availableMicrophones.isEmpty {
+            let emptyItem = NSMenuItem(title: "No microphones available", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            submenu.addItem(emptyItem)
+        }
+
         for mic in manager.availableMicrophones {
             let title = mic.isDefault ? "Default System Microphone" : mic.name
 
-            let item = NSMenuItem(title: title, action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+            let item = NSMenuItem(
+                title: title,
+                action: useSystemDefault ? nil : #selector(selectMicrophone(_:)),
+                keyEquivalent: ""
+            )
             item.target = self
             item.representedObject = mic.id
             item.state = (mic.id == manager.selectedMicrophone?.id) ? .on : .off
+            item.isEnabled = !useSystemDefault
             submenu.addItem(item)
         }
 
         // Update parent menu title to show current selection
         if let selected = manager.selectedMicrophone {
-            let displayName = selected.isDefault ? "Default System Microphone" : selected.name
-            microphoneMenuItem?.title = "Microphone: \(displayName)"
+            let resolvedSelection = manager.availableMicrophones.first(where: { $0.id == selected.id }) ?? selected
+            let displayName = resolvedSelection.isDefault ? "Default System Microphone" : resolvedSelection.name
+            microphoneMenuItem?.title = displayName
         } else {
             microphoneMenuItem?.title = "Microphone"
         }
     }
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        guard !SettingsManager.shared.useSystemDefaultMicrophone else { return }
         guard let deviceID = sender.representedObject as? AudioDeviceID else { return }
         let manager = MicrophoneManager.shared
         if let mic = manager.availableMicrophones.first(where: { $0.id == deviceID }) {
             manager.selectMicrophone(mic)
             updateMicrophoneMenu()
         }
+    }
+
+    @objc private func toggleUseSystemDefaultMicrophone(_ sender: NSMenuItem) {
+        let settings = SettingsManager.shared
+        settings.useSystemDefaultMicrophone.toggle()
+
+        let manager = MicrophoneManager.shared
+        if settings.useSystemDefaultMicrophone {
+            manager.selectedMicrophone = manager.availableMicrophones.first(where: { $0.isDefault })
+                ?? manager.availableMicrophones.first
+        }
+
+        manager.refreshMicrophones()
+        updateMicrophoneMenu()
     }
 }
 
@@ -264,4 +315,5 @@ extension AppDelegate: NSMenuItemValidation {
 extension Notification.Name {
     static let mainWindowWillClose = Notification.Name("mainWindowWillClose")
     static let dismissMenusForPaste = Notification.Name("dismissMenusForPaste")
+    static let microphoneSelectionModeChanged = Notification.Name("microphoneSelectionModeChanged")
 }
