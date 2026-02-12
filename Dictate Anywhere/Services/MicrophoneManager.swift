@@ -82,6 +82,11 @@ final class MicrophoneManager {
                    !devices.contains(where: { $0.id == selected.id }) {
                     self.selectedMicrophone = devices.first(where: { $0.isDefault })
                         ?? devices.first
+                } else if let selected = self.selectedMicrophone,
+                          let refreshedSelected = devices.first(where: { $0.id == selected.id }) {
+                    // Keep selected mic ID, but refresh metadata (e.g., isDefault/name)
+                    // so menu labels and state stay consistent after device/default changes.
+                    self.selectedMicrophone = refreshedSelected
                 }
             }
         }

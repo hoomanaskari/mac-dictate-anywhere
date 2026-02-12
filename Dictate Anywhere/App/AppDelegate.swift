@@ -243,7 +243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Update parent menu title to show current selection
         if let selected = manager.selectedMicrophone {
-            let displayName = selected.isDefault ? "Default System Microphone" : selected.name
+            let resolvedSelection = manager.availableMicrophones.first(where: { $0.id == selected.id }) ?? selected
+            let displayName = resolvedSelection.isDefault ? "Default System Microphone" : resolvedSelection.name
             microphoneMenuItem?.title = displayName
         } else {
             microphoneMenuItem?.title = "Microphone"
