@@ -209,16 +209,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let manager = MicrophoneManager.shared
         let useSystemDefault = SettingsManager.shared.useSystemDefaultMicrophone
 
-        if useSystemDefault {
-            let infoItem = NSMenuItem(
-                title: "Turn off \"Use System Default\" in app.",
-                action: nil,
-                keyEquivalent: ""
-            )
-            infoItem.isEnabled = false
-            submenu.addItem(infoItem)
-            submenu.addItem(NSMenuItem.separator())
-        }
+        let useDefaultItem = NSMenuItem(
+            title: "Use System Default",
+            action: #selector(toggleUseSystemDefaultMicrophone(_:)),
+            keyEquivalent: ""
+        )
+        useDefaultItem.target = self
+        useDefaultItem.state = useSystemDefault ? .on : .off
+        submenu.addItem(useDefaultItem)
+        submenu.addItem(NSMenuItem.separator())
 
         if manager.availableMicrophones.isEmpty {
             let emptyItem = NSMenuItem(title: "No microphones available", action: nil, keyEquivalent: "")
@@ -259,6 +258,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             manager.selectMicrophone(mic)
             updateMicrophoneMenu()
         }
+    }
+
+    @objc private func toggleUseSystemDefaultMicrophone(_ sender: NSMenuItem) {
+        let settings = SettingsManager.shared
+        settings.useSystemDefaultMicrophone.toggle()
+
+        let manager = MicrophoneManager.shared
+        if settings.useSystemDefaultMicrophone {
+            manager.selectedMicrophone = manager.availableMicrophones.first(where: { $0.isDefault })
+                ?? manager.availableMicrophones.first
+        }
+
+        manager.refreshMicrophones()
+        updateMicrophoneMenu()
     }
 }
 
