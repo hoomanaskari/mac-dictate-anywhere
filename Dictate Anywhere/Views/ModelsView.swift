@@ -232,11 +232,11 @@ struct ModelsView: View {
     }
 
     private func deleteModel() {
-        // Clean up transcription service first
-        viewModel.transcriptionService.cleanup()
-
-        // Actually delete model files from disk
         Task {
+            // Clean up transcription service first
+            await viewModel.transcriptionService.cleanup()
+
+            // Actually delete model files from disk
             do {
                 try await viewModel.modelManager.deleteModelFiles()
             } catch {

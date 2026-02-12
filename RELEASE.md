@@ -2,13 +2,17 @@
 
 ## 1. Build the App
 
-1. Run the archive script (recommended for FluidAudio 0.12.1):
+1. Archive the app with `xcodebuild`:
 
 ```bash
-./scripts/archive_release_0121.sh
+xcodebuild \
+  -project "Dictate Anywhere.xcodeproj" \
+  -scheme "Dictate Anywhere" \
+  -configuration Release \
+  -destination "generic/platform=macOS" \
+  -archivePath "/tmp/DictateAnywhere.xcarchive" \
+  archive
 ```
-
-This script resolves packages, applies a local compatibility patch for FluidAudio `0.12.1`, and archives the app.
 
 2. Create the DMG:
 
