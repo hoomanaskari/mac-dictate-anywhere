@@ -124,9 +124,14 @@ final class FluidTranscriptionService {
 
     /// Serial queue for audio engine operations to prevent concurrent setup/stop race conditions
     private let audioEngineQueue = DispatchQueue(label: "com.dictate-anywhere.audio-engine", qos: .userInitiated)
+    private let audioEngineQueueKey = DispatchSpecificKey<UInt8>()
 
     /// Lock for protecting audio engine reference access
     private let audioEngineLock = NSLock()
+    /// Recently torn down engines kept alive briefly to avoid late CoreAudio callbacks
+    /// touching already-deallocated AVAudioEngine internals.
+    private var retiredAudioEngines: [AVAudioEngine] = []
+    private let retiredEngineHoldDuration: TimeInterval = 1.0
 
     /// Actor for thread-safe audio buffer access
     private let audioBuffer = AudioBufferActor()
@@ -168,7 +173,9 @@ final class FluidTranscriptionService {
 
     // MARK: - Initialization
 
-    init() {}
+    init() {
+        audioEngineQueue.setSpecific(key: audioEngineQueueKey, value: 1)
+    }
 
     // MARK: - Model Management
 
@@ -463,18 +470,8 @@ final class FluidTranscriptionService {
 
         guard let engine = engine else { return }
 
-        // Use serial queue to prevent concurrent audio engine operations
-        audioEngineQueue.sync {
-            // Remove tap first - this must happen before stopping
-            engine.inputNode.removeTap(onBus: 0)
-
-            // Stop the engine
-            if engine.isRunning {
-                engine.stop()
-            }
-
-            // Reset to release resources
-            engine.reset()
+        performAudioEngineOperationSync {
+            teardownEngineOnQueue(engine)
         }
     }
 
@@ -486,12 +483,8 @@ final class FluidTranscriptionService {
 
     /// Stops and resets a provided engine instance that was never promoted to active.
     private func teardownEngine(_ engine: AVAudioEngine) {
-        audioEngineQueue.async {
-            engine.inputNode.removeTap(onBus: 0)
-            if engine.isRunning {
-                engine.stop()
-            }
-            engine.reset()
+        performAudioEngineOperationSync {
+            teardownEngineOnQueue(engine)
         }
     }
 
@@ -504,19 +497,39 @@ final class FluidTranscriptionService {
 
         guard let engine = engine else { return }
 
-        // Use serial queue to prevent concurrent audio engine operations
-        // Use async to avoid blocking the caller
-        audioEngineQueue.async {
-            // Remove tap first - this must happen before stopping
-            engine.inputNode.removeTap(onBus: 0)
+        performAudioEngineOperationSync {
+            teardownEngineOnQueue(engine)
+        }
+    }
 
-            // Stop the engine
-            if engine.isRunning {
-                engine.stop()
-            }
+    private func performAudioEngineOperationSync(_ operation: () -> Void) {
+        if DispatchQueue.getSpecific(key: audioEngineQueueKey) != nil {
+            operation()
+            return
+        }
 
-            // Reset to release resources
-            engine.reset()
+        audioEngineQueue.sync(execute: operation)
+    }
+
+    private func teardownEngineOnQueue(_ engine: AVAudioEngine) {
+        // Remove tap first - this must happen before stopping
+        engine.inputNode.removeTap(onBus: 0)
+
+        // Stop the engine
+        if engine.isRunning {
+            engine.stop()
+        }
+
+        // Reset to release resources
+        engine.reset()
+
+        // Keep a short-lived strong reference so delayed AVAudioIOUnit property
+        // listener callbacks can't race deallocation.
+        retiredAudioEngines.append(engine)
+        audioEngineQueue.asyncAfter(deadline: .now() + retiredEngineHoldDuration) { [weak self] in
+            guard let self else { return }
+            guard !self.retiredAudioEngines.isEmpty else { return }
+            self.retiredAudioEngines.removeFirst()
         }
     }
 
