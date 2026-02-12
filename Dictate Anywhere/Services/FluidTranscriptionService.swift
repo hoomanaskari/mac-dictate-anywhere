@@ -110,9 +110,12 @@ final class FluidTranscriptionService {
 
     private var asrManager: AsrManager?
     private var loadedModels: AsrModels?
+    private var ctcModels: CtcModels?
     private var audioEngine: AVAudioEngine?
     private var transcriptionTask: Task<Void, Never>?
+    private var vocabularyDownloadProgressTask: Task<Void, Never>?
     private var isTranscribing = false
+    private var vocabularyConfigurationSignature: String?
     private let stateManager = RecordingStateManager()
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
@@ -136,6 +139,9 @@ final class FluidTranscriptionService {
     var currentTranscript: String = ""
     var isRecording: Bool = false
     var errorMessage: String?
+    var isVocabularyDownloadInProgress: Bool = false
+    var vocabularyDownloadProgress: Double = 0.0
+    var vocabularyDownloadErrorMessage: String?
 
     /// Selected language for transcription
     var selectedLanguage: SupportedLanguage = .english
@@ -170,8 +176,12 @@ final class FluidTranscriptionService {
     func initialize(with models: AsrModels) async throws {
         self.loadedModels = models
 
-        // Create ASR manager with default config
-        asrManager = AsrManager()
+        // Enable streaming mode more aggressively for long dictation sessions.
+        let asrConfig = ASRConfig(
+            streamingEnabled: true,
+            streamingThreshold: 160_000  // ~10 seconds at 16kHz
+        )
+        asrManager = AsrManager(config: asrConfig)
 
         // Initialize the ASR manager with models
         try await asrManager?.initialize(models: models)
@@ -711,11 +721,15 @@ final class FluidTranscriptionService {
     func cleanup() {
         transcriptionTask?.cancel()
         transcriptionTask = nil
+        vocabularyDownloadProgressTask?.cancel()
+        vocabularyDownloadProgressTask = nil
         isTranscribing = false
         stopAudioEngineSync()  // Use sync version for complete cleanup
         asrManager?.cleanup()
         asrManager = nil
         loadedModels = nil
+        ctcModels = nil
+        vocabularyConfigurationSignature = nil
         isModelLoaded = false
     }
 
@@ -726,6 +740,159 @@ final class FluidTranscriptionService {
         selectedLanguage = language
         // FluidAudio Parakeet v3 auto-detects language
         // If future versions support explicit language hints, configure here
+    }
+
+    /// Configures custom vocabulary boosting for domain-specific words.
+    /// Safe to call repeatedly; unchanged configurations are skipped.
+    func configureVocabularyBoosting(isEnabled: Bool, terms: [String]) async {
+        guard let asrManager = asrManager else { return }
+
+        let normalizedTerms = normalizedVocabularyTerms(terms)
+        let signature = isEnabled ? normalizedTerms.joined(separator: "\u{001F}") : ""
+
+        if signature == vocabularyConfigurationSignature {
+            return
+        }
+
+        if !isEnabled || normalizedTerms.isEmpty {
+            asrManager.disableVocabularyBoosting()
+            vocabularyConfigurationSignature = signature
+            return
+        }
+
+        do {
+            guard let models = await ensureVocabularyBoostModelsAvailable() else {
+                asrManager.disableVocabularyBoosting()
+                vocabularyConfigurationSignature = nil
+                return
+            }
+
+            let tokenizer = try await CtcTokenizer.load(from: CtcModels.defaultCacheDirectory(for: .ctc110m))
+            let tokenizedTerms = normalizedTerms.compactMap { term -> CustomVocabularyTerm? in
+                let tokenIds = tokenizer.encode(term)
+                guard !tokenIds.isEmpty else { return nil }
+                return CustomVocabularyTerm(
+                    text: term,
+                    weight: 10.0,
+                    aliases: nil,
+                    tokenIds: nil,
+                    ctcTokenIds: tokenIds
+                )
+            }
+
+            guard !tokenizedTerms.isEmpty else {
+                logger.warning("Custom vocabulary enabled but no valid tokenized terms were produced")
+                asrManager.disableVocabularyBoosting()
+                vocabularyConfigurationSignature = nil
+                return
+            }
+
+            let customVocabulary = CustomVocabularyContext(terms: tokenizedTerms)
+            try await asrManager.configureVocabularyBoosting(
+                vocabulary: customVocabulary,
+                ctcModels: models
+            )
+
+            vocabularyConfigurationSignature = signature
+            logger.debug("Configured ASR custom vocabulary with \(tokenizedTerms.count, privacy: .public) terms")
+        } catch {
+            logger.error("Failed to configure custom vocabulary boosting: \(error.localizedDescription, privacy: .public)")
+            asrManager.disableVocabularyBoosting()
+            vocabularyConfigurationSignature = nil
+            await finishVocabularyDownloadProgress(success: false, errorMessage: error.localizedDescription)
+        }
+    }
+
+    private func normalizedVocabularyTerms(_ terms: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+
+        for term in terms {
+            let cleaned = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { continue }
+
+            let dedupeKey = cleaned.lowercased()
+            guard !seen.contains(dedupeKey) else { continue }
+
+            seen.insert(dedupeKey)
+            normalized.append(cleaned)
+        }
+
+        return normalized
+    }
+
+    @discardableResult
+    func ensureVocabularyBoostModelsAvailable() async -> CtcModels? {
+        if let cached = ctcModels {
+            return cached
+        }
+
+        let ctcCachePath = CtcModels.defaultCacheDirectory(for: .ctc110m)
+        let needsDownload = !CtcModels.modelsExist(at: ctcCachePath)
+
+        if needsDownload {
+            startVocabularyDownloadProgress()
+        } else {
+            clearVocabularyDownloadError()
+        }
+
+        do {
+            let loaded = try await CtcModels.downloadAndLoad(variant: .ctc110m)
+            ctcModels = loaded
+
+            if needsDownload {
+                await finishVocabularyDownloadProgress(success: true, errorMessage: nil)
+            }
+
+            return loaded
+        } catch {
+            await finishVocabularyDownloadProgress(success: false, errorMessage: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func isVocabularyBoostModelAvailable() -> Bool {
+        if ctcModels != nil {
+            return true
+        }
+        let cachePath = CtcModels.defaultCacheDirectory(for: .ctc110m)
+        return CtcModels.modelsExist(at: cachePath)
+    }
+
+    private func clearVocabularyDownloadError() {
+        vocabularyDownloadErrorMessage = nil
+    }
+
+    private func startVocabularyDownloadProgress() {
+        vocabularyDownloadProgressTask?.cancel()
+        vocabularyDownloadProgressTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.vocabularyDownloadErrorMessage = nil
+            self.isVocabularyDownloadInProgress = true
+            self.vocabularyDownloadProgress = max(self.vocabularyDownloadProgress, 0.02)
+
+            for _ in 1...120 {
+                guard !Task.isCancelled else { return }
+                self.vocabularyDownloadProgress = min(0.9, self.vocabularyDownloadProgress + 0.008)
+                try? await Task.sleep(for: .milliseconds(450))
+            }
+        }
+    }
+
+    private func finishVocabularyDownloadProgress(success: Bool, errorMessage: String?) async {
+        vocabularyDownloadProgressTask?.cancel()
+        vocabularyDownloadProgressTask = nil
+
+        await MainActor.run {
+            if success {
+                self.vocabularyDownloadErrorMessage = nil
+                self.vocabularyDownloadProgress = 1.0
+            } else {
+                self.vocabularyDownloadErrorMessage = errorMessage
+                self.vocabularyDownloadProgress = 0.0
+            }
+            self.isVocabularyDownloadInProgress = false
+        }
     }
 
     // MARK: - Audio Analysis

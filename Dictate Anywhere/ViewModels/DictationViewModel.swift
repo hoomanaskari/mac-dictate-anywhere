@@ -136,6 +136,7 @@ final class DictationViewModel {
 
     /// Tracked task for hotkey-triggered dictation to prevent accumulation
     private var hotkeyTask: Task<Void, Never>?
+    private var asrSettingsSyncTask: Task<Void, Never>?
 
     /// Tracks if the current dictation session is using hands-free mode
     private var isHandsFreeSession: Bool = false
@@ -184,6 +185,7 @@ final class DictationViewModel {
         setupTask?.cancel()
         audioLevelTask?.cancel()
         hotkeyTask?.cancel()
+        asrSettingsSyncTask?.cancel()
         keyboardMonitor.stopMonitoring()
         if let observer = windowCloseObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -317,6 +319,7 @@ final class DictationViewModel {
 
             // Sync language setting
             transcriptionService.setLanguage(settings.selectedLanguage)
+            await applyAsrSettings()
 
         } catch {
             state = .error("Failed to initialize: \(error.localizedDescription)")
@@ -396,7 +399,7 @@ final class DictationViewModel {
             let attemptStart = Date()
             let deviceID = attempt.deviceID.map(String.init) ?? "system-default"
 
-            logger.info(
+            logger.debug(
                 "Mic startup attempt \(index + 1, privacy: .public)/\(startupAttempts.count, privacy: .public) route=\(attempt.label, privacy: .public) device=\(deviceID, privacy: .public) timeout=\(startTimeout, privacy: .public)s"
             )
 
@@ -425,7 +428,7 @@ final class DictationViewModel {
                     : false
 
                 if audioReady {
-                    logger.info(
+                    logger.debug(
                         "Mic startup succeeded route=\(attempt.label, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
                     )
                     startedSuccessfully = true
@@ -433,7 +436,7 @@ final class DictationViewModel {
                 }
 
                 startupFailureReason = "Microphone started but no audio signal was detected."
-                logger.warning(
+                logger.debug(
                     "Mic startup produced no audio route=\(attempt.label, privacy: .public) elapsed=\(attemptElapsed, privacy: .public)s"
                 )
                 await transcriptionService.forceCancel()
@@ -749,6 +752,7 @@ final class DictationViewModel {
                 let loadedModels = try await modelManager.downloadAndLoadModels()
                 try await transcriptionService.initialize(with: loadedModels)
                 transcriptionService.setLanguage(settings.selectedLanguage)
+                await applyAsrSettings()
                 keyboardMonitor.startMonitoring()
                 state = .ready
                 return
@@ -758,6 +762,7 @@ final class DictationViewModel {
 
             // Sync language setting
             transcriptionService.setLanguage(settings.selectedLanguage)
+            await applyAsrSettings()
 
             // Start keyboard monitoring if not already started
             keyboardMonitor.startMonitoring()
@@ -781,8 +786,32 @@ final class DictationViewModel {
         // Restart keyboard monitoring with potentially new settings
         keyboardMonitor.stopMonitoring()
         keyboardMonitor.startMonitoring()
+        scheduleAsrSettingsSync()
 
         state = .ready
+    }
+
+    /// Applies ASR-related settings to the transcription service.
+    func applyAsrSettings() async {
+        await transcriptionService.configureVocabularyBoosting(
+            isEnabled: settings.isCustomVocabularyEnabled,
+            terms: settings.customVocabularyTerms
+        )
+    }
+
+    /// Debounced ASR settings sync to avoid reconfiguring on every keypress.
+    func scheduleAsrSettingsSync() {
+        asrSettingsSyncTask?.cancel()
+        asrSettingsSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self = self, !Task.isCancelled else { return }
+            await self.applyAsrSettings()
+        }
+    }
+
+    /// Prefetches CTC models required for ASR custom vocabulary boosting.
+    func prefetchVocabularyBoostModelsIfNeeded() async {
+        _ = await transcriptionService.ensureVocabularyBoostModelsAvailable()
     }
 
     // MARK: - Helpers

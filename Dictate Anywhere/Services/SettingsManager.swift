@@ -42,6 +42,8 @@ final class SettingsManager {
         static let soundEffectsVolume = "soundEffectsVolume"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
+        static let isCustomVocabularyEnabled = "isCustomVocabularyEnabled"
+        static let customVocabularyTerms = "customVocabularyTerms"
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
         static let analyticsEnabled = "analyticsEnabled"
@@ -167,6 +169,22 @@ final class SettingsManager {
     /// Default filler words
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
+    // MARK: - ASR Custom Vocabulary Settings
+
+    /// Whether custom vocabulary boosting is enabled for ASR.
+    var isCustomVocabularyEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isCustomVocabularyEnabled, forKey: Keys.isCustomVocabularyEnabled)
+        }
+    }
+
+    /// Custom vocabulary terms used to improve recognition of domain-specific words.
+    var customVocabularyTerms: [String] {
+        didSet {
+            UserDefaults.standard.set(customVocabularyTerms, forKey: Keys.customVocabularyTerms)
+        }
+    }
+
     // MARK: - App Behavior Settings
 
     /// Whether to launch the app at login
@@ -199,6 +217,7 @@ final class SettingsManager {
     var useSystemDefaultMicrophone: Bool {
         didSet {
             UserDefaults.standard.set(useSystemDefaultMicrophone, forKey: Keys.useSystemDefaultMicrophone)
+            NotificationCenter.default.post(name: .microphoneSelectionModeChanged, object: nil)
         }
     }
 
@@ -252,6 +271,10 @@ final class SettingsManager {
         // Load filler word removal settings (default: disabled, with default words)
         isFillerWordRemovalEnabled = UserDefaults.standard.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = UserDefaults.standard.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // Load ASR custom vocabulary settings (default: disabled, no terms)
+        isCustomVocabularyEnabled = UserDefaults.standard.object(forKey: Keys.isCustomVocabularyEnabled) as? Bool ?? false
+        customVocabularyTerms = UserDefaults.standard.object(forKey: Keys.customVocabularyTerms) as? [String] ?? []
 
         // Load app behavior settings
         // For launch at login, check actual SMAppService status rather than just UserDefaults

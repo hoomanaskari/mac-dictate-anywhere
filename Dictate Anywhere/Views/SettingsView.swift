@@ -4,7 +4,9 @@ struct SettingsView: View {
     @Bindable var viewModel: DictationViewModel
     private let settings = SettingsManager.shared
     @State private var showLanguagePicker = false
+    @State private var showCustomVocabularyDownloadConfirmation = false
     @State private var fillerWordsText: String = ""
+    @State private var customVocabularyText: String = ""
 
     var body: some View {
         NavigationStack {
@@ -21,6 +23,9 @@ struct SettingsView: View {
 
                     // Dictation Section (Auto-stop)
                     dictationSection
+
+                    // ASR Accuracy Section
+                    asrAccuracySection
 
                     // Text Processing Section (Filler word removal)
                     textProcessingSection
@@ -63,6 +68,18 @@ struct SettingsView: View {
                     viewModel.transcriptionService.setLanguage($0)
                 }
             ))
+        }
+        .alert("Download ASR Boost Model?", isPresented: $showCustomVocabularyDownloadConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Download & Enable") {
+                settings.isCustomVocabularyEnabled = true
+                Task {
+                    await viewModel.prefetchVocabularyBoostModelsIfNeeded()
+                    viewModel.scheduleAsrSettingsSync()
+                }
+            }
+        } message: {
+            Text("Custom Vocabulary needs an additional one-time download of about 130 MB.")
         }
         .frame(width: 500, height: 500)
         .appBackground()
@@ -327,6 +344,108 @@ struct SettingsView: View {
 
     // MARK: - Text Processing Section
 
+    private var asrAccuracySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("ASR Accuracy")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.textLowEmphasis)
+                .textCase(.uppercase)
+
+            settingsRow(
+                icon: "waveform.badge.magnifyingglass",
+                title: "Custom Vocabulary",
+                description: "Improve recognition for names, acronyms, and domain terms"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.isCustomVocabularyEnabled },
+                    set: {
+                        if $0 {
+                            if viewModel.transcriptionService.isVocabularyBoostModelAvailable() {
+                                settings.isCustomVocabularyEnabled = true
+                                viewModel.scheduleAsrSettingsSync()
+                            } else {
+                                showCustomVocabularyDownloadConfirmation = true
+                            }
+                        } else {
+                            settings.isCustomVocabularyEnabled = false
+                            viewModel.scheduleAsrSettingsSync()
+                        }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
+
+            if settings.isCustomVocabularyEnabled {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Terms to boost (comma or newline separated)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    TextEditor(text: $customVocabularyText)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .scrollContentBackground(.hidden)
+                        .frame(height: 72)
+                        .padding(8)
+                        .background {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(AppTheme.buttonFill)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(AppTheme.border, lineWidth: 1)
+                                }
+                        }
+                        .onAppear {
+                            customVocabularyText = settings.customVocabularyTerms.joined(separator: ", ")
+                        }
+                        .onChange(of: customVocabularyText) { _, newValue in
+                            settings.customVocabularyTerms = parseVocabularyTerms(newValue)
+                            viewModel.scheduleAsrSettingsSync()
+                        }
+
+                    Text(customVocabularyHelperText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.textLowEmphasis)
+                }
+                .padding(.leading, 36)
+            }
+
+            if viewModel.transcriptionService.isVocabularyDownloadInProgress {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Downloading ASR boost model...")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(viewModel.transcriptionService.vocabularyDownloadProgress * 100))%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+
+                    ProgressView(value: viewModel.transcriptionService.vocabularyDownloadProgress)
+                        .tint(AppTheme.textMediumEmphasis)
+                }
+                .padding(.leading, 36)
+            }
+
+            if let error = viewModel.transcriptionService.vocabularyDownloadErrorMessage, !error.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                    Text("Model download failed: \(error)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.leading, 36)
+            }
+        }
+        .padding(16)
+        .containerBackground()
+    }
+
     private var textProcessingSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Section Header
@@ -540,6 +659,40 @@ struct SettingsView: View {
                         .stroke(Color.orange.opacity(0.3), lineWidth: 1)
                 }
         }
+    }
+
+    private func parseVocabularyTerms(_ input: String) -> [String] {
+        var seen = Set<String>()
+        var terms: [String] = []
+
+        let parts = input.split(whereSeparator: { $0 == "," || $0 == "\n" })
+        for part in parts {
+            let trimmed = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            terms.append(trimmed)
+        }
+
+        return terms
+    }
+
+    private var customVocabularyHelperText: String {
+        if viewModel.transcriptionService.isVocabularyDownloadInProgress {
+            return "Downloading ASR boost model now. Keep this window open."
+        }
+
+        if let error = viewModel.transcriptionService.vocabularyDownloadErrorMessage, !error.isEmpty {
+            return "Download failed. Toggle Custom Vocabulary off and on to retry."
+        }
+
+        if viewModel.transcriptionService.isVocabularyBoostModelAvailable() {
+            return "ASR boost model is installed. Add terms to improve recognition."
+        }
+
+        return "A one-time ~130 MB ASR boost model will download after confirmation."
     }
 }
 
