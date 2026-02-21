@@ -71,7 +71,8 @@ final class Settings {
         static let selectedLanguage = "selectedLanguage"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
-        static let autoVolumeEnabled = "autoVolumeEnabled"
+        static let muteSystemAudioDuringRecordingEnabled = "muteSystemAudioDuringRecordingEnabled"
+        static let legacyAutoVolumeEnabled = "autoVolumeEnabled"
         static let soundEffectsEnabled = "soundEffectsEnabled"
         static let soundEffectsVolume = "soundEffectsVolume"
         static let showTextPreview = "showTextPreview"
@@ -151,11 +152,11 @@ final class Settings {
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
-    // MARK: - Auto Volume
+    // MARK: - Recording Audio
 
-    var autoVolumeEnabled: Bool {
+    var muteSystemAudioDuringRecordingEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(autoVolumeEnabled, forKey: Keys.autoVolumeEnabled)
+            UserDefaults.standard.set(muteSystemAudioDuringRecordingEnabled, forKey: Keys.muteSystemAudioDuringRecordingEnabled)
         }
     }
 
@@ -226,8 +227,14 @@ final class Settings {
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
 
-        // Auto volume
-        autoVolumeEnabled = defaults.object(forKey: Keys.autoVolumeEnabled) as? Bool ?? false
+        // Recording audio handling (with migration from legacy auto-volume setting).
+        if let storedValue = defaults.object(forKey: Keys.muteSystemAudioDuringRecordingEnabled) as? Bool {
+            muteSystemAudioDuringRecordingEnabled = storedValue
+        } else {
+            let migratedValue = defaults.object(forKey: Keys.legacyAutoVolumeEnabled) as? Bool ?? false
+            muteSystemAudioDuringRecordingEnabled = migratedValue
+            defaults.set(migratedValue, forKey: Keys.muteSystemAudioDuringRecordingEnabled)
+        }
 
         // Sound
         soundEffectsEnabled = defaults.object(forKey: Keys.soundEffectsEnabled) as? Bool ?? true

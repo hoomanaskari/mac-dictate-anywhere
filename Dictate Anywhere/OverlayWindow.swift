@@ -15,7 +15,10 @@ final class OverlayWindow {
     private var window: NSWindow?
     private var hostingView: NSHostingView<OverlayContent>?
     private var hideTask: Task<Void, Never>?
-    private let bottomMargin: CGFloat = 50
+    private let model = OverlayModel()
+    private let bottomMargin: CGFloat = 24
+    private let canvasWidth: CGFloat = 320
+    private let canvasHeight: CGFloat = 200
 
     // MARK: - Public
 
@@ -57,34 +60,42 @@ final class OverlayWindow {
     private func showImpl(state: OverlayState) {
         if window == nil {
             window = createWindow()
-        }
-
-        let content = OverlayContent(state: state)
-        if hostingView == nil {
+            let content = OverlayContent(model: model)
             hostingView = NSHostingView(rootView: content)
+            hostingView?.frame = NSRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight)
             window?.contentView = hostingView
-        } else {
-            hostingView?.rootView = content
         }
 
-        repositionWindow(for: state)
+        model.overlayState = state
+        model.isVisible = true
+
+        positionWindow()
         window?.orderFrontRegardless()
     }
 
     private func hideImpl() {
-        window?.orderOut(nil)
+        model.isVisible = false
+
+        // Allow fade-out animation to complete before removing window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            // Guard against show-during-fade race condition
+            if !self.model.isVisible {
+                self.window?.orderOut(nil)
+            }
+        }
     }
 
     private func createWindow() -> NSWindow {
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: bottomMargin, width: 180, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
         win.isOpaque = false
         win.backgroundColor = .clear
-        win.hasShadow = true
+        win.hasShadow = false
         win.level = .floating
         win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         win.ignoresMouseEvents = true
@@ -94,26 +105,13 @@ final class OverlayWindow {
         return win
     }
 
-    private func repositionWindow(for state: OverlayState) {
+    private func positionWindow() {
         guard let screen = NSScreen.main, let win = window else { return }
 
-        let (w, h) = contentSize(for: state)
         let frame = screen.visibleFrame
-        let x = frame.origin.x + (frame.width - w) / 2
+        let x = frame.origin.x + (frame.width - canvasWidth) / 2
         let y = frame.origin.y + bottomMargin
 
-        win.setFrame(NSRect(x: x, y: y, width: w, height: h), display: true, animate: false)
-    }
-
-    private func contentSize(for state: OverlayState) -> (CGFloat, CGFloat) {
-        let showPreview = Settings.shared.showTextPreview
-        switch state {
-        case .listening:
-            return showPreview ? (320, 140) : (200, 60)
-        case .copiedOnly:
-            return (220, 60)
-        default:
-            return (180, 60)
-        }
+        win.setFrame(NSRect(x: x, y: y, width: canvasWidth, height: canvasHeight), display: true, animate: false)
     }
 }

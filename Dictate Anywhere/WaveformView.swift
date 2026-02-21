@@ -2,7 +2,7 @@
 //  WaveformView.swift
 //  Dictate Anywhere
 //
-//  Canvas-based 24-bar animated waveform.
+//  Smooth multi-layer sine waveform.
 //
 
 import SwiftUI
@@ -10,53 +10,58 @@ import SwiftUI
 struct WaveformView: View {
     let audioLevel: Float
 
-    private let barCount = 24
-    private let waveformColor = Color.accentColor
+    private let idleAmplitude: CGFloat = 0.12
+    private let waveColor = Color.white
+
+    private struct WaveLayer {
+        let frequencyMultiplier: Double
+        let phaseOffset: Double
+        let opacity: Double
+    }
+
+    private let layers: [WaveLayer] = [
+        WaveLayer(frequencyMultiplier: 1.0, phaseOffset: 0, opacity: 0.6),
+        WaveLayer(frequencyMultiplier: 1.4, phaseOffset: 1.2, opacity: 0.4),
+        WaveLayer(frequencyMultiplier: 0.7, phaseOffset: 2.8, opacity: 0.25),
+    ]
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             Canvas { context, size in
-                drawWaveform(context: context, size: size, time: timeline.date.timeIntervalSinceReferenceDate)
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                for layer in layers {
+                    drawWaveLayer(context: context, size: size, time: time, layer: layer)
+                }
             }
         }
-        .frame(height: 32)
+        .frame(height: 24)
     }
 
-    private func drawWaveform(context: GraphicsContext, size: CGSize, time: TimeInterval) {
-        let barWidth: CGFloat = 3
-        let spacing: CGFloat = 3
-        let totalWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
-        let startX = (size.width - totalWidth) / 2
-        let minHeight: CGFloat = 4
-        let maxHeight = size.height
+    private func drawWaveLayer(context: GraphicsContext, size: CGSize, time: TimeInterval, layer: WaveLayer) {
+        let amplitude = idleAmplitude + CGFloat(audioLevel) * (1.0 - idleAmplitude)
+        let midY = size.height / 2
+        let maxAmp = size.height / 2
 
-        for i in 0..<barCount {
-            let x = startX + CGFloat(i) * (barWidth + spacing)
-            let barHeight = calculateBarHeight(index: i, time: time, maxHeight: maxHeight, minHeight: minHeight)
-            let y = (size.height - barHeight) / 2
-            let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
-            let path = RoundedRectangle(cornerRadius: barWidth / 2).path(in: rect)
+        var fillPath = Path()
+        var strokePath = Path()
 
-            let normalizedPosition = Double(i) / Double(barCount - 1)
-            let edgeFade = 1.0 - pow(abs(normalizedPosition - 0.5) * 2, 2) * 0.3
-            let opacity = 0.7 + (edgeFade * 0.3)
+        fillPath.move(to: CGPoint(x: 0, y: midY))
+        strokePath.move(to: CGPoint(x: 0, y: midY))
 
-            context.fill(path, with: .color(waveformColor.opacity(opacity)))
+        for x in stride(from: 0, through: size.width, by: 1) {
+            let normalizedX = x / size.width
+            let envelope = sin(.pi * normalizedX)
+            let wave = sin(normalizedX * .pi * 2 * layer.frequencyMultiplier + time * 2.5 + layer.phaseOffset)
+            let y = midY - wave * envelope * amplitude * maxAmp
+
+            fillPath.addLine(to: CGPoint(x: x, y: y))
+            strokePath.addLine(to: CGPoint(x: x, y: y))
         }
-    }
 
-    private func calculateBarHeight(index: Int, time: TimeInterval, maxHeight: CGFloat, minHeight: CGFloat) -> CGFloat {
-        let normalizedPosition = Double(index) / Double(barCount - 1)
-        let centerDistance = abs(normalizedPosition - 0.5) * 2
+        fillPath.addLine(to: CGPoint(x: size.width, y: midY))
+        fillPath.closeSubpath()
 
-        let phaseOffset = Double(index) * 0.4
-        let waveValue = sin(time * 2.5 + phaseOffset)
-        let idleWave = CGFloat((waveValue + 1) / 2) * 0.3
-
-        let audioSensitivity = 1.0 - (centerDistance * 0.5)
-        let audioContribution = CGFloat(audioLevel) * audioSensitivity
-
-        let combined = max(audioContribution, idleWave)
-        return minHeight + (maxHeight - minHeight) * combined
+        context.fill(fillPath, with: .color(waveColor.opacity(layer.opacity * 0.4)))
+        context.stroke(strokePath, with: .color(waveColor.opacity(layer.opacity)), lineWidth: 1.5)
     }
 }
