@@ -425,23 +425,32 @@ final class ParakeetEngine: TranscriptionEngine {
 
     private func performFinalTranscription() async -> String {
         guard await asrCoordinator.isInitialized() else { return currentTranscript }
+
+        // Capture the live transcript before re-transcription overwrites it.
+        // The transcription loop already produced a complete result in currentTranscript.
+        let liveText = currentTranscript
+
         await commitBufferedChunksIfNeeded(force: true)
 
         let samples = sampleLock.withLock { sampleBuffer }
         var finalTranscript = committedTranscript
 
         guard samples.count > 8000, hasSignificantAudio(samples) else {
-            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
+            let result = finalTranscript.isEmpty ? liveText : finalTranscript
+            return result.count >= liveText.count ? result : liveText
         }
 
         do {
             let result = try await asrCoordinator.transcribe(samples)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
             finalTranscript = mergeTranscripts(base: finalTranscript, addition: text)
-            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
         } catch {
-            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
+            // Fall through to length comparison below
         }
+
+        // Return whichever captured more text
+        let result = finalTranscript.isEmpty ? liveText : finalTranscript
+        return result.count >= liveText.count ? result : liveText
     }
 
     private func hasSignificantAudio(_ samples: [Float]) -> Bool {

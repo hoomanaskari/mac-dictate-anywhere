@@ -173,7 +173,7 @@ final class AppState {
         // Apply filler word removal
         let cleaned = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
         let liveFallback = settings.removeFillerWords(from: currentTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalText = cleaned.isEmpty ? liveFallback : cleaned
+        let finalText = liveFallback.count > cleaned.count ? liveFallback : cleaned
 
         guard !finalText.isEmpty else {
             currentTranscript = ""
