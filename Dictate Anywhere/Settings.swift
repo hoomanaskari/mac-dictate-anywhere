@@ -69,8 +69,6 @@ final class Settings {
         static let hotkeyMode = "hotkeyMode"
         static let engineChoice = "engineChoice"
         static let selectedLanguage = "selectedLanguage"
-        static let isAutoStopEnabled = "isAutoStopEnabled"
-        static let autoStopSilenceThreshold = "autoStopSilenceThreshold"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
         static let autoVolumeEnabled = "autoVolumeEnabled"
@@ -79,8 +77,6 @@ final class Settings {
         static let showTextPreview = "showTextPreview"
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
-        static let useSystemDefaultMicrophone = "useSystemDefaultMicrophone"
-        static let selectedMicrophoneUID = "selectedMicrophoneUID"
     }
 
     // MARK: - Hotkey Settings
@@ -136,21 +132,6 @@ final class Settings {
     var selectedLanguage: SupportedLanguage {
         didSet {
             UserDefaults.standard.set(selectedLanguage.rawValue, forKey: Keys.selectedLanguage)
-        }
-    }
-
-    // MARK: - Auto-Stop Settings
-
-    var isAutoStopEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(isAutoStopEnabled, forKey: Keys.isAutoStopEnabled)
-        }
-    }
-
-    /// Silence threshold in seconds for auto-stop (0.5 to 3.0)
-    var autoStopSilenceThreshold: Double {
-        didSet {
-            UserDefaults.standard.set(autoStopSilenceThreshold, forKey: Keys.autoStopSilenceThreshold)
         }
     }
 
@@ -216,24 +197,6 @@ final class Settings {
         }
     }
 
-    // MARK: - Microphone Settings
-
-    var useSystemDefaultMicrophone: Bool {
-        didSet {
-            UserDefaults.standard.set(useSystemDefaultMicrophone, forKey: Keys.useSystemDefaultMicrophone)
-        }
-    }
-
-    var selectedMicrophoneUID: String? {
-        didSet {
-            if let uid = selectedMicrophoneUID {
-                UserDefaults.standard.set(uid, forKey: Keys.selectedMicrophoneUID)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Keys.selectedMicrophoneUID)
-            }
-        }
-    }
-
     // MARK: - Initialization
 
     private init() {
@@ -259,10 +222,6 @@ final class Settings {
         let langCode = defaults.string(forKey: Keys.selectedLanguage) ?? "en"
         selectedLanguage = SupportedLanguage(rawValue: langCode) ?? .english
 
-        // Auto-stop
-        isAutoStopEnabled = defaults.object(forKey: Keys.isAutoStopEnabled) as? Bool ?? true
-        autoStopSilenceThreshold = defaults.object(forKey: Keys.autoStopSilenceThreshold) as? Double ?? 1.5
-
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
@@ -281,10 +240,6 @@ final class Settings {
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         let appearStr = defaults.string(forKey: Keys.appAppearanceMode) ?? AppAppearanceMode.menuBarOnly.rawValue
         appAppearanceMode = AppAppearanceMode(rawValue: appearStr) ?? .menuBarOnly
-
-        // Microphone
-        useSystemDefaultMicrophone = defaults.object(forKey: Keys.useSystemDefaultMicrophone) as? Bool ?? true
-        selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)
 
         updateLoginItem()
     }

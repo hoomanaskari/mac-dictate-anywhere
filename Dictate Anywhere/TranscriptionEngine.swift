@@ -23,7 +23,6 @@ protocol TranscriptionEngine: AnyObject {
     func startRecording(deviceID: AudioDeviceID?) async throws
     func stopRecording() async -> String
     func cancel() async
-    var onEndOfUtterance: (() -> Void)? { get set }
 }
 
 // MARK: - Shared Audio Helpers
@@ -133,7 +132,6 @@ final class ParakeetEngine: TranscriptionEngine {
     private(set) var isReady: Bool = false
     var currentTranscript: String = ""
     var audioSamples: [Float] = []
-    var onEndOfUtterance: (() -> Void)?
 
     // Model management
     var isModelDownloaded: Bool = false
@@ -146,16 +144,25 @@ final class ParakeetEngine: TranscriptionEngine {
     private let asrCoordinator = AsrManagerCoordinator()
     private var audioEngine: AVAudioEngine?
     private var sampleBuffer: [Float] = []
+    private var totalSampleCount: Int = 0
+    private var committedTranscript: String = ""
     private let sampleLock = NSLock()
     private var transcriptionTask: Task<Void, Never>?
     private var isTranscribing = false
     private var isRecordingActive = false
-    private var lastSpeechTime: Date?
-    private var hasTriggeredEOU = false
 
     private let isModelDownloadedKey = "isFluidModelDownloaded"
     private let minAudioEnergy: Float = 0.005
     private let transcriptionIntervalMs: UInt64 = 500
+    private let sampleRate: Int = 16_000
+    private let minTranscriptionDeltaSamples: Int = 4_800
+    private let audioLevelWindowSamples: Int = 1_600
+    private let speechCheckWindowSamples: Int = 8_000
+
+    /// Keeps pending Parakeet context bounded for long recordings.
+    private var chunkTranscriptionSamples: Int { sampleRate * 20 }
+    private var maxPendingSamplesBeforeCommit: Int { sampleRate * 30 }
+    private var hardPendingSampleCap: Int { sampleRate * 120 }
 
     /// Serial queue for audio engine lifecycle
     private let engineQueue = DispatchQueue(label: "com.dictate-anywhere.parakeet-engine", qos: .userInitiated)
@@ -280,20 +287,33 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Clear state
-        sampleLock.withLock { sampleBuffer.removeAll() }
+        sampleLock.withLock {
+            sampleBuffer.removeAll(keepingCapacity: true)
+            totalSampleCount = 0
+        }
+        committedTranscript = ""
 
         await MainActor.run {
             self.currentTranscript = ""
             self.audioSamples = []
         }
-        lastSpeechTime = Date()
-        hasTriggeredEOU = false
 
         // Start audio engine
         let (engine, _) = try engineQueue.sync {
             try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
                 guard let self else { return }
-                self.sampleLock.withLock { self.sampleBuffer.append(contentsOf: samples) }
+                var droppedCount = 0
+                self.sampleLock.withLock {
+                    self.sampleBuffer.append(contentsOf: samples)
+                    self.totalSampleCount += samples.count
+                    if self.sampleBuffer.count > self.hardPendingSampleCap {
+                        droppedCount = self.sampleBuffer.count - self.hardPendingSampleCap
+                        self.sampleBuffer.removeFirst(droppedCount)
+                    }
+                }
+                if droppedCount > 0 {
+                    self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
+                }
             }
         }
 
@@ -324,9 +344,15 @@ final class ParakeetEngine: TranscriptionEngine {
         // Final transcription
         let final_transcript = await performFinalTranscription()
         isRecordingActive = false
+        committedTranscript = ""
+        sampleLock.withLock {
+            sampleBuffer.removeAll(keepingCapacity: false)
+            totalSampleCount = 0
+        }
 
         await MainActor.run {
             self.currentTranscript = final_transcript
+            self.audioSamples = []
         }
 
         return final_transcript
@@ -338,6 +364,11 @@ final class ParakeetEngine: TranscriptionEngine {
         transcriptionTask = nil
         teardownAudioEngine()
         isRecordingActive = false
+        committedTranscript = ""
+        sampleLock.withLock {
+            sampleBuffer.removeAll(keepingCapacity: false)
+            totalSampleCount = 0
+        }
 
         await MainActor.run {
             self.currentTranscript = ""
@@ -349,84 +380,138 @@ final class ParakeetEngine: TranscriptionEngine {
 
     private func transcriptionLoop() async {
         guard await asrCoordinator.isInitialized() else { return }
-        var lastCount = 0
-        let eouThreshold = Settings.shared.autoStopSilenceThreshold
+        var lastObservedSampleCount = 0
 
         while isTranscribing && !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(transcriptionIntervalMs))
             guard isTranscribing else { break }
 
-            let samples = sampleLock.withLock { sampleBuffer }
+            await commitBufferedChunksIfNeeded(force: false)
 
-            // Update cached samples for visualization
-            await MainActor.run {
-                self.audioSamples = samples
+            let (totalSamples, recentSamples, levelSamples) = sampleLock.withLock { () -> (Int, [Float], [Float]) in
+                let total = totalSampleCount
+                let recent = Array(sampleBuffer.suffix(speechCheckWindowSamples))
+                let levels = Array(sampleBuffer.suffix(audioLevelWindowSamples))
+                return (total, recent, levels)
             }
 
-            let count = samples.count
-            guard count - lastCount > 4800 else {
-                // Check EOU even without new samples
-                checkEOU(samples: samples, threshold: eouThreshold)
+            // Update cached samples for visualization (bounded window only).
+            await MainActor.run {
+                self.audioSamples = levelSamples
+            }
+
+            let newSampleCount = totalSamples - lastObservedSampleCount
+            guard newSampleCount > minTranscriptionDeltaSamples else {
                 continue
             }
 
-            let hasSignificant = hasSignificantAudio(Array(samples.suffix(8000)))
+            let hasSignificant = hasSignificantAudio(recentSamples)
             if hasSignificant {
-                lastSpeechTime = Date()
-                hasTriggeredEOU = false
-
                 do {
-                    let result = try await asrCoordinator.transcribe(samples)
+                    let pendingSamples = sampleLock.withLock { sampleBuffer }
+                    let result = try await asrCoordinator.transcribe(pendingSamples)
                     let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty {
-                        await MainActor.run { self.currentTranscript = text }
+                    let merged = mergeTranscripts(base: committedTranscript, addition: text)
+                    if !merged.isEmpty {
+                        await MainActor.run { self.currentTranscript = merged }
                     }
                 } catch {
                     // Continue on error
                 }
-            } else {
-                checkEOU(samples: samples, threshold: eouThreshold)
             }
 
-            lastCount = count
-        }
-    }
-
-    private func checkEOU(samples: [Float], threshold: TimeInterval) {
-        guard let lastSpeech = lastSpeechTime, !currentTranscript.isEmpty, !hasTriggeredEOU else { return }
-        let silence = Date().timeIntervalSince(lastSpeech)
-        if silence >= threshold {
-            hasTriggeredEOU = true
-            DispatchQueue.main.async { [weak self] in
-                self?.onEndOfUtterance?()
-            }
+            lastObservedSampleCount = totalSamples
         }
     }
 
     private func performFinalTranscription() async -> String {
         guard await asrCoordinator.isInitialized() else { return currentTranscript }
+        await commitBufferedChunksIfNeeded(force: true)
 
         let samples = sampleLock.withLock { sampleBuffer }
+        var finalTranscript = committedTranscript
 
         guard samples.count > 8000, hasSignificantAudio(samples) else {
-            return currentTranscript
+            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
         }
 
         do {
             let result = try await asrCoordinator.transcribe(samples)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? currentTranscript : text
+            finalTranscript = mergeTranscripts(base: finalTranscript, addition: text)
+            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
         } catch {
-            return currentTranscript
+            return finalTranscript.isEmpty ? currentTranscript : finalTranscript
         }
     }
 
     private func hasSignificantAudio(_ samples: [Float]) -> Bool {
         guard !samples.isEmpty else { return false }
         var rms: Float = 0
-        let recent = Array(samples.suffix(8000))
+        let recent = Array(samples.suffix(speechCheckWindowSamples))
         vDSP_rmsqv(recent, 1, &rms, vDSP_Length(recent.count))
         return rms > minAudioEnergy
+    }
+
+    private func commitBufferedChunksIfNeeded(force: Bool) async {
+        while true {
+            let chunk = sampleLock.withLock { () -> [Float] in
+                let buffered = sampleBuffer.count
+                let shouldCommit = force
+                    ? buffered >= chunkTranscriptionSamples
+                    : buffered >= maxPendingSamplesBeforeCommit
+                guard shouldCommit else { return [] }
+                return Array(sampleBuffer.prefix(chunkTranscriptionSamples))
+            }
+
+            guard !chunk.isEmpty else { break }
+
+            do {
+                let result = try await asrCoordinator.transcribe(chunk)
+                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                sampleLock.withLock {
+                    let toRemove = min(chunkTranscriptionSamples, sampleBuffer.count)
+                    if toRemove > 0 {
+                        sampleBuffer.removeFirst(toRemove)
+                    }
+                }
+                if !text.isEmpty {
+                    committedTranscript = mergeTranscripts(base: committedTranscript, addition: text)
+                    await MainActor.run { self.currentTranscript = committedTranscript }
+                }
+            } catch {
+                logger.error("Chunk transcription failed: \(error.localizedDescription, privacy: .public)")
+                break
+            }
+        }
+    }
+
+    private func mergeTranscripts(base: String, addition: String) -> String {
+        let lhs = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rhs = addition.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !rhs.isEmpty else { return lhs }
+        guard !lhs.isEmpty else { return rhs }
+
+        if lhs.hasSuffix(rhs) { return lhs }
+        if rhs.hasPrefix(lhs) { return rhs }
+
+        let maxOverlap = min(120, min(lhs.count, rhs.count))
+        if maxOverlap > 0 {
+            for overlap in stride(from: maxOverlap, through: 8, by: -1) {
+                let leftSlice = lhs.suffix(overlap)
+                let rightSlice = rhs.prefix(overlap)
+                if leftSlice == rightSlice {
+                    let tail = String(rhs.dropFirst(overlap)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !tail.isEmpty else { return lhs }
+                    let separator = lhs.hasSuffix(" ") || tail.hasPrefix(",") || tail.hasPrefix(".") ? "" : " "
+                    return lhs + separator + tail
+                }
+            }
+        }
+
+        let separator = lhs.hasSuffix(" ") || rhs.hasPrefix(",") || rhs.hasPrefix(".") ? "" : " "
+        return lhs + separator + rhs
     }
 
     // MARK: - Audio Engine Lifecycle
@@ -483,7 +568,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
     var isReady: Bool = false
     var currentTranscript: String = ""
     var audioSamples: [Float] = []
-    var onEndOfUtterance: (() -> Void)?
 
     // MARK: - Private
 
@@ -493,14 +577,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
     private var audioEngine: AVAudioEngine?
     private var sampleBuffer: [Float] = []
     private let sampleLock = NSLock()
-    private var lastSpeechTime: Date?
-    private var hasTriggeredEOU = false
-    private var eouCheckTask: Task<Void, Never>?
-
-    private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
-        category: "AppleSpeechEngine"
-    )
+    private let rollingBufferMaxSamples: Int = 16_000 * 5
 
     // MARK: - TranscriptionEngine
 
@@ -540,9 +617,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
         }
 
         // Clear state
-        sampleLock.withLock { sampleBuffer.removeAll() }
-        lastSpeechTime = Date()
-        hasTriggeredEOU = false
+        sampleLock.withLock { sampleBuffer.removeAll(keepingCapacity: true) }
 
         await MainActor.run {
             self.currentTranscript = ""
@@ -557,7 +632,16 @@ final class AppleSpeechEngine: TranscriptionEngine {
         // Start audio engine
         let (engine, _) = try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
             guard let self else { return }
-            self.sampleLock.withLock { self.sampleBuffer.append(contentsOf: samples) }
+            self.sampleLock.withLock {
+                self.sampleBuffer.append(contentsOf: samples)
+                if self.sampleBuffer.count > self.rollingBufferMaxSamples {
+                    self.sampleBuffer.removeFirst(self.sampleBuffer.count - self.rollingBufferMaxSamples)
+                }
+            }
+            let levelSamples = self.sampleLock.withLock { Array(self.sampleBuffer.suffix(1600)) }
+            Task { @MainActor in
+                self.audioSamples = levelSamples
+            }
 
             // Feed samples to SFSpeechRecognizer
             // Convert back to AVAudioPCMBuffer for Speech framework
@@ -575,8 +659,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
             guard let self else { return }
             if let result {
                 let text = result.bestTranscription.formattedString
-                self.lastSpeechTime = Date()
-                self.hasTriggeredEOU = false
                 DispatchQueue.main.async {
                     self.currentTranscript = text
                 }
@@ -585,17 +667,14 @@ final class AppleSpeechEngine: TranscriptionEngine {
                 // Recognition ended
             }
         }
-
-        // Start EOU checking
-        startEOUChecking()
     }
 
     func stopRecording() async -> String {
-        eouCheckTask?.cancel()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
         recognitionRequest = nil
+        sampleLock.withLock { sampleBuffer.removeAll(keepingCapacity: false) }
 
         if let engine = audioEngine {
             engine.inputNode.removeTap(onBus: 0)
@@ -607,15 +686,19 @@ final class AppleSpeechEngine: TranscriptionEngine {
         // Brief delay for final results
         try? await Task.sleep(for: .milliseconds(200))
 
+        await MainActor.run {
+            self.audioSamples = []
+        }
+
         return currentTranscript
     }
 
     func cancel() async {
-        eouCheckTask?.cancel()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         recognitionTask = nil
         recognitionRequest = nil
+        sampleLock.withLock { sampleBuffer.removeAll(keepingCapacity: false) }
 
         if let engine = audioEngine {
             engine.inputNode.removeTap(onBus: 0)
@@ -627,29 +710,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
         await MainActor.run {
             self.currentTranscript = ""
             self.audioSamples = []
-        }
-    }
-
-    // MARK: - EOU Detection
-
-    private func startEOUChecking() {
-        eouCheckTask = Task { [weak self] in
-            let threshold = Settings.shared.autoStopSilenceThreshold
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(200))
-                guard let self, let lastSpeech = self.lastSpeechTime,
-                      !self.currentTranscript.isEmpty, !self.hasTriggeredEOU else { continue }
-
-                // Update audio samples for visualization
-                let samples = self.sampleLock.withLock { self.sampleBuffer }
-                await MainActor.run { self.audioSamples = samples }
-
-                let silence = Date().timeIntervalSince(lastSpeech)
-                if silence >= threshold {
-                    self.hasTriggeredEOU = true
-                    await MainActor.run { self.onEndOfUtterance?() }
-                }
-            }
         }
     }
 }

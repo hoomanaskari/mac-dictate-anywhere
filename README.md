@@ -22,8 +22,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 - **Global Hotkey** - Press and hold Fn key (or custom shortcut) to dictate from anywhere
 - **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet - your audio never leaves your Mac
 - **25 Languages** - Support for English, German, French, Spanish, and 21 more European languages
-- **Hands-Free Mode** - Tap to start, tap again or pause speaking to stop
-- **Auto-Stop** - Automatically stops when you stop speaking (configurable)
+- **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
 - **Filler Word Removal** - Automatically removes "um", "uh", and other filler words
 - **Menu Bar App** - Runs quietly in your menu bar

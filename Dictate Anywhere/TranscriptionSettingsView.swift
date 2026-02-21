@@ -2,7 +2,7 @@
 //  TranscriptionSettingsView.swift
 //  Dictate Anywhere
 //
-//  Transcription settings: auto-stop, auto volume, filler removal, overlay.
+//  Transcription settings: auto volume, filler removal, overlay.
 //
 
 import SwiftUI
@@ -17,31 +17,6 @@ struct TranscriptionSettingsView: View {
 
         ScrollView {
             VStack(spacing: 24) {
-                // Auto-Stop
-                GroupBox("Auto-Stop") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Stop when speech ends", isOn: $settings.isAutoStopEnabled)
-
-                        if settings.isAutoStopEnabled {
-                            HStack {
-                                Text("Silence threshold")
-                                    .font(.subheadline)
-                                Spacer()
-                                Text(String(format: "%.1fs", settings.autoStopSilenceThreshold))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                            Slider(value: $settings.autoStopSilenceThreshold, in: 0.5...3.0, step: 0.1)
-
-                            Text("How long to wait after speech stops before ending dictation.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .padding(8)
-                }
-
                 // Auto Volume
                 GroupBox("Auto Volume Adjustment") {
                     VStack(alignment: .leading, spacing: 8) {
