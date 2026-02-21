@@ -17,6 +17,7 @@ struct DictateAnywhereApp: App {
             MainWindow()
                 .environment(appState)
         }
-        .defaultSize(width: 680, height: 500)
+        .defaultSize(width: 680, height: 560)
+        .windowResizability(.contentSize)
     }
 }
