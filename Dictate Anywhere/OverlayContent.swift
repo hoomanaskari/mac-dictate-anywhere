@@ -32,6 +32,16 @@ struct OverlayContent: View {
         Settings.shared.showTextPreview
     }
 
+    private var overlayTextColor: Color {
+        if #available(macOS 26, *) { return .primary }
+        return .white
+    }
+
+    private var overlaySecondaryTextColor: Color {
+        if #available(macOS 26, *) { return .secondary }
+        return .white.opacity(0.85)
+    }
+
     private var stateCategory: String {
         switch state {
         case .listening: "listening"
@@ -86,12 +96,7 @@ struct OverlayContent: View {
                 .animation(.easeInOut(duration: 0.2), value: stateCategory)
         }
         .frame(width: pillWidth, height: pillHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.black.opacity(0.85))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+        .modifier(GlassPillModifier())
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: pillWidth)
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: pillHeight)
     }
@@ -106,10 +111,10 @@ struct OverlayContent: View {
             HStack(spacing: 5) {
                 ProgressView()
                     .scaleEffect(0.7)
-                    .tint(.white)
+                    .tint(overlayTextColor)
                 Text("Processing")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(overlayTextColor.opacity(0.9))
             }
 
         case .success:
@@ -119,7 +124,7 @@ struct OverlayContent: View {
                     .foregroundStyle(.green)
                 Text("Done")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(overlayTextColor.opacity(0.9))
             }
 
         case .copiedOnly:
@@ -129,7 +134,7 @@ struct OverlayContent: View {
                     .foregroundStyle(.orange)
                 Text("Press ⌘V")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(overlayTextColor.opacity(0.9))
             }
         }
     }
@@ -143,7 +148,7 @@ struct OverlayContent: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         Text(previewText)
                             .font(.system(size: 13, weight: .light))
-                            .foregroundStyle(.white.opacity(0.85))
+                            .foregroundStyle(overlaySecondaryTextColor)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .id("transcript")
@@ -180,5 +185,25 @@ struct OverlayContent: View {
         let maxCharacters = 320
         guard transcript.count > maxCharacters else { return transcript }
         return "..." + String(transcript.suffix(maxCharacters))
+    }
+}
+
+// MARK: - Glass pill background
+
+private struct GlassPillModifier: ViewModifier {
+    private let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content
+                .glassEffect(.regular.tint(.black.opacity(0.3)), in: shape)
+                .overlay(shape.stroke(.white.opacity(0.25), lineWidth: 1))
+        } else {
+            content
+                .background(shape.fill(Color.black.opacity(0.85)))
+                .clipShape(shape)
+                .overlay(shape.stroke(.white.opacity(0.15), lineWidth: 1))
+                .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+        }
     }
 }
