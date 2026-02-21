@@ -409,10 +409,11 @@ final class AudioDeviceManager {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var uid: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid) == noErr else { return nil }
-        return uid as String
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid) == noErr,
+              let result = uid?.takeUnretainedValue() else { return nil }
+        return result as String
     }
 
     private static func deviceName(for deviceID: AudioDeviceID) -> String? {
@@ -421,10 +422,11 @@ final class AudioDeviceManager {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        var name: CFString = "" as CFString
-        var size = UInt32(MemoryLayout<CFString>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name) == noErr else { return nil }
-        return name as String
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name) == noErr,
+              let result = name?.takeUnretainedValue() else { return nil }
+        return result as String
     }
 
     // MARK: - Device Change Listener
@@ -509,10 +511,11 @@ enum MicrophoneHelper {
                 mScope: kAudioObjectPropertyScopeGlobal,
                 mElement: kAudioObjectPropertyElementMain
             )
-            var deviceUID: CFString = "" as CFString
-            var size = UInt32(MemoryLayout<CFString>.size)
+            var deviceUID: Unmanaged<CFString>?
+            var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             if AudioObjectGetPropertyData(id, &uidAddress, 0, nil, &size, &deviceUID) == noErr,
-               (deviceUID as String) == uid {
+               let uidValue = deviceUID?.takeUnretainedValue(),
+               (uidValue as String) == uid {
                 return id
             }
         }
