@@ -44,7 +44,7 @@ struct OverlayContent: View {
     private var pillWidth: CGFloat {
         switch state {
         case .listening:
-            return showTextPreview && hasTranscript ? 260 : 130
+            return showTextPreview ? 260 : 130
         case .processing, .success, .copiedOnly:
             return 130
         }
@@ -53,7 +53,7 @@ struct OverlayContent: View {
     private var pillHeight: CGFloat {
         switch state {
         case .listening:
-            return showTextPreview && hasTranscript ? 124 : 44
+            return showTextPreview ? 124 : 44
         default:
             return 44
         }
@@ -158,6 +158,13 @@ struct OverlayContent: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
 
+                WaveformView(audioLevel: level)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+        } else if showTextPreview {
+            VStack {
+                Spacer()
                 WaveformView(audioLevel: level)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
