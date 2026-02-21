@@ -71,6 +71,7 @@ final class Settings {
         static let selectedLanguage = "selectedLanguage"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
+        static let boostMicrophoneVolumeEnabled = "boostMicrophoneVolumeEnabled"
         static let muteSystemAudioDuringRecordingEnabled = "muteSystemAudioDuringRecordingEnabled"
         static let legacyAutoVolumeEnabled = "autoVolumeEnabled"
         static let soundEffectsEnabled = "soundEffectsEnabled"
@@ -154,6 +155,12 @@ final class Settings {
 
     // MARK: - Recording Audio
 
+    var boostMicrophoneVolumeEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(boostMicrophoneVolumeEnabled, forKey: Keys.boostMicrophoneVolumeEnabled)
+        }
+    }
+
     var muteSystemAudioDuringRecordingEnabled: Bool {
         didSet {
             UserDefaults.standard.set(muteSystemAudioDuringRecordingEnabled, forKey: Keys.muteSystemAudioDuringRecordingEnabled)
@@ -226,6 +233,9 @@ final class Settings {
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // Microphone boost (default: on)
+        boostMicrophoneVolumeEnabled = defaults.object(forKey: Keys.boostMicrophoneVolumeEnabled) as? Bool ?? true
 
         // Recording audio handling (with migration from legacy auto-volume setting).
         if let storedValue = defaults.object(forKey: Keys.muteSystemAudioDuringRecordingEnabled) as? Bool {

@@ -46,6 +46,7 @@ struct SettingsView: View {
             // MARK: - Audio
 
             Section {
+                Toggle("Boost microphone volume during recording", isOn: $settings.boostMicrophoneVolumeEnabled)
                 Toggle("Mute system audio during recording", isOn: $settings.muteSystemAudioDuringRecordingEnabled)
 
                 Toggle("Sound Effects", isOn: $settings.soundEffectsEnabled)
