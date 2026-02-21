@@ -123,7 +123,12 @@ final class AppState {
         // Play start sound
         settings.playSound("Tink")
 
-        // Adjust recording audio state if enabled
+        // Boost mic volume if enabled
+        if settings.boostMicrophoneVolumeEnabled {
+            volumeController.boostMicrophoneVolume()
+        }
+
+        // Mute system audio if enabled
         if settings.muteSystemAudioDuringRecordingEnabled {
             volumeController.adjustForRecording()
         }
@@ -142,6 +147,7 @@ final class AppState {
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
             insertionTargetApp = nil
+            volumeController.restoreMicrophoneVolume()
             if settings.muteSystemAudioDuringRecordingEnabled {
                 volumeController.restoreAfterRecording()
             }
@@ -177,6 +183,7 @@ final class AppState {
 
         guard !finalText.isEmpty else {
             currentTranscript = ""
+            volumeController.restoreMicrophoneVolume()
             // Restore recording audio state (brief pause lets BT audio routing settle)
             if settings.muteSystemAudioDuringRecordingEnabled {
                 try? await Task.sleep(for: .milliseconds(200))
@@ -199,8 +206,9 @@ final class AppState {
         let result = await textInserter.insertText(finalText)
         insertionTargetApp = nil
 
-        // Restore recording audio state after text insertion.
+        // Restore mic volume and recording audio state after text insertion.
         // gives Bluetooth audio routing time to settle back to playback mode.
+        volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
             volumeController.restoreAfterRecording()
         }
@@ -225,6 +233,7 @@ final class AppState {
 
         await activeEngine.cancel()
 
+        volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
             volumeController.restoreAfterRecording()
         }
