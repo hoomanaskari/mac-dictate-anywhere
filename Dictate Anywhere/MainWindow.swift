@@ -10,9 +10,7 @@ import SwiftUI
 enum SidebarPage: String, CaseIterable, Identifiable {
     case home
     case models
-    case general
-    case shortcuts
-    case transcription
+    case settings
 
     var id: String { rawValue }
 
@@ -20,9 +18,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Home"
         case .models: return "Speech Model"
-        case .general: return "General"
-        case .shortcuts: return "Shortcuts"
-        case .transcription: return "Transcription"
+        case .settings: return "Settings"
         }
     }
 
@@ -30,9 +26,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "mic.fill"
         case .models: return "cpu"
-        case .general: return "gear"
-        case .shortcuts: return "command"
-        case .transcription: return "text.bubble"
+        case .settings: return "gear"
         }
     }
 }
@@ -56,12 +50,8 @@ struct MainWindow: View {
             HomeView()
         case .models:
             ModelsView()
-        case .general:
-            GeneralSettingsView()
-        case .shortcuts:
-            ShortcutSettingsView()
-        case .transcription:
-            TranscriptionSettingsView()
+        case .settings:
+            SettingsView()
         }
     }
 }

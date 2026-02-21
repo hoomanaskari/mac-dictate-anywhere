@@ -34,18 +34,20 @@ struct ShortcutRecorderView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Display current shortcut or recording state
-            Text(isRecording ? "Press any key combo..." : (displayName.isEmpty ? "Not Set" : displayName))
-                .font(.system(.body, design: .rounded, weight: .medium))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(isRecording ? Color.accentColor.opacity(0.1) : Color.secondary.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isRecording ? Color.accentColor : Color.clear, lineWidth: 1.5)
-                )
+            if isRecording {
+                Text("Press any key combo...")
+                    .font(.system(.body, design: .rounded, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            } else if displayName.isEmpty {
+                Text("Not Set")
+                    .font(.system(.body, design: .rounded, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(displayName)
+                    .font(.system(.body, design: .rounded, weight: .medium))
+            }
+
+            Spacer()
 
             if isRecording {
                 Button("Cancel") {
@@ -54,14 +56,14 @@ struct ShortcutRecorderView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             } else {
-                Button("Record") {
+                Button(displayName.isEmpty ? "Record Shortcut" : "Change") {
                     startRecording()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
 
                 if !displayName.isEmpty {
-                    Button("Clear") {
+                    Button("Clear", role: .destructive) {
                         onClear()
                     }
                     .buttonStyle(.bordered)
@@ -118,7 +120,6 @@ final class ShortcutRecorder {
             callback: recorderCallback,
             userInfo: selfPtr
         ) else {
-            // Fallback: use local NSEvent monitor
             startLocalMonitor()
             return
         }
@@ -162,7 +163,6 @@ final class ShortcutRecorder {
     private func handleKeyDown(_ event: CGEvent) {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
-        // Escape cancels
         if keyCode == 53 {
             DispatchQueue.main.async { [weak self] in
                 self?.onCancel?()
@@ -177,9 +177,6 @@ final class ShortcutRecorder {
     private func handleFlagsChanged(_ flags: CGEventFlags) {
         let modifiers = Settings.normalizedModifierFlags(flags)
         if !modifiers.isEmpty {
-            // Only update when gaining modifiers (pressing), not losing them (releasing).
-            // This preserves the peak modifier combination so Cmd+Opt+Ctrl isn't
-            // reduced back to just Cmd as keys are released one by one.
             if pendingModifierFlags.isEmpty || modifiers.isSuperset(of: pendingModifierFlags) {
                 pendingModifierFlags = modifiers
             }
