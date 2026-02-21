@@ -17,7 +17,6 @@ struct DictateAnywhereApp: App {
             MainWindow()
                 .environment(appState)
         }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 600, height: 450)
+        .defaultSize(width: 680, height: 500)
     }
 }

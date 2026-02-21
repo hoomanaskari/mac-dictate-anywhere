@@ -14,64 +14,42 @@ struct ModelsView: View {
     @State private var downloadError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                enginePicker
-                parakeetSection
-                appleSpeechSection
-            }
-            .padding(24)
-        }
-        .navigationTitle("Speech Model")
-    }
+        @Bindable var settings = appState.settings
 
-    // MARK: - Engine Picker
-
-    private var enginePicker: some View {
-        GroupBox("Active Engine") {
-            @Bindable var settings = appState.settings
-            Picker("Engine", selection: $settings.engineChoice) {
-                ForEach(TranscriptionEngineChoice.allCases, id: \.self) { choice in
-                    Text(choice.displayName).tag(choice)
+        Form {
+            // Engine Picker
+            Section("Active Engine") {
+                Picker("Engine", selection: $settings.engineChoice) {
+                    ForEach(TranscriptionEngineChoice.allCases, id: \.self) { choice in
+                        Text(choice.displayName).tag(choice)
+                    }
                 }
+                .pickerStyle(.segmented)
             }
-            .pickerStyle(.segmented)
-            .padding(8)
-        }
-    }
 
-    // MARK: - Parakeet Section
-
-    private var parakeetSection: some View {
-        GroupBox("Parakeet (FluidAudio)") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "cpu")
-                        .foregroundStyle(.blue)
+            // Parakeet
+            Section {
+                LabeledContent("Type") {
                     Text("On-device speech-to-text")
-                        .font(.subheadline)
-                    Spacer()
+                }
+
+                LabeledContent("Size") {
                     Text("~500 MB")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 if appState.parakeetEngine.isModelDownloaded {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Model downloaded and ready")
-                            .font(.subheadline)
-
-                        Spacer()
-
-                        Button("Delete Model") {
-                            showDeleteConfirm = true
+                    LabeledContent("Status") {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Ready")
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(.red)
                     }
+
+                    Button("Delete Model", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
+                    .controlSize(.small)
                 } else if appState.parakeetEngine.isDownloading {
                     VStack(alignment: .leading, spacing: 8) {
                         ProgressView(value: appState.parakeetEngine.downloadProgress)
@@ -80,36 +58,58 @@ struct ModelsView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    HStack {
-                        Text("Model not downloaded")
-                            .font(.subheadline)
+                    LabeledContent("Status") {
+                        Text("Not downloaded")
                             .foregroundStyle(.secondary)
+                    }
 
-                        Spacer()
-
-                        Button("Download Model") {
-                            downloadError = nil
-                            Task {
-                                do {
-                                    try await appState.parakeetEngine.downloadModel()
-                                } catch {
-                                    downloadError = error.localizedDescription
-                                }
+                    Button("Download Model") {
+                        downloadError = nil
+                        Task {
+                            do {
+                                try await appState.parakeetEngine.downloadModel()
+                            } catch {
+                                downloadError = error.localizedDescription
                             }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
 
                 if let error = downloadError {
                     Text(error)
-                        .font(.caption)
                         .foregroundStyle(.red)
                 }
+            } header: {
+                Text("Parakeet (FluidAudio)")
             }
-            .padding(8)
+
+            // Apple Speech
+            Section {
+                LabeledContent("Type") {
+                    Text("Built-in on-device recognition")
+                }
+
+                LabeledContent("Download") {
+                    Text("None required")
+                }
+
+                LabeledContent("Status") {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Available")
+                    }
+                }
+            } header: {
+                Text("Apple Speech")
+            } footer: {
+                Text("Uses Apple's built-in speech recognition. Language support depends on your system settings.")
+            }
         }
+        .formStyle(.grouped)
+        .navigationTitle("Speech Model")
         .alert("Delete Model?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
@@ -119,38 +119,6 @@ struct ModelsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove the Parakeet model (~500 MB). You can download it again later.")
-        }
-    }
-
-    // MARK: - Apple Speech Section
-
-    private var appleSpeechSection: some View {
-        GroupBox("Apple Speech") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "apple.logo")
-                        .foregroundStyle(.primary)
-                    Text("Built-in on-device recognition")
-                        .font(.subheadline)
-                    Spacer()
-                    Text("No download")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("Available on macOS 15+")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("Uses Apple's built-in speech recognition. No additional download needed. Language support depends on your system settings.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(8)
         }
     }
 }
