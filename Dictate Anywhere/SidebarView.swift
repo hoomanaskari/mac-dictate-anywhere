@@ -12,8 +12,18 @@ struct SidebarView: View {
 
     var body: some View {
         List(SidebarPage.allCases, selection: $selectedPage) { page in
-            Label(page.title, systemImage: page.icon)
+            if page == .home {
+                Label {
+                    Text(page.title)
+                } icon: {
+                    Image("MenuBarIcon")
+                        .renderingMode(.template)
+                }
                 .tag(page)
+            } else {
+                Label(page.title, systemImage: page.icon)
+                    .tag(page)
+            }
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
