@@ -8,7 +8,6 @@
 import SwiftUI
 
 enum SidebarPage: String, CaseIterable, Identifiable {
-    case home
     case models
     case settings
     case shortcuts
@@ -18,7 +17,6 @@ enum SidebarPage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "Home"
         case .models: return "Speech Model"
         case .settings: return "Settings"
         case .shortcuts: return "Shortcuts"
@@ -28,7 +26,6 @@ enum SidebarPage: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .home: return "mic.fill"
         case .models: return "cpu"
         case .settings: return "gear"
         case .shortcuts: return "command.square.fill"
@@ -48,13 +45,19 @@ struct MainWindow: View {
         } detail: {
             detailView
         }
+        .frame(width: 680, height: 560)
+        .task {
+            await appState.permissions.check()
+            await appState.prepareActiveEngine()
+            if appState.permissions.accessibilityGranted && appState.settings.hasHotkey {
+                appState.hotkeyService.startMonitoring()
+            }
+        }
     }
 
     @ViewBuilder
     private var detailView: some View {
         switch appState.selectedPage {
-        case .home:
-            HomeView()
         case .models:
             ModelsView()
         case .settings:

@@ -24,7 +24,7 @@ final class AppState {
     var status: DictationStatus = .idle
     var currentTranscript = ""
     var lastTranscript = ""
-    var selectedPage: SidebarPage = .home
+    var selectedPage: SidebarPage = .models
 
     /// Static accessor for AppDelegate menu bar (avoids circular dependency)
     nonisolated(unsafe) static var lastTranscriptForMenuBar = ""
@@ -102,6 +102,15 @@ final class AppState {
             Task { @MainActor [weak self] in
                 await self?.cancelDictation()
             }
+        }
+    }
+
+    // MARK: - Engine Lifecycle
+
+    func prepareActiveEngine() async {
+        if case .error = status { status = .idle }
+        if !activeEngine.isReady {
+            try? await activeEngine.prepare()
         }
     }
 
