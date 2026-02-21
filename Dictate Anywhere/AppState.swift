@@ -123,8 +123,8 @@ final class AppState {
         // Play start sound
         settings.playSound("Tink")
 
-        // Adjust volume if enabled
-        if settings.autoVolumeEnabled {
+        // Adjust recording audio state if enabled
+        if settings.muteSystemAudioDuringRecordingEnabled {
             volumeController.adjustForRecording()
         }
 
@@ -142,7 +142,7 @@ final class AppState {
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
             insertionTargetApp = nil
-            if settings.autoVolumeEnabled {
+            if settings.muteSystemAudioDuringRecordingEnabled {
                 volumeController.restoreAfterRecording()
             }
             return
@@ -175,13 +175,13 @@ final class AppState {
         let liveFallback = settings.removeFillerWords(from: currentTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
         let finalText = cleaned.isEmpty ? liveFallback : cleaned
 
-        // Restore volume
-        if settings.autoVolumeEnabled {
-            volumeController.restoreAfterRecording()
-        }
-
         guard !finalText.isEmpty else {
             currentTranscript = ""
+            // Restore recording audio state (brief pause lets BT audio routing settle)
+            if settings.muteSystemAudioDuringRecordingEnabled {
+                try? await Task.sleep(for: .milliseconds(200))
+                volumeController.restoreAfterRecording()
+            }
             overlay.show(state: .success)
             overlay.hide(afterDelay: 0.5)
             status = .idle
@@ -198,6 +198,12 @@ final class AppState {
         await reactivateInsertionTargetIfNeeded()
         let result = await textInserter.insertText(finalText)
         insertionTargetApp = nil
+
+        // Restore recording audio state after text insertion.
+        // gives Bluetooth audio routing time to settle back to playback mode.
+        if settings.muteSystemAudioDuringRecordingEnabled {
+            volumeController.restoreAfterRecording()
+        }
 
         switch result {
         case .success:
@@ -219,7 +225,7 @@ final class AppState {
 
         await activeEngine.cancel()
 
-        if settings.autoVolumeEnabled {
+        if settings.muteSystemAudioDuringRecordingEnabled {
             volumeController.restoreAfterRecording()
         }
 

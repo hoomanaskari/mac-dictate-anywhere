@@ -11,6 +11,8 @@ enum SidebarPage: String, CaseIterable, Identifiable {
     case home
     case models
     case settings
+    case shortcuts
+    case textOverlay
 
     var id: String { rawValue }
 
@@ -19,6 +21,8 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .home: return "Home"
         case .models: return "Speech Model"
         case .settings: return "Settings"
+        case .shortcuts: return "Shortcuts"
+        case .textOverlay: return "Text & Overlay"
         }
     }
 
@@ -27,6 +31,8 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .home: return "mic.fill"
         case .models: return "cpu"
         case .settings: return "gear"
+        case .shortcuts: return "command.square.fill"
+        case .textOverlay: return "text.badge.checkmark"
         }
     }
 }
@@ -52,6 +58,10 @@ struct MainWindow: View {
             ModelsView()
         case .settings:
             SettingsView()
+        case .shortcuts:
+            ShortcutsView()
+        case .textOverlay:
+            TextOverlayView()
         }
     }
 }

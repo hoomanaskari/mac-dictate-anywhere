@@ -14,8 +14,9 @@ final class AudioMonitor {
 
     var smoothedLevel: Float = 0.0
 
-    private let smoothingFactor: Float = 0.3
-    private let rmsWindowSize: Int = 1600
+    private let attackSmoothing: Float = 0.08
+    private let releaseSmoothing: Float = 0.65
+    private let rmsWindowSize: Int = 800
 
     // MARK: - Public
 
@@ -25,7 +26,8 @@ final class AudioMonitor {
         let window = Array(samples.suffix(rmsWindowSize))
 
         let rms = calculateRMS(window)
-        smoothedLevel = smoothedLevel * smoothingFactor + rms * (1 - smoothingFactor)
+        let smoothing = rms > smoothedLevel ? attackSmoothing : releaseSmoothing
+        smoothedLevel = smoothedLevel * smoothing + rms * (1 - smoothing)
     }
 
     /// Resets the monitor state
@@ -39,6 +41,7 @@ final class AudioMonitor {
         guard !samples.isEmpty else { return 0 }
         var rms: Float = 0
         vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
-        return min(1.0, rms * 4.0)
+        let scaled = min(1.0, rms * 5.5)
+        return powf(scaled, 0.85)
     }
 }

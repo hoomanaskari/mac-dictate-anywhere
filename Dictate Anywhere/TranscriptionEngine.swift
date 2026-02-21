@@ -303,6 +303,7 @@ final class ParakeetEngine: TranscriptionEngine {
             try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
                 guard let self else { return }
                 var droppedCount = 0
+                var levelSamples: [Float] = []
                 self.sampleLock.withLock {
                     self.sampleBuffer.append(contentsOf: samples)
                     self.totalSampleCount += samples.count
@@ -310,6 +311,10 @@ final class ParakeetEngine: TranscriptionEngine {
                         droppedCount = self.sampleBuffer.count - self.hardPendingSampleCap
                         self.sampleBuffer.removeFirst(droppedCount)
                     }
+                    levelSamples = Array(self.sampleBuffer.suffix(self.audioLevelWindowSamples))
+                }
+                Task { @MainActor [levelSamples] in
+                    self.audioSamples = levelSamples
                 }
                 if droppedCount > 0 {
                     self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
@@ -388,16 +393,10 @@ final class ParakeetEngine: TranscriptionEngine {
 
             await commitBufferedChunksIfNeeded(force: false)
 
-            let (totalSamples, recentSamples, levelSamples) = sampleLock.withLock { () -> (Int, [Float], [Float]) in
+            let (totalSamples, recentSamples) = sampleLock.withLock { () -> (Int, [Float]) in
                 let total = totalSampleCount
                 let recent = Array(sampleBuffer.suffix(speechCheckWindowSamples))
-                let levels = Array(sampleBuffer.suffix(audioLevelWindowSamples))
-                return (total, recent, levels)
-            }
-
-            // Update cached samples for visualization (bounded window only).
-            await MainActor.run {
-                self.audioSamples = levelSamples
+                return (total, recent)
             }
 
             let newSampleCount = totalSamples - lastObservedSampleCount
