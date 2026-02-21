@@ -44,9 +44,9 @@ struct OverlayContent: View {
     private var pillWidth: CGFloat {
         switch state {
         case .listening:
-            return showTextPreview && hasTranscript ? 260 : 220
+            return showTextPreview && hasTranscript ? 260 : 130
         case .processing, .success, .copiedOnly:
-            return 200
+            return 130
         }
     }
 
@@ -103,11 +103,11 @@ struct OverlayContent: View {
             listeningContent(level: level, transcript: transcript)
 
         case .processing:
-            HStack(spacing: 10) {
+            HStack(spacing: 5) {
                 ProgressView()
                     .scaleEffect(0.7)
                     .tint(.white)
-                Text("Processing...")
+                Text("Processing")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(0.9))
             }

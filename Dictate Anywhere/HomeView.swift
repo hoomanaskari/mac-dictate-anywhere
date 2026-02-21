@@ -15,9 +15,6 @@ struct HomeView: View {
             // Status
             Section("Status") {
                 HStack(spacing: 16) {
-                    statusIcon
-                        .font(.system(size: 32))
-
                     VStack(alignment: .leading, spacing: 4) {
                         Text(statusTitle)
                             .font(.headline)
@@ -86,29 +83,35 @@ struct HomeView: View {
 
             // Hotkey
             Section("Keyboard Shortcut") {
-                HStack {
-                    if appState.settings.hasHotkey {
-                        Text(appState.settings.hotkeyDisplayName)
-                            .font(.system(.title3, design: .rounded, weight: .medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.quaternary)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                Button {
+                    appState.selectedPage = .shortcuts
+                } label: {
+                    HStack {
+                        if appState.settings.hasHotkey {
+                            Text(appState.settings.hotkeyDisplayName)
+                                .font(.system(.title3, design: .rounded, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(.quaternary)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                        Text(appState.settings.hotkeyMode.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("No shortcut configured")
-                            .foregroundStyle(.secondary)
+                            Text(appState.settings.hotkeyMode.displayName)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("No shortcut configured")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Text("Configure in Settings")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
-
-                    Spacer()
-
-                    Text("Configure in Settings")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
 
             // Engine
@@ -150,25 +153,6 @@ struct HomeView: View {
     }
 
     // MARK: - Status Helpers
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch appState.status {
-        case .idle:
-            Image(systemName: "mic.fill")
-                .foregroundStyle(appState.activeEngine.isReady ? .green : .secondary)
-        case .recording:
-            Image(systemName: "waveform")
-                .foregroundStyle(.red)
-                .symbolEffect(.variableColor.iterative)
-        case .processing:
-            ProgressView()
-                .scaleEffect(0.8)
-        case .error:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-        }
-    }
 
     private var statusTitle: String {
         switch appState.status {
