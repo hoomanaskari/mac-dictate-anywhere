@@ -177,7 +177,12 @@ final class ShortcutRecorder {
     private func handleFlagsChanged(_ flags: CGEventFlags) {
         let modifiers = Settings.normalizedModifierFlags(flags)
         if !modifiers.isEmpty {
-            pendingModifierFlags = modifiers
+            // Only update when gaining modifiers (pressing), not losing them (releasing).
+            // This preserves the peak modifier combination so Cmd+Opt+Ctrl isn't
+            // reduced back to just Cmd as keys are released one by one.
+            if pendingModifierFlags.isEmpty || modifiers.isSuperset(of: pendingModifierFlags) {
+                pendingModifierFlags = modifiers
+            }
             return
         }
 
@@ -207,7 +212,9 @@ final class ShortcutRecorder {
             if event.type == .flagsChanged {
                 let modifiers = Self.cgFlags(from: event.modifierFlags)
                 if !modifiers.isEmpty {
-                    self.pendingModifierFlags = modifiers
+                    if self.pendingModifierFlags.isEmpty || modifiers.isSuperset(of: self.pendingModifierFlags) {
+                        self.pendingModifierFlags = modifiers
+                    }
                     return event
                 }
 
