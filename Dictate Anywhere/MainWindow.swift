@@ -39,11 +39,12 @@ enum SidebarPage: String, CaseIterable, Identifiable {
 
 struct MainWindow: View {
     @Environment(AppState.self) private var appState
-    @State private var selectedPage: SidebarPage = .home
 
     var body: some View {
+        @Bindable var appState = appState
+
         NavigationSplitView {
-            SidebarView(selectedPage: $selectedPage)
+            SidebarView(selectedPage: $appState.selectedPage)
         } detail: {
             detailView
         }
@@ -51,7 +52,7 @@ struct MainWindow: View {
 
     @ViewBuilder
     private var detailView: some View {
-        switch selectedPage {
+        switch appState.selectedPage {
         case .home:
             HomeView()
         case .models:

@@ -24,6 +24,7 @@ final class AppState {
     var status: DictationStatus = .idle
     var currentTranscript = ""
     var lastTranscript = ""
+    var selectedPage: SidebarPage = .home
 
     /// Static accessor for AppDelegate menu bar (avoids circular dependency)
     nonisolated(unsafe) static var lastTranscriptForMenuBar = ""
