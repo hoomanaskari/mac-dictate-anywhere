@@ -52,6 +52,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let micItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        let micSubmenu = NSMenu(title: "Microphone")
+        micSubmenu.delegate = self
+        micItem.submenu = micSubmenu
+        menu.addItem(micItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -122,8 +130,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(transcript, forType: .string)
     }
 
+    @objc private func selectMicrophone(_ sender: NSMenuItem) {
+        Settings.shared.selectedMicrophoneUID = sender.representedObject as? String
+    }
+
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension AppDelegate: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "Microphone" else { return }
+        menu.removeAllItems()
+
+        let selectedUID = Settings.shared.selectedMicrophoneUID
+
+        let defaultItem = NSMenuItem(title: "System Default", action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+        defaultItem.target = self
+        defaultItem.representedObject = nil
+        defaultItem.state = selectedUID == nil ? .on : .off
+        menu.addItem(defaultItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        for device in AudioDeviceManager.enumerateInputDevices() {
+            let item = NSMenuItem(title: device.name, action: #selector(selectMicrophone(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = device.uid
+            item.state = selectedUID == device.uid ? .on : .off
+            menu.addItem(item)
+        }
     }
 }
 

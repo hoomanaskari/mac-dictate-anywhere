@@ -31,9 +31,10 @@ final class VolumeController {
     }
 
     /// Saves current mic volume and boosts it to 80% for recording.
-    func boostMicrophoneVolume() {
+    /// - Parameter deviceID: Specific device to boost; falls back to system default if nil.
+    func boostMicrophoneVolume(deviceID: AudioDeviceID? = nil) {
         guard savedInputVolume == nil else { return }
-        guard let inputID = getDefaultInputDeviceID() else { return }
+        guard let inputID = deviceID ?? getDefaultInputDeviceID() else { return }
         guard let currentVolume = getVolume(deviceID: inputID, scope: kAudioDevicePropertyScopeInput) else { return }
         let targetVolume: Float32 = 0.8
         if currentVolume < targetVolume {

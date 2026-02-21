@@ -79,6 +79,7 @@ final class Settings {
         static let showTextPreview = "showTextPreview"
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
+        static let selectedMicrophoneUID = "selectedMicrophoneUID"
     }
 
     // MARK: - Hotkey Settings
@@ -152,6 +153,19 @@ final class Settings {
     }
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
+
+    // MARK: - Microphone Selection
+
+    /// Selected microphone UID. nil = follow system default.
+    var selectedMicrophoneUID: String? {
+        didSet {
+            if let uid = selectedMicrophoneUID {
+                UserDefaults.standard.set(uid, forKey: Keys.selectedMicrophoneUID)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Keys.selectedMicrophoneUID)
+            }
+        }
+    }
 
     // MARK: - Recording Audio
 
@@ -233,6 +247,9 @@ final class Settings {
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // Microphone selection
+        selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)
 
         // Microphone boost (default: on)
         boostMicrophoneVolumeEnabled = defaults.object(forKey: Keys.boostMicrophoneVolumeEnabled) as? Bool ?? true

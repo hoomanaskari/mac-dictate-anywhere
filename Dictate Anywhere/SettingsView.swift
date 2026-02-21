@@ -46,6 +46,17 @@ struct SettingsView: View {
             // MARK: - Audio
 
             Section {
+                Picker("Microphone", selection: Binding<String?>(
+                    get: { settings.selectedMicrophoneUID },
+                    set: { settings.selectedMicrophoneUID = $0 }
+                )) {
+                    Text("System Default").tag(nil as String?)
+                    ForEach(appState.audioDeviceManager.availableInputDevices, id: \.uid) { device in
+                        Text(device.name).tag(device.uid as String?)
+                    }
+                }
+                .pickerStyle(.menu)
+
                 Toggle("Boost microphone volume during recording", isOn: $settings.boostMicrophoneVolumeEnabled)
                 Toggle("Mute system audio during recording", isOn: $settings.muteSystemAudioDuringRecordingEnabled)
 
