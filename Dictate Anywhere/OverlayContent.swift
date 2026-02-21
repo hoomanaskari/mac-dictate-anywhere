@@ -97,8 +97,6 @@ struct OverlayContent: View {
         }
         .frame(width: pillWidth, height: pillHeight)
         .modifier(GlassPillModifier())
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: pillWidth)
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: pillHeight)
     }
 
     @ViewBuilder
