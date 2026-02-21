@@ -95,18 +95,19 @@ struct OverlayContent: View {
 
     @ViewBuilder
     private func listeningContent(level: Float, transcript: String) -> some View {
+        let previewText = trimmedPreviewText(for: transcript)
         if showTextPreview {
             VStack(spacing: 8) {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
-                        Text(transcript.isEmpty ? "Listening..." : transcript)
+                        Text(previewText)
                             .font(.system(size: 19, weight: .light))
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .id("transcript")
                     }
                     .frame(height: 66)
-                    .onChange(of: transcript) { _, _ in
+                    .onChange(of: previewText) { _, _ in
                         withAnimation(.easeOut(duration: 0.1)) {
                             proxy.scrollTo("transcript", anchor: .bottom)
                         }
@@ -118,5 +119,12 @@ struct OverlayContent: View {
         } else {
             WaveformView(audioLevel: level)
         }
+    }
+
+    private func trimmedPreviewText(for transcript: String) -> String {
+        guard !transcript.isEmpty else { return "Listening..." }
+        let maxCharacters = 320
+        guard transcript.count > maxCharacters else { return transcript }
+        return "..." + String(transcript.suffix(maxCharacters))
     }
 }

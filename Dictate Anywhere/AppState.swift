@@ -8,7 +8,6 @@
 import Foundation
 import AppKit
 import CoreAudio
-import os
 
 @Observable
 @MainActor
@@ -44,20 +43,11 @@ final class AppState {
     /// Whether the app is transitioning between states (simple guard)
     private var isTransitioning = false
 
-    /// Watchdog timer for stuck dictation sessions
-    private var watchdogTask: Task<Void, Never>?
-    private let watchdogTimeout: TimeInterval = 300
-
     /// Audio level polling loop
     private var audioLevelTask: Task<Void, Never>?
 
     /// App that was frontmost when dictation started (used as paste target)
     private var insertionTargetApp: NSRunningApplication?
-
-    private let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
-        category: "AppState"
-    )
 
     // MARK: - Active Engine
 
@@ -77,7 +67,6 @@ final class AppState {
 
     init() {
         setupHotkeyCallbacks()
-        setupEngineCallbacks()
     }
 
     // MARK: - Hotkey Callbacks
@@ -115,15 +104,6 @@ final class AppState {
         }
     }
 
-    private func setupEngineCallbacks() {
-        parakeetEngine.onEndOfUtterance = { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.shouldAutoStopFromEndOfUtterance else { return }
-                await self.stopDictation()
-            }
-        }
-    }
-
     // MARK: - Dictation Flow
 
     func startDictation() async {
@@ -151,25 +131,8 @@ final class AppState {
         // Show overlay
         overlay.show(state: .listening(level: 0, transcript: ""))
 
-        // Start watchdog
-        watchdogTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(self?.watchdogTimeout ?? 30))
-            guard !Task.isCancelled else { return }
-            await self?.cancelDictation()
-        }
-
-        // Configure EOU callback for Apple Speech engine
-        if let apple = activeEngine as? AppleSpeechEngine {
-            apple.onEndOfUtterance = { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, self.shouldAutoStopFromEndOfUtterance else { return }
-                    await self.stopDictation()
-                }
-            }
-        }
-
         // Get device ID for recording
-        let deviceID = MicrophoneHelper.effectiveDeviceID(settings: settings)
+        let deviceID = MicrophoneHelper.effectiveDeviceID()
 
         // Start recording
         do {
@@ -178,7 +141,6 @@ final class AppState {
             status = .error("Failed to start recording: \(error.localizedDescription)")
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
-            watchdogTask?.cancel()
             insertionTargetApp = nil
             if settings.autoVolumeEnabled {
                 volumeController.restoreAfterRecording()
@@ -196,7 +158,6 @@ final class AppState {
         defer { isTransitioning = false }
 
         status = .processing
-        watchdogTask?.cancel()
         stopAudioLevelPolling()
 
         // Show processing overlay
@@ -254,7 +215,6 @@ final class AppState {
     func cancelDictation() async {
         guard status == .recording || status == .processing else { return }
 
-        watchdogTask?.cancel()
         stopAudioLevelPolling()
 
         await activeEngine.cancel()
@@ -270,12 +230,6 @@ final class AppState {
     }
 
     // MARK: - Audio Level Polling
-
-    private var shouldAutoStopFromEndOfUtterance: Bool {
-        settings.isAutoStopEnabled &&
-        settings.hotkeyMode == .handsFreeToggle &&
-        status == .recording
-    }
 
     private func captureInsertionTargetApp() {
         let currentPID = ProcessInfo.processInfo.processIdentifier
@@ -296,14 +250,23 @@ final class AppState {
 
     private func startAudioLevelPolling() {
         audioLevelTask = Task { [weak self] in
+            var displayTranscript = ""
+            var transcriptPollTick = 0
             while !Task.isCancelled {
                 guard let self, self.status == .recording else { break }
                 let samples = self.activeEngine.audioSamples
                 self.audioMonitor.update(samples: samples)
                 let level = self.audioMonitor.smoothedLevel
-                let transcript = self.activeEngine.currentTranscript
-                self.currentTranscript = transcript
-                self.overlay.show(state: .listening(level: level, transcript: transcript))
+                transcriptPollTick += 1
+
+                // Reading/transferring huge transcript strings every frame is expensive on long sessions.
+                if transcriptPollTick >= 6 {
+                    transcriptPollTick = 0
+                    displayTranscript = self.activeEngine.currentTranscript
+                    self.currentTranscript = displayTranscript
+                }
+
+                self.overlay.show(state: .listening(level: level, transcript: displayTranscript))
                 try? await Task.sleep(for: .milliseconds(33))
             }
         }
@@ -319,11 +282,7 @@ final class AppState {
 // MARK: - Microphone Helper
 
 enum MicrophoneHelper {
-    static func effectiveDeviceID(settings: Settings) -> AudioDeviceID? {
-        if settings.useSystemDefaultMicrophone {
-            return currentDefaultInputDeviceID()
-        }
-        // For manual selection we'd look up by UID - for now use default
+    static func effectiveDeviceID() -> AudioDeviceID? {
         return currentDefaultInputDeviceID()
     }
 

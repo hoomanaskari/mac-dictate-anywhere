@@ -60,13 +60,6 @@ final class Permissions {
         }
     }
 
-    /// Opens System Settings to Microphone pane
-    func openMicSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
     /// Refreshes permission state (call periodically or after returning from Settings)
     func refresh() {
         queue.async { [weak self] in

@@ -13,10 +13,6 @@ enum TextInsertionResult {
     case success
     case copiedOnly
     case failed
-
-    var didCopyToClipboard: Bool {
-        self != .failed
-    }
 }
 
 final class TextInserter {

@@ -66,7 +66,7 @@ struct ShortcutSettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         case .handsFreeToggle:
-                            Text("Press once to start recording. Press again or stop speaking to stop. Press Escape to cancel.")
+                            Text("Press once to start recording. Press again to stop. Press Escape to cancel.")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }

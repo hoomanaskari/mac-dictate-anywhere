@@ -121,12 +121,18 @@ struct HomeView: View {
             if !appState.settings.hasHotkey { return "Set up a keyboard shortcut" }
             return "Press your hotkey to start dictating"
         case .recording:
-            return appState.currentTranscript.isEmpty ? "Listening..." : appState.currentTranscript
+            return appState.currentTranscript.isEmpty ? "Listening..." : shortLivePreview(appState.currentTranscript)
         case .processing:
             return "Finishing transcription..."
         case .error:
             return "Try again or check settings"
         }
+    }
+
+    private func shortLivePreview(_ transcript: String) -> String {
+        let maxCharacters = 180
+        guard transcript.count > maxCharacters else { return transcript }
+        return "..." + String(transcript.suffix(maxCharacters))
     }
 
     // MARK: - Permissions Card
@@ -142,16 +148,14 @@ struct HomeView: View {
                         if !appState.permissions.micGranted {
                             Task { await appState.permissions.requestMic() }
                         }
-                    },
-                    settingsAction: { appState.permissions.openMicSettings() }
+                    }
                 )
 
                 permissionRow(
                     title: "Accessibility",
                     subtitle: "Required for global hotkeys and text insertion",
                     granted: appState.permissions.accessibilityGranted,
-                    action: { appState.permissions.openAccessibilitySettings() },
-                    settingsAction: { appState.permissions.openAccessibilitySettings() }
+                    action: { appState.permissions.openAccessibilitySettings() }
                 )
             }
             .padding(8)
@@ -159,7 +163,7 @@ struct HomeView: View {
     }
 
     @ViewBuilder
-    private func permissionRow(title: String, subtitle: String, granted: Bool, action: @escaping () -> Void, settingsAction: @escaping () -> Void) -> some View {
+    private func permissionRow(title: String, subtitle: String, granted: Bool, action: @escaping () -> Void) -> some View {
         HStack {
             Image(systemName: granted ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(granted ? .green : .red)

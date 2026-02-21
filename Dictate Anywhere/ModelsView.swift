@@ -10,7 +10,6 @@ import SwiftUI
 struct ModelsView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var isDeleting = false
     @State private var showDeleteConfirm = false
     @State private var downloadError: String?
 
