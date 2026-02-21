@@ -11,7 +11,10 @@ struct WaveformView: View {
     let audioLevel: Float
 
     private let idleAmplitude: CGFloat = 0.12
-    private let waveColor = Color.white
+    private var waveColor: Color {
+        if #available(macOS 26, *) { return .primary }
+        return .white
+    }
 
     private struct WaveLayer {
         let frequencyMultiplier: Double
