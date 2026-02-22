@@ -81,6 +81,8 @@ final class Settings {
         static let appAppearanceMode = "appAppearanceMode"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let userHasChosenEngine = "userHasChosenEngine"
+        static let aiPostProcessingEnabled = "aiPostProcessingEnabled"
+        static let aiPostProcessingPrompt = "aiPostProcessingPrompt"
     }
 
     // MARK: - Hotkey Settings
@@ -161,6 +163,20 @@ final class Settings {
     }
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
+
+    // MARK: - AI Post Processing
+
+    var aiPostProcessingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(aiPostProcessingEnabled, forKey: Keys.aiPostProcessingEnabled)
+        }
+    }
+
+    var aiPostProcessingPrompt: String {
+        didSet {
+            UserDefaults.standard.set(aiPostProcessingPrompt, forKey: Keys.aiPostProcessingPrompt)
+        }
+    }
 
     // MARK: - Microphone Selection
 
@@ -256,6 +272,10 @@ final class Settings {
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // AI Post Processing
+        aiPostProcessingEnabled = defaults.object(forKey: Keys.aiPostProcessingEnabled) as? Bool ?? false
+        aiPostProcessingPrompt = defaults.string(forKey: Keys.aiPostProcessingPrompt) ?? ""
 
         // Microphone selection
         selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)

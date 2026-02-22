@@ -8,6 +8,7 @@
 import Foundation
 import AppKit
 import CoreAudio
+import FoundationModels
 
 @Observable
 @MainActor
@@ -226,10 +227,31 @@ final class AppState {
         lastTranscript = finalText
         Self.lastTranscriptForMenuBar = finalText
 
+        // AI Post Processing
+        var processedText = finalText
+        if settings.aiPostProcessingEnabled,
+           !settings.aiPostProcessingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if #available(macOS 26, *) {
+                if case .available = AIPostProcessingService.availability {
+                    do {
+                        processedText = try await AIPostProcessingService.process(
+                            text: finalText,
+                            prompt: settings.aiPostProcessingPrompt
+                        )
+                        currentTranscript = processedText
+                        lastTranscript = processedText
+                        Self.lastTranscriptForMenuBar = processedText
+                    } catch {
+                        // Silently fall back to original text on failure
+                    }
+                }
+            }
+        }
+
         // Insert text
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
         await reactivateInsertionTargetIfNeeded()
-        let result = await textInserter.insertText(finalText)
+        let result = await textInserter.insertText(processedText)
         insertionTargetApp = nil
 
         // Restore mic volume and recording audio state after text insertion.
