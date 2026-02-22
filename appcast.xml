@@ -6,6 +6,18 @@
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
         <item>
+            <title>2.0.2</title>
+            <pubDate>Sun, 22 Feb 2026 17:32:38 -0500</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>2.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.2/DictateAnywhere-2.0.2.dmg" length="4745281" type="application/octet-stream" sparkle:edSignature="+cim7DrpFJygx732ItmH0b4SiMZapEHs+8HQ53kDxszn+I2pEbdjC5bQumNj4TPQemU7WGccR6zH7IdPFrVnCQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.2/Dictate%20Anywhere3-2.delta" sparkle:deltaFrom="2" length="573830" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="858560" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="v1AQRf+A6uImXEe5CozXOnMwxjZoXX8GO6SOm6X/UlsHvgwsy8TbVi5AtnpPUxQMXGp/kUjV0dA9S8Kg23f9DQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>2.0.1</title>
             <pubDate>Sat, 21 Feb 2026 23:34:38 -0500</pubDate>
             <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
@@ -21,7 +33,7 @@
             <sparkle:version>1</sparkle:version>
             <sparkle:shortVersionString>2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.1/Dictate%20Anywhere%202.0.dmg" length="4703346" type="application/octet-stream"/>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0/Dictate%20Anywhere%202.0.dmg" length="4703346" type="application/octet-stream"/>
         </item>
     </channel>
 </rss>
