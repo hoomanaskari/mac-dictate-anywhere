@@ -29,7 +29,7 @@ struct WaveformView: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
             Canvas { context, size in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 for layer in layers {
@@ -51,7 +51,8 @@ struct WaveformView: View {
         fillPath.move(to: CGPoint(x: 0, y: midY))
         strokePath.move(to: CGPoint(x: 0, y: midY))
 
-        for x in stride(from: 0, through: size.width, by: 1) {
+        let step: CGFloat = 2
+        for x in stride(from: 0, through: size.width, by: step) {
             let normalizedX = x / size.width
             let envelope = sin(.pi * normalizedX)
             let wave = sin(normalizedX * .pi * 2 * layer.frequencyMultiplier + time * 2.5 + layer.phaseOffset)

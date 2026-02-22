@@ -80,12 +80,16 @@ final class Permissions {
         }
     }
 
-    /// Starts polling accessibility permission every ~1.5 seconds.
-    /// Automatically stops once accessibility is granted.
+    /// Starts polling accessibility permission every ~2.5 seconds.
+    /// Automatically stops once all permissions are granted.
     func startPolling() {
         guard pollingTimer == nil else { return }
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.refresh()
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            self.refresh()
+            if self.allGranted {
+                self.stopPolling()
+            }
         }
     }
 
