@@ -48,6 +48,20 @@ Thumbs.db
 
 # Distribution
 dist/
+sparkle-releases/
+
+# Secrets / signing keys / certificates (defense-in-depth)
+*.pem
+*.p12
+*.p8
+*.key
+*.cer
+*.pfx
+*.keystore
+*.mobileprovision
+*.provisionprofile
+.env
+.env.*
 
 # User-specific xcconfig files
 *.xcconfig
