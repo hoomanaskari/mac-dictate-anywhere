@@ -13,8 +13,8 @@ import os
 final class HotkeyService {
     // MARK: - Callbacks
 
-    var onKeyDown: (() -> Void)?
-    var onKeyUp: (() -> Void)?
+    var onKeyDown: ((HotkeyBinding) -> Void)?
+    var onKeyUp: ((HotkeyBinding) -> Void)?
     var onEscape: (() -> Void)?
 
     // MARK: - State
@@ -22,7 +22,7 @@ final class HotkeyService {
     private(set) var isMonitoring = false
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var isKeyDown = false
+    private var activeBindingIDs: Set<UUID> = []
 
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
@@ -82,7 +82,7 @@ final class HotkeyService {
         eventTap = nil
         runLoopSource = nil
         isMonitoring = false
-        isKeyDown = false
+        activeBindingIDs.removeAll()
     }
 
     func restartMonitoring() {
@@ -93,10 +93,6 @@ final class HotkeyService {
     // MARK: - Event Handling
 
     fileprivate func handleEvent(_ proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) {
-        let settings = Settings.shared
-        let targetKeyCode = settings.hotkeyKeyCode
-        let targetModifiers = Settings.normalizedModifierFlags(settings.hotkeyModifiers)
-
         // Handle escape key for cancelling hands-free mode
         if type == .keyDown {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -108,39 +104,47 @@ final class HotkeyService {
             }
         }
 
-        // Modifier-only hotkey (e.g. ⌃⌥⌘ with no non-modifier key)
-        if targetKeyCode == nil {
-            handleModifierOnlyEvent(type: type, event: event, targetModifiers: targetModifiers, mode: settings.hotkeyMode)
-            return
+        let bindings = Settings.shared.hotkeyBindings
+        for binding in bindings where binding.hasBinding {
+            if binding.keyCode == nil {
+                handleModifierOnlyEvent(type: type, event: event, binding: binding)
+            } else {
+                handleKeyedEvent(type: type, event: event, binding: binding)
+            }
         }
+    }
 
-        guard let targetKeyCode else { return }
+    private func handleKeyedEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
+        guard let targetKeyCode = binding.keyCode else { return }
+        guard type == .keyDown || type == .keyUp else { return }
+
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-
-        // Check if this matches our hotkey
         guard keyCode == targetKeyCode else { return }
 
-        // Check modifiers
+        let targetModifiers = binding.cgModifiers
         let eventFlags = Settings.normalizedModifierFlags(event.flags)
         if !targetModifiers.isEmpty {
             guard eventFlags.contains(targetModifiers) else { return }
         }
 
+        let bindingID = binding.id
+
         switch type {
         case .keyDown:
-            // Ignore key repeats
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
-            guard isRepeat == 0, !isKeyDown else { return }
-            isKeyDown = true
+            guard isRepeat == 0, !activeBindingIDs.contains(bindingID) else { return }
+            activeBindingIDs.insert(bindingID)
+            let capturedBinding = binding
             DispatchQueue.main.async { [weak self] in
-                self?.onKeyDown?()
+                self?.onKeyDown?(capturedBinding)
             }
 
         case .keyUp:
-            guard isKeyDown else { return }
-            isKeyDown = false
+            guard activeBindingIDs.contains(bindingID) else { return }
+            activeBindingIDs.remove(bindingID)
+            let capturedBinding = binding
             DispatchQueue.main.async { [weak self] in
-                self?.onKeyUp?()
+                self?.onKeyUp?(capturedBinding)
             }
 
         default:
@@ -148,38 +152,39 @@ final class HotkeyService {
         }
     }
 
-    private func handleModifierOnlyEvent(
-        type: CGEventType,
-        event: CGEvent,
-        targetModifiers: CGEventFlags,
-        mode: HotkeyMode
-    ) {
+    private func handleModifierOnlyEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
+        let targetModifiers = binding.cgModifiers
         guard !targetModifiers.isEmpty, type == .flagsChanged else { return }
 
         let eventModifiers = Settings.normalizedModifierFlags(event.flags)
         let isHotkeyActive = eventModifiers == targetModifiers
+        let bindingID = binding.id
+        let isActive = activeBindingIDs.contains(bindingID)
 
-        switch mode {
+        switch binding.mode {
         case .holdToRecord:
-            if isHotkeyActive, !isKeyDown {
-                isKeyDown = true
+            if isHotkeyActive, !isActive {
+                activeBindingIDs.insert(bindingID)
+                let capturedBinding = binding
                 DispatchQueue.main.async { [weak self] in
-                    self?.onKeyDown?()
+                    self?.onKeyDown?(capturedBinding)
                 }
-            } else if !isHotkeyActive, isKeyDown {
-                isKeyDown = false
+            } else if !isHotkeyActive, isActive {
+                activeBindingIDs.remove(bindingID)
+                let capturedBinding = binding
                 DispatchQueue.main.async { [weak self] in
-                    self?.onKeyUp?()
+                    self?.onKeyUp?(capturedBinding)
                 }
             }
         case .handsFreeToggle:
-            if isHotkeyActive, !isKeyDown {
-                isKeyDown = true
+            if isHotkeyActive, !isActive {
+                activeBindingIDs.insert(bindingID)
+                let capturedBinding = binding
                 DispatchQueue.main.async { [weak self] in
-                    self?.onKeyDown?()
+                    self?.onKeyDown?(capturedBinding)
                 }
-            } else if !isHotkeyActive, isKeyDown {
-                isKeyDown = false
+            } else if !isHotkeyActive, isActive {
+                activeBindingIDs.remove(bindingID)
             }
         }
     }
