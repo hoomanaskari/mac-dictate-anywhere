@@ -1,73 +1,52 @@
 # Release Workflow
 
-## Prerequisites (One-Time Setup)
+## Prerequisites (One-Time Setup) — Already Done
 
-### 1. Generate EdDSA Signing Keys
+- EdDSA signing keys generated and stored in macOS Keychain
+- Public key set in `Dictate Anywhere/Info.plist` (`SUPublicEDKey`)
+- Private key backed up as `private-eddsa-key.pem` (stored securely, not in repo)
+- `create-dmg` installed via Homebrew
+- Notarization credentials stored: `xcrun notarytool store-credentials "notarytool-profile"`
 
-Sparkle uses EdDSA (ed25519) keys to sign updates. You only need **one key pair** for all your apps. The private key is stored in your macOS Keychain.
-
-```bash
-# Generate keys (or print the existing public key if already generated)
-SPARKLE_BIN="$(xcodebuild -project 'Dictate Anywhere.xcodeproj' -scheme 'Dictate Anywhere' -showBuildSettings 2>/dev/null | grep -m1 BUILD_DIR | awk '{print $3}')"/../../SourcePackages/artifacts/sparkle/Sparkle/bin
-
-"$SPARKLE_BIN/generate_keys"
-```
-
-This will output something like:
-
-```
-A]  key already exists; public key:
-    <YOUR_PUBLIC_KEY_BASE64>
-
-    Add the `SUPublicEDKey` property to your app's Info.plist:
-    <key>SUPublicEDKey</key>
-    <string><YOUR_PUBLIC_KEY_BASE64></string>
-```
-
-**Important**: Copy the base64 public key and paste it into `Dictate Anywhere/Info.plist` as the value for `SUPublicEDKey` (replacing `REPLACE_WITH_GENERATED_PUBLIC_KEY`).
-
-### 2. Export Private Key for Backup
-
-Back up your private key in case you need to sign from another machine:
-
-```bash
-"$SPARKLE_BIN/generate_keys" -x private-eddsa-key.pem
-```
-
-Store `private-eddsa-key.pem` somewhere secure (e.g., a password manager). **Never commit it to the repo.**
-
-To import it on another machine:
+To import the private key on a new machine:
 
 ```bash
 "$SPARKLE_BIN/generate_keys" -f private-eddsa-key.pem
-```
-
-### 3. Install create-dmg (if not installed)
-
-```bash
-brew install create-dmg
 ```
 
 ---
 
 ## Releasing a New Version
 
+Set the version once and use it throughout:
+
+```bash
+VERSION="2.1"  # change this for each release
+```
+
+Set the Sparkle bin path:
+
+```bash
+SPARKLE_BIN="$(find ~/Library/Developer/Xcode/DerivedData -path '*/sparkle/Sparkle/bin/generate_appcast' -print -quit 2>/dev/null | xargs dirname)"
+```
+
 ### Step 1: Bump the Version Number
 
-Update the version in Xcode:
-- **MARKETING_VERSION** (e.g., `2.1`) — the user-facing version shown in the app
-- **CURRENT_PROJECT_VERSION** (e.g., `2`) — the internal build number, must increase with each release
+In Xcode, update the target's build settings:
 
-Sparkle uses `CFBundleVersion` (build number) to determine if an update is newer.
+- **MARKETING_VERSION** → `$VERSION` (e.g., `2.1`) — user-facing version
+- **CURRENT_PROJECT_VERSION** → increment by 1 (e.g., `2`) — Sparkle uses this to detect updates
 
 ### Step 2: Commit and Tag
 
 ```bash
 git add .
-git commit -m "Release v2.1"
-git tag v2.1
-git push && git push origin v2.1
+git commit -m "Release v${VERSION}"
+git tag "v${VERSION}"
+git push && git push origin "refs/tags/v${VERSION}"
 ```
+
+> **Note**: Use `refs/tags/v${VERSION}` to avoid ambiguity if a branch with the same name exists.
 
 ### Step 3: Archive the App
 
@@ -85,31 +64,25 @@ xcodebuild \
 
 ```bash
 mkdir -p dist
+rm -rf "dist/Dictate Anywhere.app"
 cp -R "/tmp/DictateAnywhere.xcarchive/Products/Applications/Dictate Anywhere.app" dist/
 ```
 
 ### Step 5: Notarize the App
 
 ```bash
-# Create a zip for notarization
 ditto -c -k --sequesterRsrc --keepParent "dist/Dictate Anywhere.app" "/tmp/DictateAnywhere-notarize.zip"
 
-# Submit for notarization
 xcrun notarytool submit "/tmp/DictateAnywhere-notarize.zip" \
   --keychain-profile "notarytool-profile" \
   --wait
 
-# Staple the notarization ticket to the app
 xcrun stapler staple "dist/Dictate Anywhere.app"
 ```
-
-> **Note**: You need to have stored your Apple ID credentials first with:
-> `xcrun notarytool store-credentials "notarytool-profile" --apple-id YOUR_APPLE_ID --team-id YOUR_TEAM_ID`
 
 ### Step 6: Create the DMG
 
 ```bash
-# Remove any previous DMG
 rm -f "dist/Dictate Anywhere.dmg"
 
 create-dmg \
@@ -135,112 +108,75 @@ xcrun stapler staple "dist/Dictate Anywhere.dmg"
 
 ### Step 8: Generate the Appcast
 
-Sparkle's `generate_appcast` tool reads your DMG, signs it with the EdDSA key from your Keychain, and updates `appcast.xml` automatically.
-
 ```bash
-# Create a directory for Sparkle releases
 mkdir -p sparkle-releases
+cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg"
 
-# Copy the DMG into it (filename should include the version)
-cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere 2.1.dmg"
-```
-
-Optionally, add release notes by creating a file with the same name but `.html` or `.md` extension:
-
-```bash
-# (Optional) Create release notes
-cat > "sparkle-releases/Dictate Anywhere 2.1.html" << 'EOF'
-<ul>
-  <li>New feature: ...</li>
-  <li>Bug fix: ...</li>
-</ul>
-EOF
-```
-
-Now generate the appcast:
-
-```bash
 "$SPARKLE_BIN/generate_appcast" \
-  --download-url-prefix "https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.1/" \
+  --download-url-prefix "https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v${VERSION}/" \
   --link "https://github.com/hoomanaskari/mac-dictate-anywhere" \
   -o appcast.xml \
   sparkle-releases/
 ```
 
-This will:
-- Read the DMG and extract version info from the app bundle
-- Sign the DMG with your EdDSA private key from the Keychain
-- Generate (or update) `appcast.xml` with a new `<item>` entry
-- Create delta updates if previous versions exist in the directory
-
 ### Step 9: Verify the Appcast
 
-Open `appcast.xml` and confirm it has a new `<item>` with:
-- Correct `sparkle:version` and `sparkle:shortVersionString`
-- A valid `sparkle:edSignature`
-- The correct `url` pointing to your GitHub release download
+Open `appcast.xml` and confirm the new `<item>` has:
+
+- Correct `sparkle:version` (build number) and `sparkle:shortVersionString` (marketing version)
+- The correct `url` pointing to the GitHub release download
 - The correct `length` (file size in bytes)
 
-You can also verify the signature manually:
-
-```bash
-"$SPARKLE_BIN/sign_update" --verify "dist/Dictate Anywhere.dmg" "SIGNATURE_FROM_APPCAST"
-```
-
-### Step 10: Commit and Push the Appcast
+### Step 10: Push Appcast and Create GitHub Release
 
 ```bash
 git add appcast.xml
-git commit -m "Update appcast for v2.1"
+git commit -m "Update appcast for v${VERSION}"
 git push
+
+gh release create "v${VERSION}" \
+  "dist/Dictate Anywhere ${VERSION}.dmg" \
+  --title "Dictate Anywhere v${VERSION}" \
+  --notes "Release notes here"
 ```
 
-The `SUFeedURL` in Info.plist points to:
-`https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/appcast.xml`
+The DMG filename on the GitHub release **must** match the appcast URL: `Dictate Anywhere ${VERSION}.dmg`
 
-So pushing to `main` makes the new version discoverable by Sparkle immediately.
-
-### Step 11: Create the GitHub Release
-
-1. Go to https://github.com/hoomanaskari/mac-dictate-anywhere/releases
-2. Create a new release for tag `v2.1`
-3. Upload `dist/Dictate Anywhere.dmg`
-4. Add release notes
-5. Publish the release
-
-The DMG download URL in the appcast must match the GitHub release asset URL:
-`https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.1/Dictate%20Anywhere%202.1.dmg`
+The appcast is served from: `https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/appcast.xml`
 
 ---
 
 ## Quick Reference
 
 ```bash
-# Define Sparkle bin path
-SPARKLE_BIN="$(xcodebuild -project 'Dictate Anywhere.xcodeproj' -scheme 'Dictate Anywhere' -showBuildSettings 2>/dev/null | grep -m1 BUILD_DIR | awk '{print $3}')"/../../SourcePackages/artifacts/sparkle/Sparkle/bin
-
-# Full release sequence (after bumping version in Xcode):
 VERSION="2.1"
+SPARKLE_BIN="$(find ~/Library/Developer/Xcode/DerivedData -path '*/sparkle/Sparkle/bin/generate_appcast' -print -quit 2>/dev/null | xargs dirname)"
 
+# Archive
 xcodebuild -project "Dictate Anywhere.xcodeproj" -scheme "Dictate Anywhere" \
   -configuration Release -destination "generic/platform=macOS" \
   -archivePath "/tmp/DictateAnywhere.xcarchive" archive
 
-mkdir -p dist
+# Export app
+mkdir -p dist && rm -rf "dist/Dictate Anywhere.app"
 cp -R "/tmp/DictateAnywhere.xcarchive/Products/Applications/Dictate Anywhere.app" dist/
 
+# Notarize app
 ditto -c -k --sequesterRsrc --keepParent "dist/Dictate Anywhere.app" "/tmp/DictateAnywhere-notarize.zip"
 xcrun notarytool submit "/tmp/DictateAnywhere-notarize.zip" --keychain-profile "notarytool-profile" --wait
 xcrun stapler staple "dist/Dictate Anywhere.app"
 
+# Create DMG
 rm -f "dist/Dictate Anywhere.dmg"
 create-dmg --volname "Dictate Anywhere" --window-pos 200 120 --window-size 600 400 \
   --icon-size 100 --icon "Dictate Anywhere.app" 150 185 --app-drop-link 450 185 \
   "dist/Dictate Anywhere.dmg" "dist/Dictate Anywhere.app"
 
+# Notarize DMG
 xcrun notarytool submit "dist/Dictate Anywhere.dmg" --keychain-profile "notarytool-profile" --wait
 xcrun stapler staple "dist/Dictate Anywhere.dmg"
 
+# Generate appcast
 mkdir -p sparkle-releases
 cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg"
 "$SPARKLE_BIN/generate_appcast" \
@@ -248,10 +184,11 @@ cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg
   --link "https://github.com/hoomanaskari/mac-dictate-anywhere" \
   -o appcast.xml sparkle-releases/
 
+# Push appcast and create release
 git add appcast.xml && git commit -m "Update appcast for v${VERSION}" && git push
+gh release create "v${VERSION}" "dist/Dictate Anywhere ${VERSION}.dmg" \
+  --title "Dictate Anywhere v${VERSION}" --notes "Release notes here"
 ```
-
-Then upload the DMG to the GitHub release for tag `v${VERSION}`.
 
 ---
 
@@ -261,14 +198,18 @@ Then upload the DMG to the GitHub release for tag `v${VERSION}`.
 - `v2.0` → `v2.1` for new features
 - `v2.0` → `v3.0` for major changes
 
+Remember: `CURRENT_PROJECT_VERSION` (build number) must always increase, regardless of version scheme.
+
 ---
 
 ## Troubleshooting
 
-**"No EdDSA key found"**: Run `generate_keys` to create one, or import an existing key with `generate_keys -f private-key.pem`.
+**"No EdDSA key found"**: Run `"$SPARKLE_BIN/generate_keys"` to create one, or import with `generate_keys -f private-eddsa-key.pem`.
 
-**Sparkle rejects the update**: Ensure `SUPublicEDKey` in Info.plist matches the key used to sign. Run `generate_keys -p` to print the public key.
+**Sparkle rejects the update**: Ensure `SUPublicEDKey` in Info.plist matches the key used to sign. Run `"$SPARKLE_BIN/generate_keys"` to print the current public key.
 
-**Update not appearing**: Check that `appcast.xml` is pushed to the `main` branch and the raw GitHub URL is accessible. Verify the `sparkle:version` in the appcast is higher than the version currently installed.
+**Update not appearing**: Verify `appcast.xml` is on the `main` branch. Check `sparkle:version` (build number) in the appcast is higher than the installed build number.
 
-**Notarization fails**: Ensure Hardened Runtime is enabled and the app is signed with a Developer ID certificate (not just a development certificate).
+**Tag push fails with "matches more than one"**: Use `git push origin refs/tags/vX.Y` to disambiguate from branches.
+
+**Notarization fails**: Ensure Hardened Runtime is enabled and the app is signed with a Developer ID certificate (not a development certificate).
