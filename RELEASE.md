@@ -110,7 +110,7 @@ xcrun stapler staple "dist/Dictate Anywhere.dmg"
 
 ```bash
 mkdir -p sparkle-releases
-cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg"
+cp "dist/Dictate Anywhere.dmg" "sparkle-releases/DictateAnywhere-${VERSION}.dmg"
 
 "$SPARKLE_BIN/generate_appcast" \
   --download-url-prefix "https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v${VERSION}/" \
@@ -135,12 +135,14 @@ git commit -m "Update appcast for v${VERSION}"
 git push
 
 gh release create "v${VERSION}" \
-  "dist/Dictate Anywhere ${VERSION}.dmg" \
+  "dist/DictateAnywhere-${VERSION}.dmg" \
   --title "Dictate Anywhere v${VERSION}" \
   --notes "Release notes here"
 ```
 
-The DMG filename on the GitHub release **must** match the appcast URL: `Dictate Anywhere ${VERSION}.dmg`
+The DMG filename on the GitHub release **must** match the appcast URL: `DictateAnywhere-${VERSION}.dmg`
+
+> **Important**: Do not use spaces in DMG filenames — GitHub converts them to dots, breaking download URLs.
 
 The appcast is served from: `https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/appcast.xml`
 
@@ -178,7 +180,7 @@ xcrun stapler staple "dist/Dictate Anywhere.dmg"
 
 # Generate appcast
 mkdir -p sparkle-releases
-cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg"
+cp "dist/Dictate Anywhere.dmg" "sparkle-releases/DictateAnywhere-${VERSION}.dmg"
 "$SPARKLE_BIN/generate_appcast" \
   --download-url-prefix "https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v${VERSION}/" \
   --link "https://github.com/hoomanaskari/mac-dictate-anywhere" \
@@ -186,7 +188,7 @@ cp "dist/Dictate Anywhere.dmg" "sparkle-releases/Dictate Anywhere ${VERSION}.dmg
 
 # Push appcast and create release
 git add appcast.xml && git commit -m "Update appcast for v${VERSION}" && git push
-gh release create "v${VERSION}" "dist/Dictate Anywhere ${VERSION}.dmg" \
+gh release create "v${VERSION}" "dist/DictateAnywhere-${VERSION}.dmg" \
   --title "Dictate Anywhere v${VERSION}" --notes "Release notes here"
 ```
 
