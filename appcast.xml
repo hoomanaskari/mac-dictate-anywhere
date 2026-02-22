@@ -1,9 +1,18 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
     <channel>
         <title>Dictate Anywhere</title>
         <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
+        <item>
+            <title>2.0</title>
+            <pubDate>Sat, 21 Feb 2026 23:05:24 -0500</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0/Dictate%20Anywhere%202.0.dmg" length="4703346" type="application/octet-stream"/>
+        </item>
     </channel>
 </rss>
