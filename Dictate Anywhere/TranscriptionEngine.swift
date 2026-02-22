@@ -13,6 +13,11 @@ import FluidAudio
 import Speech
 import os
 
+private let audioLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+    category: "AudioPipeline"
+)
+
 // MARK: - Protocol
 
 protocol TranscriptionEngine: AnyObject {
@@ -34,12 +39,14 @@ private func makeRecordingEngine(
     deviceID: AudioDeviceID?,
     onSamples: @escaping ([Float]) -> Void
 ) throws -> (AVAudioEngine, AVAudioConverter) {
+    audioLogger.info("makeRecordingEngine: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
     let engine = AVAudioEngine()
     let inputNode = engine.inputNode
 
     // Set input device if specified
     if let deviceID, deviceID != 0, deviceID != AudioDeviceID(kAudioObjectUnknown) {
         guard let audioUnit = inputNode.audioUnit else {
+            audioLogger.error("makeRecordingEngine: inputNode.audioUnit is nil")
             throw TranscriptionError.audioEngineSetupFailed
         }
         var mutableID = deviceID
@@ -51,14 +58,18 @@ private func makeRecordingEngine(
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status != noErr {
+            audioLogger.error("makeRecordingEngine: AudioUnitSetProperty failed, status=\(status, privacy: .public)")
             throw TranscriptionError.deviceSelectionFailed
         }
+        audioLogger.info("makeRecordingEngine: device \(deviceID, privacy: .public) selected successfully")
     }
 
     engine.reset()
 
     let hwFormat = inputNode.inputFormat(forBus: 0)
+    audioLogger.info("makeRecordingEngine: hwFormat sampleRate=\(hwFormat.sampleRate, privacy: .public), channelCount=\(hwFormat.channelCount, privacy: .public)")
     guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+        audioLogger.error("makeRecordingEngine: hwFormat invalid (sampleRate=0 or channelCount=0) — audio HAL not connected")
         throw TranscriptionError.audioEngineSetupFailed
     }
 
@@ -72,8 +83,15 @@ private func makeRecordingEngine(
         throw TranscriptionError.audioFormatError
     }
 
+    var tapCallbackCount = 0
+    let tapStartTime = CFAbsoluteTimeGetCurrent()
     inputNode.installTap(onBus: 0, bufferSize: 4096, format: recFormat) { buffer, _ in
         guard buffer.frameLength > 0, buffer.format.sampleRate > 0 else { return }
+        tapCallbackCount += 1
+        if tapCallbackCount == 1 {
+            let elapsed = CFAbsoluteTimeGetCurrent() - tapStartTime
+            audioLogger.info("makeRecordingEngine: first tap callback after \(String(format: "%.3f", elapsed), privacy: .public)s, frameLength=\(buffer.frameLength, privacy: .public)")
+        }
         let frameCapacity = AVAudioFrameCount(
             Double(buffer.frameLength) * targetFormat.sampleRate / buffer.format.sampleRate
         )
@@ -98,9 +116,16 @@ private func makeRecordingEngine(
     }
 
     engine.prepare()
-    try engine.start()
+    do {
+        try engine.start()
+    } catch {
+        audioLogger.error("makeRecordingEngine: engine.start() threw: \(error.localizedDescription, privacy: .public)")
+        throw error
+    }
+    audioLogger.info("makeRecordingEngine: engine started, isRunning=\(engine.isRunning, privacy: .public)")
 
     guard engine.isRunning else {
+        audioLogger.error("makeRecordingEngine: engine not running after start()")
         throw TranscriptionError.audioEngineSetupFailed
     }
 
@@ -152,6 +177,7 @@ final class ParakeetEngine: TranscriptionEngine {
     private var transcriptionTask: Task<Void, Never>?
     private var isTranscribing = false
     private var isRecordingActive = false
+    private var lastTapCallbackTime: CFAbsoluteTime = 0
 
     private let isModelDownloadedKey = "isFluidModelDownloaded"
     private let minAudioEnergy: Float = 0.005
@@ -290,7 +316,9 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func prepare() async throws {
+        logger.info("prepare: entry")
         if await asrCoordinator.isInitialized() {
+            logger.info("prepare: coordinator already initialized, early return")
             await MainActor.run {
                 self.isReady = true
                 self.isModelDownloaded = true
@@ -333,7 +361,9 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func startRecording(deviceID: AudioDeviceID?) async throws {
+        logger.info("startRecording: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
         guard await asrCoordinator.isInitialized() else {
+            logger.error("startRecording: coordinator not initialized")
             throw TranscriptionError.engineNotReady
         }
 
@@ -350,11 +380,13 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Start audio engine (async to avoid deadlock — the tap callback dispatches to main)
+        logger.info("startRecording: dispatching to engineQueue for audio engine setup")
         let (engine, _) = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(AVAudioEngine, AVAudioConverter), Error>) in
             engineQueue.async {
                 do {
                     let result = try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
                         guard let self else { return }
+                        self.lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
                         var droppedCount = 0
                         self.sampleLock.withLock {
                             // Trim before appending to avoid memory spike
@@ -375,6 +407,7 @@ final class ParakeetEngine: TranscriptionEngine {
                     }
                     continuation.resume(returning: result)
                 } catch {
+                    audioLogger.error("startRecording: makeRecordingEngine failed: \(error.localizedDescription, privacy: .public)")
                     continuation.resume(throwing: error)
                 }
             }
@@ -382,6 +415,8 @@ final class ParakeetEngine: TranscriptionEngine {
 
         audioEngine = engine
         isRecordingActive = true
+        lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
+        logger.info("startRecording: audio engine set up successfully, starting transcription loop")
 
         // Start transcription loop
         isTranscribing = true
@@ -442,14 +477,29 @@ final class ParakeetEngine: TranscriptionEngine {
     // MARK: - Transcription Loop
 
     private func transcriptionLoop() async {
-        guard await asrCoordinator.isInitialized() else { return }
+        logger.info("transcriptionLoop: entry")
+        guard await asrCoordinator.isInitialized() else {
+            logger.error("transcriptionLoop: coordinator not initialized, exiting")
+            return
+        }
         var lastObservedSampleCount = 0
+        var loopIteration = 0
 
         while isTranscribing && !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(transcriptionIntervalMs))
             guard isTranscribing else { break }
 
             await commitBufferedChunksIfNeeded(force: false)
+
+            loopIteration += 1
+            if loopIteration % 10 == 0 {
+                let sampleCount = sampleLock.withLock { sampleBuffer.count }
+                logger.info("transcriptionLoop: iteration \(loopIteration, privacy: .public), buffered samples=\(sampleCount, privacy: .public)")
+                let tapAge = CFAbsoluteTimeGetCurrent() - lastTapCallbackTime
+                if tapAge > 2.0 {
+                    logger.warning("transcriptionLoop: no tap callbacks for \(String(format: "%.1f", tapAge), privacy: .public)s — audio pipeline may be stalled")
+                }
+            }
 
             let (totalSamples, recentSamples) = sampleLock.withLock { () -> (Int, [Float]) in
                 let total = totalSampleCount
@@ -466,7 +516,9 @@ final class ParakeetEngine: TranscriptionEngine {
             if hasSignificant {
                 do {
                     let pendingSamples = sampleLock.withLock { sampleBuffer }
+                    logger.info("transcriptionLoop: calling transcribe with \(pendingSamples.count, privacy: .public) samples")
                     let result = try await asrCoordinator.transcribe(pendingSamples)
+                    logger.info("transcriptionLoop: transcribe returned \(result.text.count, privacy: .public) chars")
                     let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     let merged = mergeTranscripts(base: committedTranscript, addition: text)
                     if !merged.isEmpty {
@@ -479,6 +531,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
             lastObservedSampleCount = totalSamples
         }
+        logger.info("transcriptionLoop: exited, isTranscribing=\(self.isTranscribing, privacy: .public), cancelled=\(Task.isCancelled, privacy: .public)")
     }
 
     private func performFinalTranscription() async -> String {
@@ -586,7 +639,11 @@ final class ParakeetEngine: TranscriptionEngine {
     private let maxRetiredEngines = 3
 
     private func teardownAudioEngine() {
-        guard let engine = audioEngine else { return }
+        guard let engine = audioEngine else {
+            logger.info("teardownAudioEngine: no engine to tear down")
+            return
+        }
+        logger.info("teardownAudioEngine: engine.isRunning=\(engine.isRunning, privacy: .public)")
         audioEngine = nil
 
         engineQueue.async { [weak self] in
@@ -614,22 +671,32 @@ final class ParakeetEngine: TranscriptionEngine {
 
 private actor AsrManagerCoordinator {
     private var manager: AsrManager?
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "AsrCoordinator"
+    )
 
     func isInitialized() -> Bool { manager != nil }
 
     func initialize(models: AsrModels, config: ASRConfig) async throws {
+        logger.info("initialize: starting (existing manager=\(self.manager != nil, privacy: .public))")
         manager?.cleanup()
         let m = AsrManager(config: config)
         try await m.initialize(models: models)
         manager = m
+        logger.info("initialize: completed successfully")
     }
 
     func transcribe(_ samples: [Float]) async throws -> ASRResult {
         guard let manager else { throw TranscriptionError.engineNotReady }
-        return try await manager.transcribe(samples)
+        logger.info("transcribe: calling manager.transcribe with \(samples.count, privacy: .public) samples")
+        let result = try await manager.transcribe(samples)
+        logger.info("transcribe: returned \(result.text.count, privacy: .public) chars")
+        return result
     }
 
     func cleanup() {
+        logger.info("cleanup: releasing manager (was initialized=\(self.manager != nil, privacy: .public))")
         manager?.cleanup()
         manager = nil
     }
@@ -640,6 +707,11 @@ private actor AsrManagerCoordinator {
 @Observable
 final class AppleSpeechEngine: TranscriptionEngine {
     // MARK: - State
+
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "AppleSpeechEngine"
+    )
 
     var isReady: Bool = false
     var currentTranscript: String = ""
@@ -788,5 +860,33 @@ final class AppleSpeechEngine: TranscriptionEngine {
             self.currentTranscript = ""
             self.audioSamples = []
         }
+    }
+
+    /// Fully releases all audio and speech recognition resources.
+    /// Call when switching away from Apple Speech to avoid holding
+    /// audio HAL resources that interfere with other engines.
+    func deactivate() {
+        logger.info("deactivate: entry, audioEngine=\(self.audioEngine != nil, privacy: .public), recognizer=\(self.recognizer != nil, privacy: .public)")
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        recognizer = nil
+
+        if let engine = audioEngine {
+            logger.info("deactivate: tearing down audioEngine, isRunning=\(engine.isRunning, privacy: .public)")
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+            engine.reset()
+            audioEngine = nil
+        } else {
+            logger.info("deactivate: audioEngine was already nil")
+        }
+
+        sampleLock.withLock { sampleBuffer.removeAll(keepingCapacity: false) }
+        isReady = false
+        currentTranscript = ""
+        audioSamples = []
+        logger.info("deactivate: completed")
     }
 }
