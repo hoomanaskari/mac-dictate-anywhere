@@ -58,6 +58,9 @@ final class AppState {
     /// App that was frontmost when dictation started (used as paste target)
     private var insertionTargetApp: NSRunningApplication?
 
+    /// Engine pinned for the active dictation session (start -> stop/cancel).
+    private var sessionEngine: TranscriptionEngine?
+
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
@@ -121,6 +124,8 @@ final class AppState {
     // MARK: - Engine Lifecycle
 
     func prepareActiveEngine() async {
+        if case .recording = status { return }
+        if case .processing = status { return }
         if case .error = status { status = .idle }
 
         // Auto-default: if user hasn't explicitly chosen an engine and
@@ -145,7 +150,8 @@ final class AppState {
 
     func startDictation() async {
         guard status == .idle, !isTransitioning else { return }
-        guard activeEngine.isReady else {
+        let engine = activeEngine
+        guard engine.isReady else {
             status = .error("Engine not ready. Download or configure the speech model first.")
             return
         }
@@ -153,6 +159,7 @@ final class AppState {
 
         isTransitioning = true
         pendingHoldRelease = false
+        sessionEngine = engine
 
         status = .recording
         currentTranscript = ""
@@ -178,7 +185,7 @@ final class AppState {
 
         // Start recording
         do {
-            try await activeEngine.startRecording(deviceID: deviceID)
+            try await engine.startRecording(deviceID: deviceID)
         } catch {
             status = .error("Failed to start recording: \(error.localizedDescription)")
             overlay.show(state: .processing)
@@ -190,11 +197,12 @@ final class AppState {
             }
             isTransitioning = false
             pendingHoldRelease = false
+            sessionEngine = nil
             return
         }
 
         // Start audio level polling
-        startAudioLevelPolling()
+        startAudioLevelPolling(engine: engine)
 
         isTransitioning = false
 
@@ -220,8 +228,9 @@ final class AppState {
         settings.playSound("Pop")
 
         // Get final transcript
-        let engine = activeEngine
+        let engine = sessionEngine ?? activeEngine
         let transcript = await engine.stopRecording()
+        sessionEngine = nil
 
         // Apply filler word removal
         let cleaned = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -300,7 +309,9 @@ final class AppState {
 
         stopAudioLevelPolling()
 
-        await activeEngine.cancel()
+        let engine = sessionEngine ?? activeEngine
+        await engine.cancel()
+        sessionEngine = nil
 
         volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
@@ -332,14 +343,13 @@ final class AppState {
         }
     }
 
-    private func startAudioLevelPolling() {
+    private func startAudioLevelPolling(engine: TranscriptionEngine) {
         audioLevelTask = Task { [weak self] in
             var displayTranscript = ""
             var transcriptPollTick = 0
             var lastTranscriptLength = 0
             while !Task.isCancelled {
                 guard let self, self.status == .recording else { break }
-                let engine = self.activeEngine
 
                 // Pull level samples from the lock-protected buffer (thread-safe)
                 let samples = engine.levelSamples(count: 1600)

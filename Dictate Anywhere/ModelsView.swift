@@ -12,7 +12,6 @@ struct ModelsView: View {
 
     @State private var showDeleteConfirm = false
     @State private var downloadError: String?
-    @State private var suppressUserChoiceTracking = false
 
     var body: some View {
         @Bindable var settings = appState.settings
@@ -20,12 +19,18 @@ struct ModelsView: View {
         Form {
             // Engine Picker
             Section("Active Engine") {
-                Picker("Engine", selection: $settings.engineChoice) {
+                Picker("Engine", selection: Binding(
+                    get: { settings.engineChoice },
+                    set: { choice in
+                        applyEngineChoice(choice, userInitiated: true)
+                    }
+                )) {
                     ForEach(TranscriptionEngineChoice.allCases, id: \.self) { choice in
                         Text(choice.displayName).tag(choice)
                     }
                 }
                 .pickerStyle(.segmented)
+                .disabled(appState.status != .idle)
             }
 
             // Parakeet
@@ -51,6 +56,7 @@ struct ModelsView: View {
                         showDeleteConfirm = true
                     }
                     .controlSize(.small)
+                    .disabled(appState.status != .idle)
                 } else if appState.parakeetEngine.isDownloading {
                     VStack(alignment: .leading, spacing: 8) {
                         ProgressView(value: appState.parakeetEngine.downloadProgress)
@@ -70,9 +76,9 @@ struct ModelsView: View {
                             do {
                                 try await appState.parakeetEngine.downloadModel()
                                 // Auto-switch to Parakeet after successful download
-                                suppressUserChoiceTracking = true
-                                appState.settings.engineChoice = .parakeet
-                                appState.settings.userHasChosenEngine = false
+                                await MainActor.run {
+                                    applyEngineChoice(.parakeet, userInitiated: false)
+                                }
                             } catch {
                                 downloadError = error.localizedDescription
                             }
@@ -80,6 +86,7 @@ struct ModelsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .disabled(appState.status != .idle)
                 }
 
                 if let error = downloadError {
@@ -115,29 +122,27 @@ struct ModelsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Speech Model")
-        .onChange(of: appState.settings.engineChoice) { _, _ in
-            if suppressUserChoiceTracking {
-                suppressUserChoiceTracking = false
-            } else {
-                appState.settings.userHasChosenEngine = true
-            }
-            appState.isPreparingEngine = true
-            Task { await appState.prepareActiveEngine() }
-        }
         .alert("Delete Model?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
                     try? await appState.parakeetEngine.deleteModel()
                     // Fall back to Apple Speech after deletion
-                    suppressUserChoiceTracking = true
-                    appState.settings.engineChoice = .appleSpeech
-                    appState.settings.userHasChosenEngine = false
-                    await appState.prepareActiveEngine()
+                    await MainActor.run {
+                        applyEngineChoice(.appleSpeech, userInitiated: false)
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove the Parakeet model (~500 MB). You can download it again later.")
         }
+    }
+
+    private func applyEngineChoice(_ choice: TranscriptionEngineChoice, userInitiated: Bool) {
+        guard appState.status == .idle else { return }
+        appState.settings.engineChoice = choice
+        appState.settings.userHasChosenEngine = userInitiated
+        appState.isPreparingEngine = true
+        Task { await appState.prepareActiveEngine() }
     }
 }
