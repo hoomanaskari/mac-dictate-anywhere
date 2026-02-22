@@ -8,6 +8,7 @@
 import Foundation
 import AppKit
 import CoreAudio
+import os
 import FoundationModels
 
 @Observable
@@ -21,6 +22,11 @@ final class AppState {
         case processing
         case error(String)
     }
+
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "AppState"
+    )
 
     var status: DictationStatus = .idle
     var currentTranscript = ""
@@ -124,6 +130,7 @@ final class AppState {
     // MARK: - Engine Lifecycle
 
     func prepareActiveEngine() async {
+        logger.info("prepareActiveEngine: called, engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public), status=\(String(describing: self.status), privacy: .public)")
         if case .recording = status { return }
         if case .processing = status { return }
         if case .error = status { status = .idle }
@@ -138,10 +145,29 @@ final class AppState {
             }
         }
 
-        if !activeEngine.isReady {
+        // When switching away from Apple Speech, fully release its
+        // SFSpeechRecognizer and audio resources.  The recognizer can
+        // hold audio-HAL state that prevents a subsequent AVAudioEngine
+        // (used by Parakeet) from receiving microphone data — especially
+        // on the first launch when the speech-recognition permission
+        // dialog reconfigures the audio subsystem.
+        if settings.engineChoice != .appleSpeech, let apple = appleSpeechEngine {
+            logger.info("prepareActiveEngine: deactivating Apple Speech engine before switch")
+            apple.deactivate()
+            appleSpeechEngine = nil
+            // Brief pause to let the audio HAL settle after releasing
+            // the speech recognizer (most relevant on first permission grant).
+            try? await Task.sleep(for: .milliseconds(150))
+            logger.info("prepareActiveEngine: Apple Speech deactivated, HAL settle delay complete")
+        }
+
+        let ready = activeEngine.isReady
+        logger.info("prepareActiveEngine: activeEngine.isReady=\(ready, privacy: .public), willCallPrepare=\(!ready, privacy: .public)")
+        if !ready {
             // Set synchronously so the UI sees it before any await yields
             isPreparingEngine = true
             try? await activeEngine.prepare()
+            logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
         }
         isPreparingEngine = false
     }
@@ -149,12 +175,14 @@ final class AppState {
     // MARK: - Dictation Flow
 
     func startDictation() async {
+        logger.info("startDictation: entry, status=\(String(describing: self.status), privacy: .public), isTransitioning=\(self.isTransitioning, privacy: .public), engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public)")
         if case .error = status {
             status = .idle
         }
         guard status == .idle, !isTransitioning else { return }
         let engine = activeEngine
         guard engine.isReady else {
+            logger.warning("startDictation: engine not ready, aborting")
             status = .error("Engine not ready. Download or configure the speech model first.")
             status = .idle
             return
@@ -190,7 +218,9 @@ final class AppState {
         // Start recording
         do {
             try await engine.startRecording(deviceID: deviceID)
+            logger.info("startDictation: startRecording succeeded")
         } catch {
+            logger.error("startDictation: startRecording failed: \(error.localizedDescription, privacy: .public)")
             status = .error("Failed to start recording: \(error.localizedDescription)")
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
