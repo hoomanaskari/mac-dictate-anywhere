@@ -157,6 +157,7 @@ final class Settings {
         static let userHasChosenEngine = "userHasChosenEngine"
         static let aiPostProcessingEnabled = "aiPostProcessingEnabled"
         static let aiPostProcessingPrompt = "aiPostProcessingPrompt"
+        static let customVocabulary = "customVocabulary"
     }
 
     // MARK: - Hotkey Settings
@@ -217,6 +218,14 @@ final class Settings {
     private var cachedFillerRegex: NSRegularExpression?
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
+
+    // MARK: - Custom Vocabulary
+
+    var customVocabulary: [String] {
+        didSet {
+            UserDefaults.standard.set(customVocabulary, forKey: Keys.customVocabulary)
+        }
+    }
 
     // MARK: - AI Post Processing
 
@@ -348,6 +357,9 @@ final class Settings {
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
         fillerWordsToRemove = defaults.object(forKey: Keys.fillerWordsToRemove) as? [String] ?? Self.defaultFillerWords
+
+        // Custom Vocabulary
+        customVocabulary = defaults.object(forKey: Keys.customVocabulary) as? [String] ?? []
 
         // AI Post Processing
         aiPostProcessingEnabled = defaults.object(forKey: Keys.aiPostProcessingEnabled) as? Bool ?? false
