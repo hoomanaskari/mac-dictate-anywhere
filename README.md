@@ -11,9 +11,14 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 <!-- Screenshots -->
 <table>
   <tr>
-    <td><img width="300" alt="Screenshot 1" src="https://github.com/user-attachments/assets/2aff5593-dacc-4574-bcd5-44a1c0299d50" /></td>
-    <td><img width="300" alt="Screenshot 2" src="https://github.com/user-attachments/assets/32edd417-4976-4c41-a939-67a5667560ad" /></td>
-    <td><img width="300" alt="Screenshot 3" src="https://github.com/user-attachments/assets/fa07fdab-18b5-48bf-ad9b-704452a01ea4" /></td>
+    <img width="500" alt="Screenshot 2026-02-21 at 23 47 42" src="https://github.com/user-attachments/assets/f23182cb-3af3-48da-804f-2a91fbe1f731" />
+<img width="500" alt="Screenshot 2026-02-21 at 23 47 51" src="https://github.com/user-attachments/assets/b28898dc-88b3-4b31-ab3c-35e6f49fb74d" />
+  </tr>
+</table>
+<table>
+  <tr>
+<img width="500" alt="Screenshot 2026-02-21 at 23 47 56" src="https://github.com/user-attachments/assets/c30d9349-cfcf-46a2-8a2a-f1b8b834cc17" />
+<img width="500" alt="Screenshot 2026-02-21 at 23 48 01" src="https://github.com/user-attachments/assets/a05fe872-08b1-49d5-ad00-8a75997f45da" />
   </tr>
 </table>
 
