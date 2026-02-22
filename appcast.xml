@@ -12,7 +12,7 @@
             <sparkle:version>2</sparkle:version>
             <sparkle:shortVersionString>2.0.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.1/Dictate%20Anywhere%202.0.1.dmg" length="4702551" type="application/octet-stream" sparkle:edSignature="MSY2sgDJQOO5ohXkT4Jye7EBJU+MLBJ8EEuc3YJDtyVvV2eEcWiUkSqSP53g6rJ0AwM/OpV96Ea8V2hK3geLBw=="/>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.1/Dictate.Anywhere.2.0.1.dmg" length="4702551" type="application/octet-stream" sparkle:edSignature="MSY2sgDJQOO5ohXkT4Jye7EBJU+MLBJ8EEuc3YJDtyVvV2eEcWiUkSqSP53g6rJ0AwM/OpV96Ea8V2hK3geLBw=="/>
         </item>
         <item>
             <title>2.0</title>
