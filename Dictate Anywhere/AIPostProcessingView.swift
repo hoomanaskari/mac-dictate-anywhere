@@ -51,19 +51,16 @@ struct AIPostProcessingView: View {
 
             if settings.aiPostProcessingEnabled {
                 Section {
-                    TextEditor(text: $settings.aiPostProcessingPrompt)
-                        .font(.body)
-                        .frame(minHeight: 80)
-                        .overlay {
-                            if settings.aiPostProcessingPrompt.isEmpty {
-                                Text("Enter your prompt, e.g. \"Break into sentences, fix grammar, and remove filler words.\"")
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 8)
-                                    .allowsHitTesting(false)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            }
-                        }
+                    TextField(
+                        "",
+                        text: $settings.aiPostProcessingPrompt,
+                        prompt: Text("Enter your prompt, e.g. \"Break into sentences, fix grammar, and remove filler words.\""),
+                        axis: .vertical
+                    )
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3...)
+                    .frame(minHeight: 80, alignment: .topLeading)
                 } header: {
                     Text("Prompt")
                 } footer: {
