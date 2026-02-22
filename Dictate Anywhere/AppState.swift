@@ -149,10 +149,14 @@ final class AppState {
     // MARK: - Dictation Flow
 
     func startDictation() async {
+        if case .error = status {
+            status = .idle
+        }
         guard status == .idle, !isTransitioning else { return }
         let engine = activeEngine
         guard engine.isReady else {
             status = .error("Engine not ready. Download or configure the speech model first.")
+            status = .idle
             return
         }
         captureInsertionTargetApp()
@@ -198,6 +202,7 @@ final class AppState {
             isTransitioning = false
             pendingHoldRelease = false
             sessionEngine = nil
+            status = .idle
             return
         }
 

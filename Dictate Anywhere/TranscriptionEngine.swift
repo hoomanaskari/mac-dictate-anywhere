@@ -235,10 +235,10 @@ final class ParakeetEngine: TranscriptionEngine {
         do {
             let models = try await AsrModels.downloadAndLoad(version: .v3)
             progressTask.cancel()
-            self.loadedModels = models
 
             let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
             try await asrCoordinator.initialize(models: models, config: config)
+            self.loadedModels = models
 
             self.modelOnDiskCached = true
             await MainActor.run {
@@ -250,9 +250,12 @@ final class ParakeetEngine: TranscriptionEngine {
             }
         } catch {
             progressTask.cancel()
+            await asrCoordinator.cleanup()
+            self.loadedModels = nil
             await MainActor.run {
                 self.isDownloading = false
                 self.downloadProgress = 0.0
+                self.isReady = false
             }
             throw error
         }
@@ -287,19 +290,41 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func prepare() async throws {
-        guard loadedModels == nil else {
-            isReady = true
+        if await asrCoordinator.isInitialized() {
+            await MainActor.run {
+                self.isReady = true
+                self.isModelDownloaded = true
+            }
             return
         }
 
         // Only prepare if model is on disk (don't auto-download)
-        guard checkModelOnDisk() else { return }
+        guard checkModelOnDisk() else {
+            await MainActor.run {
+                self.isReady = false
+                self.isModelDownloaded = false
+            }
+            return
+        }
 
-        let models = try await AsrModels.downloadAndLoad(version: .v3)
-        self.loadedModels = models
+        let models: AsrModels
+        if let cachedModels = loadedModels {
+            models = cachedModels
+        } else {
+            models = try await AsrModels.downloadAndLoad(version: .v3)
+        }
 
         let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
-        try await asrCoordinator.initialize(models: models, config: config)
+        do {
+            try await asrCoordinator.initialize(models: models, config: config)
+        } catch {
+            await asrCoordinator.cleanup()
+            loadedModels = nil
+            await MainActor.run { self.isReady = false }
+            throw error
+        }
+
+        loadedModels = models
 
         await MainActor.run {
             self.isReady = true
