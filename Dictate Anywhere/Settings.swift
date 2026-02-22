@@ -80,6 +80,7 @@ final class Settings {
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
+        static let userHasChosenEngine = "userHasChosenEngine"
     }
 
     // MARK: - Hotkey Settings
@@ -127,6 +128,13 @@ final class Settings {
     var engineChoice: TranscriptionEngineChoice {
         didSet {
             UserDefaults.standard.set(engineChoice.rawValue, forKey: Keys.engineChoice)
+        }
+    }
+
+    /// Whether the user has explicitly chosen an engine (vs. using the auto-default)
+    var userHasChosenEngine: Bool {
+        didSet {
+            UserDefaults.standard.set(userHasChosenEngine, forKey: Keys.userHasChosenEngine)
         }
     }
 
@@ -237,6 +245,7 @@ final class Settings {
         hotkeyMode = HotkeyMode(rawValue: modeStr) ?? .holdToRecord
 
         // Engine
+        userHasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
         let engineStr = defaults.string(forKey: Keys.engineChoice) ?? TranscriptionEngineChoice.parakeet.rawValue
         engineChoice = TranscriptionEngineChoice(rawValue: engineStr) ?? .parakeet
 
