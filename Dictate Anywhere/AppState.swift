@@ -78,10 +78,10 @@ final class AppState {
     // MARK: - Hotkey Callbacks
 
     private func setupHotkeyCallbacks() {
-        hotkeyService.onKeyDown = { [weak self] in
+        hotkeyService.onKeyDown = { [weak self] binding in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                switch self.settings.hotkeyMode {
+                switch binding.mode {
                 case .holdToRecord:
                     await self.startDictation()
                 case .handsFreeToggle:
@@ -94,10 +94,10 @@ final class AppState {
             }
         }
 
-        hotkeyService.onKeyUp = { [weak self] in
+        hotkeyService.onKeyUp = { [weak self] binding in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if self.settings.hotkeyMode == .holdToRecord && self.status == .recording {
+                if binding.mode == .holdToRecord && self.status == .recording {
                     await self.stopDictation()
                 }
             }

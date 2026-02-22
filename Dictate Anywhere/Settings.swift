@@ -39,7 +39,7 @@ enum TranscriptionEngineChoice: String, CaseIterable {
 
 // MARK: - Hotkey Mode
 
-enum HotkeyMode: String, CaseIterable {
+enum HotkeyMode: String, CaseIterable, Codable {
     case holdToRecord = "holdToRecord"
     case handsFreeToggle = "handsFreeToggle"
 
@@ -48,6 +48,78 @@ enum HotkeyMode: String, CaseIterable {
         case .holdToRecord: return "Hold to Record"
         case .handsFreeToggle: return "Tap to Toggle"
         }
+    }
+}
+
+// MARK: - Hotkey Binding
+
+struct HotkeyBinding: Codable, Identifiable, Equatable {
+    var id: UUID
+    var keyCode: UInt16?
+    var modifiersRawValue: UInt64
+    var displayName: String
+    var mode: HotkeyMode
+
+    var cgModifiers: CGEventFlags {
+        get { Settings.normalizedModifierFlags(CGEventFlags(rawValue: modifiersRawValue)) }
+        set { modifiersRawValue = Settings.normalizedModifierFlags(newValue).rawValue }
+    }
+
+    var hasBinding: Bool {
+        keyCode != nil || !Settings.normalizedModifierFlags(CGEventFlags(rawValue: modifiersRawValue)).isEmpty
+    }
+
+    /// Default binding: ⌃⌥⌘ (modifier-only), hold to record
+    static let defaultBinding = HotkeyBinding(
+        id: UUID(),
+        keyCode: nil,
+        modifiersRawValue: CGEventFlags([.maskControl, .maskAlternate, .maskCommand]).rawValue,
+        displayName: "\u{2303}\u{2325}\u{2318}",
+        mode: .holdToRecord
+    )
+}
+
+// MARK: - Conflict Detector
+
+enum ConflictDetector {
+    /// Checks if a binding duplicates another binding in the array (by key combo, ignoring mode)
+    static func internalConflict(for binding: HotkeyBinding, in bindings: [HotkeyBinding]) -> String? {
+        guard binding.hasBinding else { return nil }
+        let normalizedMods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: binding.modifiersRawValue))
+        for other in bindings where other.id != binding.id && other.hasBinding {
+            let otherMods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: other.modifiersRawValue))
+            if other.keyCode == binding.keyCode && otherMods == normalizedMods {
+                return "Duplicate of another shortcut"
+            }
+        }
+        return nil
+    }
+
+    /// Checks if a binding conflicts with well-known macOS system shortcuts
+    static func systemConflict(for binding: HotkeyBinding) -> String? {
+        guard binding.hasBinding else { return nil }
+        let mods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: binding.modifiersRawValue))
+        let key = binding.keyCode
+
+        // Known system shortcuts: (keyCode, modifiers, description)
+        let systemShortcuts: [(UInt16?, CGEventFlags, String)] = [
+            (49, .maskCommand, "Spotlight"),                                                    // ⌘Space
+            (49, CGEventFlags([.maskCommand, .maskAlternate]), "Finder Search"),                // ⌘⌥Space
+            (nil, CGEventFlags([.maskControl, .maskCommand]), "Dictation"),                     // ⌃⌘ (modifier-only)
+            (12, CGEventFlags([.maskCommand, .maskAlternate]), "Force Quit"),                   // ⌘⌥Q — not exactly; Force Quit is ⌘⌥Esc
+            (53, CGEventFlags([.maskCommand, .maskAlternate]), "Force Quit"),                   // ⌘⌥Esc
+            (20, CGEventFlags([.maskCommand, .maskShift]), "Screenshot area"),                  // ⌘⇧3 (actually ⌘⇧3 = keyCode 20)
+            (21, CGEventFlags([.maskCommand, .maskShift]), "Screenshot selection"),             // ⌘⇧4
+            (23, CGEventFlags([.maskCommand, .maskShift]), "Screenshot options"),               // ⌘⇧5
+        ]
+
+        for (sysKey, sysMods, desc) in systemShortcuts {
+            let normalizedSysMods = Settings.normalizedModifierFlags(sysMods)
+            if key == sysKey && mods == normalizedSysMods {
+                return "Conflicts with macOS \(desc)"
+            }
+        }
+        return nil
     }
 }
 
@@ -63,6 +135,8 @@ final class Settings {
     // MARK: - UserDefaults Keys
 
     private enum Keys {
+        static let hotkeyBindings = "hotkeyBindings"
+        // Legacy keys for migration
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
         static let hotkeyDisplayName = "hotkeyDisplayName"
@@ -87,41 +161,17 @@ final class Settings {
 
     // MARK: - Hotkey Settings
 
-    /// The key code for the hotkey (nil if not configured)
-    var hotkeyKeyCode: UInt16? {
+    /// All configured hotkey bindings
+    var hotkeyBindings: [HotkeyBinding] {
         didSet {
-            if let keyCode = hotkeyKeyCode {
-                UserDefaults.standard.set(Int(keyCode), forKey: Keys.hotkeyKeyCode)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Keys.hotkeyKeyCode)
-            }
+            guard let data = try? JSONEncoder().encode(hotkeyBindings) else { return }
+            UserDefaults.standard.set(data, forKey: Keys.hotkeyBindings)
         }
     }
 
-    /// Modifier flags for the hotkey
-    var hotkeyModifiers: CGEventFlags {
-        didSet {
-            UserDefaults.standard.set(hotkeyModifiers.rawValue, forKey: Keys.hotkeyModifiers)
-        }
-    }
-
-    /// Human-readable display name for the hotkey
-    var hotkeyDisplayName: String {
-        didSet {
-            UserDefaults.standard.set(hotkeyDisplayName, forKey: Keys.hotkeyDisplayName)
-        }
-    }
-
-    /// Hotkey mode: hold-to-record vs hands-free toggle
-    var hotkeyMode: HotkeyMode {
-        didSet {
-            UserDefaults.standard.set(hotkeyMode.rawValue, forKey: Keys.hotkeyMode)
-        }
-    }
-
-    /// Whether a hotkey has been configured
+    /// Whether any hotkey has been configured
     var hasHotkey: Bool {
-        hotkeyKeyCode != nil || !Self.normalizedModifierFlags(hotkeyModifiers).isEmpty
+        hotkeyBindings.contains { $0.hasBinding }
     }
 
     // MARK: - Engine Settings
@@ -248,17 +298,39 @@ final class Settings {
     private init() {
         let defaults = UserDefaults.standard
 
-        // Hotkey
-        if let keyCodeInt = defaults.object(forKey: Keys.hotkeyKeyCode) as? Int {
-            hotkeyKeyCode = UInt16(keyCodeInt)
+        // Hotkey bindings (with migration from legacy single-hotkey format)
+        if let data = defaults.data(forKey: Keys.hotkeyBindings),
+           let decoded = try? JSONDecoder().decode([HotkeyBinding].self, from: data) {
+            hotkeyBindings = decoded
+        } else if defaults.object(forKey: Keys.hotkeyKeyCode) != nil
+                    || defaults.object(forKey: Keys.hotkeyModifiers) != nil {
+            // Migrate legacy single-hotkey properties
+            let keyCode: UInt16? = (defaults.object(forKey: Keys.hotkeyKeyCode) as? Int).map { UInt16($0) }
+            let modRaw = defaults.object(forKey: Keys.hotkeyModifiers) as? UInt64 ?? 0
+            let mods = Self.normalizedModifierFlags(CGEventFlags(rawValue: modRaw))
+            let name = defaults.string(forKey: Keys.hotkeyDisplayName) ?? ""
+            let modeStr = defaults.string(forKey: Keys.hotkeyMode) ?? HotkeyMode.holdToRecord.rawValue
+            let mode = HotkeyMode(rawValue: modeStr) ?? .holdToRecord
+            let migrated = HotkeyBinding(
+                id: UUID(), keyCode: keyCode, modifiersRawValue: mods.rawValue,
+                displayName: name.isEmpty ? Self.displayName(keyCode: keyCode, modifiers: mods) : name,
+                mode: mode
+            )
+            let migratedBindings = [migrated]
+            hotkeyBindings = migratedBindings
+            // Persist in new format
+            if let data = try? JSONEncoder().encode(migratedBindings) {
+                defaults.set(data, forKey: Keys.hotkeyBindings)
+            }
+            // Clean up legacy keys
+            defaults.removeObject(forKey: Keys.hotkeyKeyCode)
+            defaults.removeObject(forKey: Keys.hotkeyModifiers)
+            defaults.removeObject(forKey: Keys.hotkeyDisplayName)
+            defaults.removeObject(forKey: Keys.hotkeyMode)
         } else {
-            hotkeyKeyCode = nil
+            // Fresh install: default binding
+            hotkeyBindings = [HotkeyBinding.defaultBinding]
         }
-        let modRaw = defaults.object(forKey: Keys.hotkeyModifiers) as? UInt64 ?? 0
-        hotkeyModifiers = Self.normalizedModifierFlags(CGEventFlags(rawValue: modRaw))
-        hotkeyDisplayName = defaults.string(forKey: Keys.hotkeyDisplayName) ?? ""
-        let modeStr = defaults.string(forKey: Keys.hotkeyMode) ?? HotkeyMode.holdToRecord.rawValue
-        hotkeyMode = HotkeyMode(rawValue: modeStr) ?? .holdToRecord
 
         // Engine
         userHasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
@@ -320,21 +392,44 @@ final class Settings {
         }
     }
 
-    /// Sets the hotkey from a CGEvent
-    func setHotkey(keyCode: UInt16?, modifiers: CGEventFlags, displayName: String) {
+    /// Adds a new empty hotkey binding
+    func addBinding() -> HotkeyBinding {
+        let binding = HotkeyBinding(
+            id: UUID(), keyCode: nil, modifiersRawValue: 0,
+            displayName: "", mode: .holdToRecord
+        )
+        hotkeyBindings.append(binding)
+        return binding
+    }
+
+    /// Updates an existing binding by ID
+    func updateBinding(_ binding: HotkeyBinding) {
+        guard let index = hotkeyBindings.firstIndex(where: { $0.id == binding.id }) else { return }
+        hotkeyBindings[index] = binding
+    }
+
+    /// Updates a binding's key combo
+    func updateBindingHotkey(id: UUID, keyCode: UInt16?, modifiers: CGEventFlags, displayName: String) {
+        guard let index = hotkeyBindings.firstIndex(where: { $0.id == id }) else { return }
         let normalizedModifiers = Self.normalizedModifierFlags(modifiers)
-        hotkeyKeyCode = keyCode
-        hotkeyModifiers = normalizedModifiers
-        hotkeyDisplayName = displayName.isEmpty
+        hotkeyBindings[index].keyCode = keyCode
+        hotkeyBindings[index].modifiersRawValue = normalizedModifiers.rawValue
+        hotkeyBindings[index].displayName = displayName.isEmpty
             ? Self.displayName(keyCode: keyCode, modifiers: normalizedModifiers)
             : displayName
     }
 
-    /// Clears the hotkey
-    func clearHotkey() {
-        hotkeyKeyCode = nil
-        hotkeyModifiers = CGEventFlags(rawValue: 0)
-        hotkeyDisplayName = ""
+    /// Clears a binding's key combo (keeps the row)
+    func clearBindingHotkey(id: UUID) {
+        guard let index = hotkeyBindings.firstIndex(where: { $0.id == id }) else { return }
+        hotkeyBindings[index].keyCode = nil
+        hotkeyBindings[index].modifiersRawValue = 0
+        hotkeyBindings[index].displayName = ""
+    }
+
+    /// Removes a binding entirely
+    func removeBinding(id: UUID) {
+        hotkeyBindings.removeAll { $0.id == id }
     }
 
     // MARK: - Login Item
