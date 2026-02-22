@@ -11,21 +11,16 @@ import SwiftUI
 @Observable
 final class SoftwareUpdater {
     let updaterController: SPUStandardUpdaterController
-    private var hasStarted = false
 
     init() {
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: false,
+            startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
     }
 
     func checkForUpdates() {
-        if !hasStarted {
-            try? updaterController.updater.start()
-            hasStarted = true
-        }
         updaterController.checkForUpdates(nil)
     }
 }
