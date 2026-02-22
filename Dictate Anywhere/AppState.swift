@@ -238,7 +238,8 @@ final class AppState {
                     do {
                         processedText = try await AIPostProcessingService.process(
                             text: finalText,
-                            prompt: settings.aiPostProcessingPrompt
+                            prompt: settings.aiPostProcessingPrompt,
+                            vocabulary: settings.customVocabulary
                         )
                         currentTranscript = processedText
                         lastTranscript = processedText

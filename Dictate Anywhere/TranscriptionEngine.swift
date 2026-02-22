@@ -682,6 +682,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = true
+        request.contextualStrings = Settings.shared.customVocabulary
         recognitionRequest = request
 
         // Start audio engine
