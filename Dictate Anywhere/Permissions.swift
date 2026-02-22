@@ -23,6 +23,7 @@ final class Permissions {
     // MARK: - Private
 
     private let queue = DispatchQueue(label: "com.dictate-anywhere.permissions", qos: .userInitiated)
+    private var pollingTimer: Timer?
 
     // MARK: - Initialization
 
@@ -53,7 +54,19 @@ final class Permissions {
         return granted
     }
 
-    /// Opens System Settings to Accessibility pane
+    /// Prompts the user to grant Accessibility permission via the system dialog.
+    /// This calls AXIsProcessTrustedWithOptions which adds the app to the Accessibility
+    /// list and shows the macOS "wants to control your computer" prompt.
+    @discardableResult
+    func promptForAccessibility() -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [key: true] as CFDictionary
+        let granted = AXIsProcessTrustedWithOptions(options)
+        accessibilityGranted = granted
+        return granted
+    }
+
+    /// Opens System Settings to Accessibility pane (fallback for manual add).
     func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
@@ -65,6 +78,21 @@ final class Permissions {
         queue.async { [weak self] in
             self?.checkSync()
         }
+    }
+
+    /// Starts polling accessibility permission every ~1.5 seconds.
+    /// Automatically stops once accessibility is granted.
+    func startPolling() {
+        guard pollingTimer == nil else { return }
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+    }
+
+    /// Stops accessibility permission polling.
+    func stopPolling() {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
     }
 
     // MARK: - Private

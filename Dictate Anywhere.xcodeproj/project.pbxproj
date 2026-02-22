@@ -271,8 +271,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Dictate Anywhere uses Apple Events to paste transcribed text into other applications.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate Anywhere needs microphone access to transcribe your speech in real-time.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dictate Anywhere uses speech recognition to transcribe your voice into text.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -307,8 +309,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Dictate Anywhere uses Apple Events to paste transcribed text into other applications.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictate Anywhere needs microphone access to transcribe your speech in real-time.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dictate Anywhere uses speech recognition to transcribe your voice into text.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -354,8 +358,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
 			requirement = {
-				kind = exactVersion;
-				version = 0.12.1;
+				branch = main;
+				kind = branch;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

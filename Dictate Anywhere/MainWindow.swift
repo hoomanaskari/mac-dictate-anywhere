@@ -40,17 +40,53 @@ struct MainWindow: View {
     var body: some View {
         @Bindable var appState = appState
 
-        NavigationSplitView {
-            SidebarView(selectedPage: $appState.selectedPage)
-        } detail: {
-            detailView
+        VStack(spacing: 0) {
+            if !appState.permissions.accessibilityGranted {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Accessibility permission is required for keyboard shortcuts.")
+                        .font(.callout)
+                    Spacer()
+                    Button("Grant Permission") {
+                        appState.permissions.promptForAccessibility()
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.orange.opacity(0.1))
+            }
+
+            NavigationSplitView {
+                SidebarView(selectedPage: $appState.selectedPage)
+            } detail: {
+                detailView
+            }
         }
         .frame(width: 680, height: 560)
         .task {
             await appState.permissions.check()
             await appState.prepareActiveEngine()
-            if appState.permissions.accessibilityGranted && appState.settings.hasHotkey {
-                appState.hotkeyService.startMonitoring()
+            if appState.permissions.accessibilityGranted {
+                if appState.settings.hasHotkey {
+                    appState.hotkeyService.startMonitoring()
+                }
+            } else {
+                // Trigger the system prompt to add the app to the Accessibility list
+                appState.permissions.promptForAccessibility()
+                appState.permissions.startPolling()
+            }
+        }
+        .onChange(of: appState.permissions.accessibilityGranted) { _, granted in
+            if granted {
+                appState.permissions.stopPolling()
+                if appState.settings.hasHotkey && !appState.hotkeyService.isMonitoring {
+                    appState.hotkeyService.startMonitoring()
+                }
+            } else {
+                appState.hotkeyService.stopMonitoring()
+                appState.permissions.startPolling()
             }
         }
     }
