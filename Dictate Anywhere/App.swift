@@ -19,5 +19,10 @@ struct DictateAnywhereApp: App {
         }
         .defaultSize(width: 680, height: 560)
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: appDelegate.softwareUpdater)
+            }
+        }
     }
 }

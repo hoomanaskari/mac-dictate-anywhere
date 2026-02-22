@@ -9,6 +9,7 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let softwareUpdater = SoftwareUpdater()
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
 
@@ -49,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copyItem = NSMenuItem(title: "Copy Last Transcript", action: #selector(copyLastTranscript), keyEquivalent: "c")
         copyItem.target = self
         menu.addItem(copyItem)
+
+        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -132,6 +137,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !transcript.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(transcript, forType: .string)
+    }
+
+    @objc private func checkForUpdates() {
+        softwareUpdater.checkForUpdates()
     }
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
