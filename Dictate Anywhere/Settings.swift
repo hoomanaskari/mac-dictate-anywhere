@@ -346,9 +346,14 @@ final class Settings {
         }
 
         // Engine
-        userHasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
+        let hasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
+        userHasChosenEngine = hasChosenEngine
         let engineStr = defaults.string(forKey: Keys.engineChoice) ?? TranscriptionEngineChoice.parakeet.rawValue
         engineChoice = TranscriptionEngineChoice(rawValue: engineStr) ?? .parakeet
+        // Apply auto-default before first render to avoid transient startup mismatch.
+        if !hasChosenEngine, Self.parakeetModelExistsOnDisk() {
+            engineChoice = .parakeet
+        }
 
         // Language
         let langCode = defaults.string(forKey: Keys.selectedLanguage) ?? "en"
@@ -539,6 +544,16 @@ final class Settings {
             parts.append(keyName(for: keyCode))
         }
         return parts.joined()
+    }
+
+    private static func parakeetModelExistsOnDisk() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
+        guard FileManager.default.fileExists(atPath: path.path) else { return false }
+        if let contents = try? FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) {
+            return contents.contains { $0.lastPathComponent.hasPrefix("parakeet") }
+        }
+        return false
     }
 
     static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
