@@ -202,7 +202,7 @@ final class ParakeetEngine: TranscriptionEngine {
         modelOnDiskCached = result
     }
 
-    private static func checkModelOnDiskSync() -> Bool {
+    nonisolated private static func checkModelOnDiskSync() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
         guard FileManager.default.fileExists(atPath: path.path) else { return false }
