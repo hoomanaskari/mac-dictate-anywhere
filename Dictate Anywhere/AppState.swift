@@ -46,6 +46,9 @@ final class AppState {
     /// Whether the app is transitioning between states (simple guard)
     private var isTransitioning = false
 
+    /// Set when a hold-to-record key-up arrives during a transition (race condition guard)
+    private var pendingHoldRelease = false
+
     /// True while prepareActiveEngine is running (suppresses transient "not ready" warnings)
     var isPreparingEngine = false
 
@@ -97,8 +100,13 @@ final class AppState {
         hotkeyService.onKeyUp = { [weak self] binding in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if binding.mode == .holdToRecord && self.status == .recording {
+                guard binding.mode == .holdToRecord else { return }
+                if self.status == .recording, !self.isTransitioning {
                     await self.stopDictation()
+                } else if self.isTransitioning {
+                    // Key released while startDictation() is still running;
+                    // startDictation will check this flag after its transition.
+                    self.pendingHoldRelease = true
                 }
             }
         }
@@ -144,7 +152,7 @@ final class AppState {
         captureInsertionTargetApp()
 
         isTransitioning = true
-        defer { isTransitioning = false }
+        pendingHoldRelease = false
 
         status = .recording
         currentTranscript = ""
@@ -180,11 +188,21 @@ final class AppState {
             if settings.muteSystemAudioDuringRecordingEnabled {
                 volumeController.restoreAfterRecording()
             }
+            isTransitioning = false
+            pendingHoldRelease = false
             return
         }
 
         // Start audio level polling
         startAudioLevelPolling()
+
+        isTransitioning = false
+
+        // If the user released a hold-to-record key while we were starting up, stop now.
+        if pendingHoldRelease {
+            pendingHoldRelease = false
+            await stopDictation()
+        }
     }
 
     func stopDictation() async {
