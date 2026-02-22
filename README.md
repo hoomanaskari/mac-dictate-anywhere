@@ -85,8 +85,8 @@ create-dmg \
   --icon-size 100 \
   --icon "Dictate Anywhere.app" 150 185 \
   --app-drop-link 450 185 \
-  "Dictate Anywhere.dmg" \
-  "path/to/Dictate Anywhere.app"
+  "dist/Dictate Anywhere.dmg" \
+  "dist"
 ```
 
 ## How It Works
