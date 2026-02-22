@@ -19,6 +19,8 @@ protocol TranscriptionEngine: AnyObject {
     var isReady: Bool { get }
     var currentTranscript: String { get }
     var audioSamples: [Float] { get }
+    /// Thread-safe snapshot of recent audio samples for level visualization.
+    func levelSamples(count: Int) -> [Float]
     func prepare() async throws
     func startRecording(deviceID: AudioDeviceID?) async throws
     func stopRecording() async -> String
@@ -182,7 +184,25 @@ final class ParakeetEngine: TranscriptionEngine {
 
     // MARK: - Model Management
 
+    /// Cached result of on-disk model check (avoids synchronous FileManager I/O on main thread)
+    private var modelOnDiskCached: Bool?
+
     func checkModelOnDisk() -> Bool {
+        if let cached = modelOnDiskCached { return cached }
+        let result = Self.checkModelOnDiskSync()
+        modelOnDiskCached = result
+        return result
+    }
+
+    /// Recheck model on disk from a background thread and cache the result.
+    func recheckModelOnDisk() async {
+        let result = await Task.detached(priority: .utility) {
+            Self.checkModelOnDiskSync()
+        }.value
+        modelOnDiskCached = result
+    }
+
+    private static func checkModelOnDiskSync() -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
         guard FileManager.default.fileExists(atPath: path.path) else { return false }
@@ -220,6 +240,7 @@ final class ParakeetEngine: TranscriptionEngine {
             let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
             try await asrCoordinator.initialize(models: models, config: config)
 
+            self.modelOnDiskCached = true
             await MainActor.run {
                 self.isModelDownloaded = true
                 self.isDownloading = false
@@ -250,6 +271,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
         await asrCoordinator.cleanup()
         loadedModels = nil
+        modelOnDiskCached = nil
 
         await MainActor.run {
             self.isModelDownloaded = false
@@ -259,6 +281,10 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     // MARK: - TranscriptionEngine
+
+    func levelSamples(count: Int) -> [Float] {
+        sampleLock.withLock { Array(sampleBuffer.suffix(count)) }
+    }
 
     func prepare() async throws {
         guard loadedModels == nil else {
@@ -298,26 +324,33 @@ final class ParakeetEngine: TranscriptionEngine {
             self.audioSamples = []
         }
 
-        // Start audio engine
-        let (engine, _) = try engineQueue.sync {
-            try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
-                guard let self else { return }
-                var droppedCount = 0
-                var levelSamples: [Float] = []
-                self.sampleLock.withLock {
-                    self.sampleBuffer.append(contentsOf: samples)
-                    self.totalSampleCount += samples.count
-                    if self.sampleBuffer.count > self.hardPendingSampleCap {
-                        droppedCount = self.sampleBuffer.count - self.hardPendingSampleCap
-                        self.sampleBuffer.removeFirst(droppedCount)
+        // Start audio engine (async to avoid deadlock — the tap callback dispatches to main)
+        let (engine, _) = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(AVAudioEngine, AVAudioConverter), Error>) in
+            engineQueue.async {
+                do {
+                    let result = try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
+                        guard let self else { return }
+                        var droppedCount = 0
+                        self.sampleLock.withLock {
+                            // Trim before appending to avoid memory spike
+                            let projectedCount = self.sampleBuffer.count + samples.count
+                            if projectedCount > self.hardPendingSampleCap {
+                                droppedCount = projectedCount - self.hardPendingSampleCap
+                                let toRemove = min(droppedCount, self.sampleBuffer.count)
+                                if toRemove > 0 {
+                                    self.sampleBuffer.removeFirst(toRemove)
+                                }
+                            }
+                            self.sampleBuffer.append(contentsOf: samples)
+                            self.totalSampleCount += samples.count
+                        }
+                        if droppedCount > 0 {
+                            self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
+                        }
                     }
-                    levelSamples = Array(self.sampleBuffer.suffix(self.audioLevelWindowSamples))
-                }
-                Task { @MainActor [levelSamples] in
-                    self.audioSamples = levelSamples
-                }
-                if droppedCount > 0 {
-                    self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
                 }
             }
         }
@@ -524,19 +557,29 @@ final class ParakeetEngine: TranscriptionEngine {
 
     // MARK: - Audio Engine Lifecycle
 
+    /// Maximum number of retired engines kept alive (prevents unbounded growth from rapid start/stop)
+    private let maxRetiredEngines = 3
+
     private func teardownAudioEngine() {
         guard let engine = audioEngine else { return }
         audioEngine = nil
 
-        engineQueue.sync {
+        engineQueue.async { [weak self] in
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
             engine.reset()
 
+            guard let self else { return }
+
+            // Cap retired engines to prevent memory growth from rapid start/stop
+            if self.retiredEngines.count >= self.maxRetiredEngines {
+                self.retiredEngines.removeFirst()
+            }
+
             // Keep alive briefly to avoid late CoreAudio callbacks
-            retiredEngines.append(engine)
-            engineQueue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.retiredEngines.removeFirst()
+            self.retiredEngines.append(engine)
+            self.engineQueue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.retiredEngines.removeAll { $0 === engine }
             }
         }
     }
@@ -588,6 +631,10 @@ final class AppleSpeechEngine: TranscriptionEngine {
     private let rollingBufferMaxSamples: Int = 16_000 * 5
 
     // MARK: - TranscriptionEngine
+
+    func levelSamples(count: Int) -> [Float] {
+        sampleLock.withLock { Array(sampleBuffer.suffix(count)) }
+    }
 
     func prepare() async throws {
         let locale = Locale(identifier: Settings.shared.selectedLanguage.rawValue)
@@ -645,10 +692,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
                 if self.sampleBuffer.count > self.rollingBufferMaxSamples {
                     self.sampleBuffer.removeFirst(self.sampleBuffer.count - self.rollingBufferMaxSamples)
                 }
-            }
-            let levelSamples = self.sampleLock.withLock { Array(self.sampleBuffer.suffix(1600)) }
-            Task { @MainActor in
-                self.audioSamples = levelSamples
             }
 
             // Feed samples to SFSpeechRecognizer

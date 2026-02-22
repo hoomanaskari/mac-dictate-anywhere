@@ -102,6 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(dismissMenusForPaste), name: .dismissMenusForPaste, object: nil)
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     @objc private func handleAppearanceChanged() {
         applyAppearanceMode()
     }
@@ -201,6 +205,10 @@ private enum FluidAudioDebugLogFilter {
         private var readFD: Int32 = -1
         private var originalStderrFD: Int32 = -1
         private var pendingData = Data()
+
+        deinit {
+            source?.cancel()
+        }
 
         func installIfNeeded() {
             lock.lock()

@@ -209,8 +209,12 @@ final class Settings {
     var fillerWordsToRemove: [String] {
         didSet {
             UserDefaults.standard.set(fillerWordsToRemove, forKey: Keys.fillerWordsToRemove)
+            cachedFillerRegex = nil
         }
     }
+
+    /// Cached compiled regex for filler word removal (invalidated when words change)
+    private var cachedFillerRegex: NSRegularExpression?
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
@@ -456,27 +460,36 @@ final class Settings {
     func removeFillerWords(from text: String) -> String {
         guard isFillerWordRemovalEnabled, !fillerWordsToRemove.isEmpty else { return text }
 
-        let escapedWords = fillerWordsToRemove
-            .map { NSRegularExpression.escapedPattern(for: $0.trimmingCharacters(in: .whitespaces)) }
-            .filter { !$0.isEmpty }
-        guard !escapedWords.isEmpty else { return text }
+        // Build and cache the regex (invalidated when fillerWordsToRemove changes)
+        let regex: NSRegularExpression
+        if let cached = cachedFillerRegex {
+            regex = cached
+        } else {
+            let escapedWords = fillerWordsToRemove
+                .map { NSRegularExpression.escapedPattern(for: $0.trimmingCharacters(in: .whitespaces)) }
+                .filter { !$0.isEmpty }
+            guard !escapedWords.isEmpty else { return text }
 
-        let pattern = "\\b(" + escapedWords.joined(separator: "|") + ")\\b"
-        do {
-            let regex = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
-            let range = NSRange(text.startIndex..., in: text)
-            var result = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
-            while result.contains("  ") {
-                result = result.replacingOccurrences(of: "  ", with: " ")
+            let pattern = "\\b(" + escapedWords.joined(separator: "|") + ")\\b"
+            do {
+                let compiled = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+                cachedFillerRegex = compiled
+                regex = compiled
+            } catch {
+                return text
             }
-            result = result.replacingOccurrences(of: " ,", with: ",")
-            result = result.replacingOccurrences(of: " .", with: ".")
-            result = result.replacingOccurrences(of: " !", with: "!")
-            result = result.replacingOccurrences(of: " ?", with: "?")
-            return result.trimmingCharacters(in: .whitespaces)
-        } catch {
-            return text
         }
+
+        let range = NSRange(text.startIndex..., in: text)
+        var result = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        while result.contains("  ") {
+            result = result.replacingOccurrences(of: "  ", with: " ")
+        }
+        result = result.replacingOccurrences(of: " ,", with: ",")
+        result = result.replacingOccurrences(of: " .", with: ".")
+        result = result.replacingOccurrences(of: " !", with: "!")
+        result = result.replacingOccurrences(of: " ?", with: "?")
+        return result.trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - Key Name Utilities

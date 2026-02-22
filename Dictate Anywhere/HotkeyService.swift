@@ -24,6 +24,10 @@ final class HotkeyService {
     private var runLoopSource: CFRunLoopSource?
     private var activeBindingIDs: Set<UUID> = []
 
+    /// Cached bindings snapshot — read from the CGEvent callback thread.
+    /// Only updated at startMonitoring() / restartMonitoring() to avoid data races.
+    fileprivate var cachedBindings: [HotkeyBinding] = []
+
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
         category: "HotkeyService"
@@ -44,6 +48,9 @@ final class HotkeyService {
 
         let settings = Settings.shared
         guard settings.hasHotkey else { return }
+
+        // Snapshot bindings so the CGEvent callback thread never touches Settings
+        cachedBindings = settings.hotkeyBindings
 
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
 
@@ -73,14 +80,16 @@ final class HotkeyService {
     }
 
     func stopMonitoring() {
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        eventTap = nil
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
         runLoopSource = nil
+        eventTap = nil
+        cachedBindings = []
         isMonitoring = false
         activeBindingIDs.removeAll()
     }
@@ -104,7 +113,7 @@ final class HotkeyService {
             }
         }
 
-        let bindings = Settings.shared.hotkeyBindings
+        let bindings = cachedBindings
         for binding in bindings where binding.hasBinding {
             if binding.keyCode == nil {
                 handleModifierOnlyEvent(type: type, event: event, binding: binding)

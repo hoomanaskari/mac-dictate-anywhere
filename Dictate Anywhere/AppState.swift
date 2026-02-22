@@ -118,6 +118,8 @@ final class AppState {
         // Auto-default: if user hasn't explicitly chosen an engine and
         // Parakeet model is downloaded, ensure Parakeet is selected.
         if !settings.userHasChosenEngine {
+            // Recheck model on disk off main thread, then use cached result
+            await parakeetEngine.recheckModelOnDisk()
             if parakeetEngine.checkModelOnDisk() {
                 settings.engineChoice = .parakeet
             }
@@ -315,18 +317,26 @@ final class AppState {
         audioLevelTask = Task { [weak self] in
             var displayTranscript = ""
             var transcriptPollTick = 0
+            var lastTranscriptLength = 0
             while !Task.isCancelled {
                 guard let self, self.status == .recording else { break }
-                let samples = self.activeEngine.audioSamples
+                let engine = self.activeEngine
+
+                // Pull level samples from the lock-protected buffer (thread-safe)
+                let samples = engine.levelSamples(count: 1600)
                 self.audioMonitor.update(samples: samples)
                 let level = self.audioMonitor.smoothedLevel
                 transcriptPollTick += 1
 
-                // Reading/transferring huge transcript strings every frame is expensive on long sessions.
+                // Only copy transcript when it has actually changed
                 if transcriptPollTick >= 6 {
                     transcriptPollTick = 0
-                    displayTranscript = self.activeEngine.currentTranscript
-                    self.currentTranscript = displayTranscript
+                    let transcript = engine.currentTranscript
+                    if transcript.count != lastTranscriptLength {
+                        lastTranscriptLength = transcript.count
+                        displayTranscript = transcript
+                        self.currentTranscript = displayTranscript
+                    }
                 }
 
                 self.overlay.show(state: .listening(level: level, transcript: displayTranscript))
