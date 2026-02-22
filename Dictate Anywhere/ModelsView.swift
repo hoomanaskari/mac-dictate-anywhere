@@ -12,27 +12,12 @@ struct ModelsView: View {
 
     @State private var showDeleteConfirm = false
     @State private var downloadError: String?
+    @State private var suppressUserChoiceTracking = false
 
     var body: some View {
         @Bindable var settings = appState.settings
 
         Form {
-            if let warning = modelWarning {
-                Section {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(warning.title)
-                                .font(.headline)
-                            Text(warning.subtitle)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-
             // Engine Picker
             Section("Active Engine") {
                 Picker("Engine", selection: $settings.engineChoice) {
@@ -84,6 +69,10 @@ struct ModelsView: View {
                         Task {
                             do {
                                 try await appState.parakeetEngine.downloadModel()
+                                // Auto-switch to Parakeet after successful download
+                                suppressUserChoiceTracking = true
+                                appState.settings.engineChoice = .parakeet
+                                appState.settings.userHasChosenEngine = false
                             } catch {
                                 downloadError = error.localizedDescription
                             }
@@ -127,29 +116,28 @@ struct ModelsView: View {
         .formStyle(.grouped)
         .navigationTitle("Speech Model")
         .onChange(of: appState.settings.engineChoice) { _, _ in
+            if suppressUserChoiceTracking {
+                suppressUserChoiceTracking = false
+            } else {
+                appState.settings.userHasChosenEngine = true
+            }
+            appState.isPreparingEngine = true
             Task { await appState.prepareActiveEngine() }
         }
         .alert("Delete Model?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
                     try? await appState.parakeetEngine.deleteModel()
+                    // Fall back to Apple Speech after deletion
+                    suppressUserChoiceTracking = true
+                    appState.settings.engineChoice = .appleSpeech
+                    appState.settings.userHasChosenEngine = false
+                    await appState.prepareActiveEngine()
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove the Parakeet model (~500 MB). You can download it again later.")
         }
-    }
-
-    private var modelWarning: (title: String, subtitle: String)? {
-        if case .error(let message) = appState.status {
-            return (message, "Try again or check settings")
-        }
-
-        if !appState.activeEngine.isReady {
-            return ("Not Ready", "Download or configure the speech model")
-        }
-
-        return nil
     }
 }

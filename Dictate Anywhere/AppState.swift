@@ -45,6 +45,9 @@ final class AppState {
     /// Whether the app is transitioning between states (simple guard)
     private var isTransitioning = false
 
+    /// True while prepareActiveEngine is running (suppresses transient "not ready" warnings)
+    var isPreparingEngine = false
+
     /// Audio level polling loop
     private var audioLevelTask: Task<Void, Never>?
 
@@ -110,9 +113,21 @@ final class AppState {
 
     func prepareActiveEngine() async {
         if case .error = status { status = .idle }
+
+        // Auto-default: if user hasn't explicitly chosen an engine and
+        // Parakeet model is downloaded, ensure Parakeet is selected.
+        if !settings.userHasChosenEngine {
+            if parakeetEngine.checkModelOnDisk() {
+                settings.engineChoice = .parakeet
+            }
+        }
+
         if !activeEngine.isReady {
+            // Set synchronously so the UI sees it before any await yields
+            isPreparingEngine = true
             try? await activeEngine.prepare()
         }
+        isPreparingEngine = false
     }
 
     // MARK: - Dictation Flow

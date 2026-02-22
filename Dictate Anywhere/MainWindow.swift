@@ -34,6 +34,27 @@ enum SidebarPage: String, CaseIterable, Identifiable {
     }
 }
 
+struct WarningBanner: View {
+    let message: String
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.callout)
+            Spacer()
+            Button(buttonTitle, action: action)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.orange.opacity(0.1))
+    }
+}
+
 struct MainWindow: View {
     @Environment(AppState.self) private var appState
 
@@ -42,20 +63,21 @@ struct MainWindow: View {
 
         VStack(spacing: 0) {
             if !appState.permissions.accessibilityGranted {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text("Accessibility permission is required for keyboard shortcuts.")
-                        .font(.callout)
-                    Spacer()
-                    Button("Grant Permission") {
-                        appState.permissions.promptForAccessibility()
-                    }
-                    .controlSize(.small)
+                WarningBanner(
+                    message: "Accessibility permission is required for keyboard shortcuts.",
+                    buttonTitle: "Grant Permission"
+                ) {
+                    appState.permissions.promptForAccessibility()
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(.orange.opacity(0.1))
+            }
+
+            if !appState.activeEngine.isReady && !appState.isPreparingEngine {
+                WarningBanner(
+                    message: "Download or configure the speech model to start dictating.",
+                    buttonTitle: "Set Up"
+                ) {
+                    appState.selectedPage = .models
+                }
             }
 
             NavigationSplitView {
