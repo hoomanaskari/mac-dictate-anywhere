@@ -15,8 +15,13 @@ enum AIPostProcessingService {
     }
 
     static func process(text: String, prompt: String) async throws -> String {
-        let session = LanguageModelSession()
-        let response = try await session.respond(to: "\(prompt)\n\n\(text)")
+        let instructions = """
+            \(prompt)
+
+            Output ONLY the processed text. Do not include any preamble, explanation, or commentary.
+            """
+        let session = LanguageModelSession(instructions: instructions)
+        let response = try await session.respond(to: text)
         return response.content
     }
 }
