@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard enforceSingleInstance() else { return }
         FluidAudioDebugLogFilter.installIfNeeded()
         setupMenuBar()
         configureMainWindow()
@@ -70,6 +71,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem?.menu = menu
+    }
+
+    /// Ensures only one Dictate Anywhere process stays active.
+    /// Prevents duplicate menu bar icons if the app is launched multiple times.
+    private func enforceSingleInstance() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return true }
+
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let matchingApps = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID)
+            .filter { !$0.isTerminated }
+
+        guard let keeperPID = matchingApps.map(\.processIdentifier).min(), currentPID != keeperPID else {
+            return true
+        }
+
+        if let keeper = matchingApps.first(where: { $0.processIdentifier == keeperPID }) {
+            keeper.activate()
+        }
+        NSApp.terminate(nil)
+        return false
     }
 
     // MARK: - Window

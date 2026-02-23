@@ -528,6 +528,7 @@ final class Settings {
             117: "\u{2326}", 118: "F4", 119: "\u{2198}", 120: "F2", 121: "\u{21DF}",
             122: "F1", 123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
             63: "fn",
+            179: "fn",
         ]
         return keyNames[keyCode] ?? "Key\(keyCode)"
     }
@@ -536,12 +537,17 @@ final class Settings {
     static func displayName(keyCode: UInt16?, modifiers: CGEventFlags) -> String {
         let normalizedModifiers = normalizedModifierFlags(modifiers)
         var parts: [String] = []
+        if normalizedModifiers.contains(.maskSecondaryFn) { parts.append("fn") }
         if normalizedModifiers.contains(.maskControl) { parts.append("\u{2303}") }
         if normalizedModifiers.contains(.maskAlternate) { parts.append("\u{2325}") }
         if normalizedModifiers.contains(.maskShift) { parts.append("\u{21E7}") }
         if normalizedModifiers.contains(.maskCommand) { parts.append("\u{2318}") }
         if let keyCode {
-            parts.append(keyName(for: keyCode))
+            let key = keyName(for: keyCode)
+            // Avoid rendering duplicate "fn" when a legacy binding stores fn as keyCode.
+            if !(normalizedModifiers.contains(.maskSecondaryFn) && key.lowercased() == "fn") {
+                parts.append(key)
+            }
         }
         return parts.joined()
     }
@@ -557,7 +563,7 @@ final class Settings {
     }
 
     static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
-        let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+        let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
         return modifiers.intersection(relevantFlags)
     }
 }

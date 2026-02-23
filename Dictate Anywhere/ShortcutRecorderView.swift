@@ -103,6 +103,7 @@ final class ShortcutRecorder {
     private var onCapture: ((UInt16?, CGEventFlags, String) -> Void)?
     private var onCancel: (() -> Void)?
     private var pendingModifierFlags = CGEventFlags(rawValue: 0)
+    private let functionKeyCodes: Set<UInt16> = [63, 179]
 
     func start(onCapture: @escaping (UInt16?, CGEventFlags, String) -> Void, onCancel: @escaping () -> Void) {
         stop()
@@ -171,6 +172,14 @@ final class ShortcutRecorder {
             return
         }
 
+        // Normalize fn/globe into a modifier-only shortcut so it can be matched reliably.
+        if functionKeyCodes.contains(keyCode) {
+            var fnModifiers = Settings.normalizedModifierFlags(event.flags)
+            fnModifiers.insert(.maskSecondaryFn)
+            capture(keyCode: nil, modifiers: fnModifiers)
+            return
+        }
+
         capture(keyCode: keyCode, modifiers: event.flags)
     }
 
@@ -232,6 +241,15 @@ final class ShortcutRecorder {
                 return nil
             }
 
+            if self.functionKeyCodes.contains(keyCode) {
+                var fnModifiers = Self.cgFlags(from: event.modifierFlags)
+                fnModifiers.insert(.maskSecondaryFn)
+                let displayName = Settings.displayName(keyCode: nil, modifiers: fnModifiers)
+                self.onCapture?(nil, fnModifiers, displayName)
+                self.stop()
+                return nil
+            }
+
             let cgFlags = Self.cgFlags(from: event.modifierFlags)
 
             let displayName = Settings.displayName(keyCode: keyCode, modifiers: cgFlags)
@@ -248,6 +266,7 @@ final class ShortcutRecorder {
         if relevant.contains(.control) { cgFlags.insert(.maskControl) }
         if relevant.contains(.option) { cgFlags.insert(.maskAlternate) }
         if relevant.contains(.shift) { cgFlags.insert(.maskShift) }
+        if relevant.contains(.function) { cgFlags.insert(.maskSecondaryFn) }
         return cgFlags
     }
 }
