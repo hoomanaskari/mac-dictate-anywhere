@@ -6,6 +6,20 @@
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
         <item>
+            <title>2.0.4</title>
+            <pubDate>Mon, 23 Feb 2026 11:41:43 -0500</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>2.0.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.4/DictateAnywhere-2.0.4.dmg" length="5377663" type="application/octet-stream" sparkle:edSignature="kQas/Uz9vE+dSdluPQggPTff+T8atqFYi2SL1fq3vPkt8gPaJ+ESr91fcUPpzYaj1S8GHNQHFaznA94okJSzCQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.4/Dictate%20Anywhere5-4.delta" sparkle:deltaFrom="4" length="504030" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="858560" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="iwkcEak6MxSDbnQ2M6WCxDnOvdp8oWGkTXE71Iv+EFvsblaRkab4zgmUNP5o8vu4mXwfL6zmgCfOgymZ6pInCQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.4/Dictate%20Anywhere5-3.delta" sparkle:deltaFrom="3" length="536878" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="858560" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3XfYfmB3k+5zE3wBBRwi+T7y4s7F3dUpZXG1l52RLLJCg+Vi8EVKSP8EpfnHL1GB10qCi63muVRR1SkKD5V9CQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.4/Dictate%20Anywhere5-2.delta" sparkle:deltaFrom="2" length="657418" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="858560" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="0wlPS+EKBooy/KTkD2r6o1fNZTazEmfxoS2Uo8drsYeoHdPpdCa6sXuc5d0qj6yqFYnEAJrHDrUBH3QvkJgFBA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>2.0.3</title>
             <pubDate>Mon, 23 Feb 2026 10:27:22 -0500</pubDate>
             <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
@@ -25,24 +39,6 @@
             <sparkle:deltas>
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.2/Dictate%20Anywhere3-2.delta" sparkle:deltaFrom="2" length="573830" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="858560" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="v1AQRf+A6uImXEe5CozXOnMwxjZoXX8GO6SOm6X/UlsHvgwsy8TbVi5AtnpPUxQMXGp/kUjV0dA9S8Kg23f9DQ=="/>
             </sparkle:deltas>
-        </item>
-        <item>
-            <title>2.0.1</title>
-            <pubDate>Sat, 21 Feb 2026 23:34:38 -0500</pubDate>
-            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
-            <sparkle:version>2</sparkle:version>
-            <sparkle:shortVersionString>2.0.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.1/DictateAnywhere-2.0.1.dmg" length="4702551" type="application/octet-stream" sparkle:edSignature="MSY2sgDJQOO5ohXkT4Jye7EBJU+MLBJ8EEuc3YJDtyVvV2eEcWiUkSqSP53g6rJ0AwM/OpV96Ea8V2hK3geLBw=="/>
-        </item>
-        <item>
-            <title>2.0</title>
-            <pubDate>Sat, 21 Feb 2026 23:05:24 -0500</pubDate>
-            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>2.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0/Dictate%20Anywhere%202.0.dmg" length="4703346" type="application/octet-stream"/>
         </item>
     </channel>
 </rss>

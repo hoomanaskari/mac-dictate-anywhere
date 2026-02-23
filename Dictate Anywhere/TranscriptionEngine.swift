@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreAudio
 import Accelerate
 import FluidAudio
@@ -17,6 +17,14 @@ private let audioLogger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
     category: "AudioPipeline"
 )
+
+private final class SendableAudioEngineRef: @unchecked Sendable {
+    let engine: AVAudioEngine
+
+    init(_ engine: AVAudioEngine) {
+        self.engine = engine
+    }
+}
 
 // MARK: - Protocol
 
@@ -646,11 +654,13 @@ final class ParakeetEngine: TranscriptionEngine {
             logger.info("teardownAudioEngine: no engine to tear down")
             return
         }
+        let engineRef = SendableAudioEngineRef(engine)
         logger.info("teardownAudioEngine: engine.isRunning=\(engine.isRunning, privacy: .public)")
         audioEngine = nil
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             engineQueue.async { [weak self] in
+                let engine = engineRef.engine
                 engine.inputNode.removeTap(onBus: 0)
                 if engine.isRunning { engine.stop() }
                 engine.reset()
@@ -668,7 +678,7 @@ final class ParakeetEngine: TranscriptionEngine {
                 // Keep alive briefly to avoid late CoreAudio callbacks, but don't block caller.
                 self.retiredEngines.append(engine)
                 self.engineQueue.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    self?.retiredEngines.removeAll { $0 === engine }
+                    self?.retiredEngines.removeAll { $0 === engineRef.engine }
                 }
 
                 continuation.resume()
