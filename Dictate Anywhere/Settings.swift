@@ -219,7 +219,7 @@ final class Settings {
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
-    // MARK: - Custom Vocabulary
+    // MARK: - Custom Vocabulary (AI Post Processing)
 
     var customVocabulary: [String] {
         didSet {
@@ -239,6 +239,11 @@ final class Settings {
         didSet {
             UserDefaults.standard.set(aiPostProcessingPrompt, forKey: Keys.aiPostProcessingPrompt)
         }
+    }
+
+    /// Vocabulary terms only apply when AI post-processing is enabled.
+    var effectiveCustomVocabulary: [String] {
+        aiPostProcessingEnabled ? customVocabulary : []
     }
 
     // MARK: - Microphone Selection

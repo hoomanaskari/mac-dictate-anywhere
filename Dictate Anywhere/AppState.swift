@@ -301,7 +301,7 @@ final class AppState {
                         processedText = try await AIPostProcessingService.process(
                             text: finalText,
                             prompt: settings.aiPostProcessingPrompt,
-                            vocabulary: settings.customVocabulary
+                            vocabulary: settings.effectiveCustomVocabulary
                         )
                         currentTranscript = processedText
                         lastTranscript = processedText
@@ -323,6 +323,7 @@ final class AppState {
         // gives Bluetooth audio routing time to settle back to playback mode.
         volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
+            try? await Task.sleep(for: .milliseconds(200))
             volumeController.restoreAfterRecording()
         }
 
@@ -350,6 +351,7 @@ final class AppState {
 
         volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
+            try? await Task.sleep(for: .milliseconds(200))
             volumeController.restoreAfterRecording()
         }
 

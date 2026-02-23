@@ -367,6 +367,9 @@ final class ParakeetEngine: TranscriptionEngine {
             throw TranscriptionError.engineNotReady
         }
 
+        // Ensure a previous engine is fully torn down before starting a new one.
+        await teardownAudioEngineIfNeeded()
+
         // Clear state
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: true)
@@ -437,7 +440,7 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Stop audio engine
-        teardownAudioEngine()
+        await teardownAudioEngineIfNeeded()
 
         // Final transcription
         let final_transcript = await performFinalTranscription()
@@ -460,7 +463,7 @@ final class ParakeetEngine: TranscriptionEngine {
         isTranscribing = false
         transcriptionTask?.cancel()
         transcriptionTask = nil
-        teardownAudioEngine()
+        await teardownAudioEngineIfNeeded()
         isRecordingActive = false
         committedTranscript = ""
         sampleLock.withLock {
@@ -638,7 +641,7 @@ final class ParakeetEngine: TranscriptionEngine {
     /// Maximum number of retired engines kept alive (prevents unbounded growth from rapid start/stop)
     private let maxRetiredEngines = 3
 
-    private func teardownAudioEngine() {
+    private func teardownAudioEngineIfNeeded() async {
         guard let engine = audioEngine else {
             logger.info("teardownAudioEngine: no engine to tear down")
             return
@@ -646,24 +649,34 @@ final class ParakeetEngine: TranscriptionEngine {
         logger.info("teardownAudioEngine: engine.isRunning=\(engine.isRunning, privacy: .public)")
         audioEngine = nil
 
-        engineQueue.async { [weak self] in
-            engine.inputNode.removeTap(onBus: 0)
-            if engine.isRunning { engine.stop() }
-            engine.reset()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            engineQueue.async { [weak self] in
+                engine.inputNode.removeTap(onBus: 0)
+                if engine.isRunning { engine.stop() }
+                engine.reset()
 
-            guard let self else { return }
+                guard let self else {
+                    continuation.resume()
+                    return
+                }
 
-            // Cap retired engines to prevent memory growth from rapid start/stop
-            if self.retiredEngines.count >= self.maxRetiredEngines {
-                self.retiredEngines.removeFirst()
-            }
+                // Cap retired engines to prevent memory growth from rapid start/stop.
+                if self.retiredEngines.count >= self.maxRetiredEngines {
+                    self.retiredEngines.removeFirst()
+                }
 
-            // Keep alive briefly to avoid late CoreAudio callbacks
-            self.retiredEngines.append(engine)
-            self.engineQueue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.retiredEngines.removeAll { $0 === engine }
+                // Keep alive briefly to avoid late CoreAudio callbacks, but don't block caller.
+                self.retiredEngines.append(engine)
+                self.engineQueue.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.retiredEngines.removeAll { $0 === engine }
+                }
+
+                continuation.resume()
             }
         }
+
+        // Small settle delay reduces HAL start races on rapid re-trigger.
+        try? await Task.sleep(for: .milliseconds(120))
     }
 }
 
@@ -779,7 +792,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = true
-        request.contextualStrings = Settings.shared.customVocabulary
         recognitionRequest = request
 
         // Start audio engine
