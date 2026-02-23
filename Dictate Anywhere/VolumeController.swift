@@ -25,9 +25,10 @@ final class VolumeController {
     func adjustForRecording() {
         guard savedOutputMuteState == nil else { return }
 
-        if let outputID = getDefaultOutputDeviceID() {
-            savedOutputMuteState = muteOutputForRecording(deviceID: outputID)
-        }
+        guard let outputID = getDefaultOutputDeviceID() else { return }
+        guard !shouldBypassMuteForCurrentRoute(outputDeviceID: outputID) else { return }
+
+        savedOutputMuteState = muteOutputForRecording(deviceID: outputID)
     }
 
     /// Saves current mic volume and boosts it to 80% for recording.
@@ -55,9 +56,8 @@ final class VolumeController {
 
     /// Restores saved audio state after recording.
     func restoreAfterRecording() {
-        let currentOutputID = getDefaultOutputDeviceID()
         if let outputMuteState = savedOutputMuteState {
-            restoreOutputMute(state: outputMuteState, currentOutputID: currentOutputID)
+            restoreOutputMute(state: outputMuteState)
         }
 
         savedOutputMuteState = nil
@@ -66,6 +66,7 @@ final class VolumeController {
     // MARK: - Output Adjustments
 
     private func muteOutputForRecording(deviceID: AudioDeviceID) -> OutputMuteState? {
+        let uid = getDeviceUID(deviceID: deviceID)
         let candidates = [kAudioObjectPropertyElementMain] + getChannelElements(
             deviceID: deviceID,
             scope: kAudioDevicePropertyScopeOutput
@@ -83,6 +84,7 @@ final class VolumeController {
             if isMuted {
                 return OutputMuteState(
                     deviceID: deviceID,
+                    deviceUID: uid,
                     element: element,
                     wasMuted: true,
                     didMuteForRecording: false
@@ -97,6 +99,7 @@ final class VolumeController {
             ) {
                 return OutputMuteState(
                     deviceID: deviceID,
+                    deviceUID: uid,
                     element: element,
                     wasMuted: false,
                     didMuteForRecording: true
@@ -107,22 +110,18 @@ final class VolumeController {
         return nil
     }
 
-    private func restoreOutputMute(state: OutputMuteState, currentOutputID: AudioDeviceID?) {
-        guard currentOutputID == state.deviceID else { return }
+    private func restoreOutputMute(state: OutputMuteState) {
         guard state.didMuteForRecording, !state.wasMuted else { return }
-        guard let isStillMuted = getMute(
-            deviceID: state.deviceID,
+        let targetDeviceID = state.deviceUID.flatMap(deviceID(forUID:)) ?? state.deviceID
+        if unmuteIfNeeded(
+            deviceID: targetDeviceID,
             scope: kAudioDevicePropertyScopeOutput,
             element: state.element
-        ), isStillMuted else {
+        ) {
             return
         }
-        _ = setMute(
-            deviceID: state.deviceID,
-            scope: kAudioDevicePropertyScopeOutput,
-            element: state.element,
-            muted: false
-        )
+
+        _ = unmuteAcrossAllOutputElements(deviceID: targetDeviceID)
     }
 
     // MARK: - CoreAudio Helpers
@@ -134,6 +133,7 @@ final class VolumeController {
 
     private struct OutputMuteState {
         let deviceID: AudioDeviceID
+        let deviceUID: String?
         let element: AudioObjectPropertyElement
         let wasMuted: Bool
         let didMuteForRecording: Bool
@@ -163,6 +163,93 @@ final class VolumeController {
         let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID)
         guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
         return deviceID
+    }
+
+    private func getDeviceUID(deviceID: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid) == noErr,
+              let result = uid?.takeUnretainedValue() else { return nil }
+        return result as String
+    }
+
+    private func deviceID(forUID uid: String) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize
+        ) == noErr, dataSize > 0 else { return nil }
+
+        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &deviceIDs
+        ) == noErr else { return nil }
+
+        for id in deviceIDs {
+            if getDeviceUID(deviceID: id) == uid {
+                return id
+            }
+        }
+        return nil
+    }
+
+    private func shouldBypassMuteForCurrentRoute(outputDeviceID: AudioDeviceID) -> Bool {
+        if isHeadphoneLikeDevice(deviceID: outputDeviceID) {
+            return true
+        }
+
+        if let inputID = getDefaultInputDeviceID(), isHeadphoneLikeDevice(deviceID: inputID) {
+            return true
+        }
+
+        return false
+    }
+
+    private func isHeadphoneLikeDevice(deviceID: AudioDeviceID) -> Bool {
+        if isBluetoothDevice(deviceID: deviceID) {
+            return true
+        }
+
+        guard let name = getDeviceName(deviceID: deviceID)?.lowercased() else { return false }
+        let headphoneTokens = ["airpods", "headphone", "headset", "earbud", "beats"]
+        return headphoneTokens.contains { name.contains($0) }
+    }
+
+    private func isBluetoothDevice(deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transportType) == noErr else {
+            return false
+        }
+        return transportType == kAudioDeviceTransportTypeBluetooth
+    }
+
+    private func getDeviceName(deviceID: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name) == noErr,
+              let result = name?.takeUnretainedValue() else { return nil }
+        return result as String
     }
 
     private func getVolume(
@@ -287,6 +374,47 @@ final class VolumeController {
 
         guard channelCount > 0 else { return [] }
         return Array(1...channelCount)
+    }
+
+    private func unmuteIfNeeded(
+        deviceID: AudioDeviceID,
+        scope: AudioObjectPropertyScope,
+        element: AudioObjectPropertyElement
+    ) -> Bool {
+        guard let isMuted = getMute(deviceID: deviceID, scope: scope, element: element) else {
+            return false
+        }
+
+        guard isMuted else { return true }
+        return setMute(deviceID: deviceID, scope: scope, element: element, muted: false)
+    }
+
+    private func unmuteAcrossAllOutputElements(deviceID: AudioDeviceID) -> Bool {
+        let candidates = [kAudioObjectPropertyElementMain] + getChannelElements(
+            deviceID: deviceID,
+            scope: kAudioDevicePropertyScopeOutput
+        )
+
+        var didUnmute = false
+        for element in candidates {
+            guard let isMuted = getMute(
+                deviceID: deviceID,
+                scope: kAudioDevicePropertyScopeOutput,
+                element: element
+            ), isMuted else {
+                continue
+            }
+
+            if setMute(
+                deviceID: deviceID,
+                scope: kAudioDevicePropertyScopeOutput,
+                element: element,
+                muted: false
+            ) {
+                didUnmute = true
+            }
+        }
+        return didUnmute
     }
 
 }
