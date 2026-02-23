@@ -212,13 +212,14 @@ final class AppState {
             volumeController.adjustForRecording()
         }
 
-        // Show overlay
-        overlay.show(state: .listening(level: 0, transcript: ""))
-
-        // Start recording
+        // Start recording (must complete before showing overlay so the mic
+        // is actually capturing audio when the user sees the "listening" UI)
         do {
             try await engine.startRecording(deviceID: deviceID)
             logger.info("startDictation: startRecording succeeded")
+
+            // Show overlay only after mic is confirmed active
+            overlay.show(state: .listening(level: 0, transcript: ""))
         } catch {
             logger.error("startDictation: startRecording failed: \(error.localizedDescription, privacy: .public)")
             status = .error("Failed to start recording: \(error.localizedDescription)")
