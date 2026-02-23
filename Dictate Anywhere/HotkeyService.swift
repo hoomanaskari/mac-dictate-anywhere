@@ -23,6 +23,7 @@ final class HotkeyService {
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var activeBindingIDs: Set<UUID> = []
+    private let functionKeyCodes: Set<UInt16> = [63, 179]
 
     /// Cached bindings snapshot — read from the CGEvent callback thread.
     /// Only updated at startMonitoring() / restartMonitoring() to avoid data races.
@@ -115,12 +116,19 @@ final class HotkeyService {
 
         let bindings = cachedBindings
         for binding in bindings where binding.hasBinding {
-            if binding.keyCode == nil {
+            if isFunctionKeyBinding(binding) {
+                handleFunctionKeyEvent(type: type, event: event, binding: binding)
+            } else if binding.keyCode == nil {
                 handleModifierOnlyEvent(type: type, event: event, binding: binding)
             } else {
                 handleKeyedEvent(type: type, event: event, binding: binding)
             }
         }
+    }
+
+    private func isFunctionKeyBinding(_ binding: HotkeyBinding) -> Bool {
+        guard let keyCode = binding.keyCode else { return false }
+        return functionKeyCodes.contains(keyCode)
     }
 
     private func handleKeyedEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
@@ -195,6 +203,64 @@ final class HotkeyService {
             } else if !isHotkeyActive, isActive {
                 activeBindingIDs.remove(bindingID)
             }
+        }
+    }
+
+    /// Compatibility path for legacy bindings where fn was stored as a keyCode (e.g. Key179).
+    /// Handles fn state transitions via flagsChanged and key up/down events.
+    private func handleFunctionKeyEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
+        let targetModifiers = binding.cgModifiers
+        let requiredNonFnModifiers = targetModifiers.subtracting(.maskSecondaryFn)
+        let eventModifiers = Settings.normalizedModifierFlags(event.flags)
+        let bindingID = binding.id
+        let isActive = activeBindingIDs.contains(bindingID)
+
+        func triggerDownIfNeeded() {
+            guard !isActive else { return }
+            activeBindingIDs.insert(bindingID)
+            let capturedBinding = binding
+            DispatchQueue.main.async { [weak self] in
+                self?.onKeyDown?(capturedBinding)
+            }
+        }
+
+        func triggerUpIfNeeded() {
+            guard isActive else { return }
+            activeBindingIDs.remove(bindingID)
+            let capturedBinding = binding
+            DispatchQueue.main.async { [weak self] in
+                self?.onKeyUp?(capturedBinding)
+            }
+        }
+
+        switch type {
+        case .keyDown:
+            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            guard functionKeyCodes.contains(keyCode),
+                  eventModifiers.contains(requiredNonFnModifiers) else { return }
+            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
+            guard isRepeat == 0 else { return }
+            triggerDownIfNeeded()
+
+        case .keyUp:
+            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            guard functionKeyCodes.contains(keyCode) else { return }
+            triggerUpIfNeeded()
+
+        case .flagsChanged:
+            guard eventModifiers.contains(requiredNonFnModifiers) || !isActive else {
+                triggerUpIfNeeded()
+                return
+            }
+            let isFnPressed = eventModifiers.contains(.maskSecondaryFn)
+            if isFnPressed {
+                triggerDownIfNeeded()
+            } else {
+                triggerUpIfNeeded()
+            }
+
+        default:
+            break
         }
     }
 }

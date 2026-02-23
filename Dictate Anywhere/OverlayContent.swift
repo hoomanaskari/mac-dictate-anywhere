@@ -24,6 +24,7 @@ final class OverlayModel {
 
 struct OverlayContent: View {
     let model: OverlayModel
+    @Environment(\.colorScheme) private var colorScheme
 
     private var state: OverlayState { model.overlayState }
     private var isVisible: Bool { model.isVisible }
@@ -33,12 +34,12 @@ struct OverlayContent: View {
     }
 
     private var overlayTextColor: Color {
-        if #available(macOS 26, *) { return .primary }
+        if #available(macOS 26, *) { return .white.opacity(0.95) }
         return .white
     }
 
     private var overlaySecondaryTextColor: Color {
-        if #available(macOS 26, *) { return .secondary }
+        if #available(macOS 26, *) { return .white.opacity(0.82) }
         return .white.opacity(0.85)
     }
 
@@ -190,12 +191,16 @@ struct OverlayContent: View {
 
 private struct GlassPillModifier: ViewModifier {
     private let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         if #available(macOS 26, *) {
+            // Keep a dark glass base in both themes so overlay text remains readable.
+            let tint = colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.24)
+            let stroke = colorScheme == .dark ? Color.white.opacity(0.25) : Color.white.opacity(0.18)
             content
-                .glassEffect(.regular.tint(.black.opacity(0.3)), in: shape)
-                .overlay(shape.stroke(.white.opacity(0.25), lineWidth: 1))
+                .glassEffect(.regular.tint(tint), in: shape)
+                .overlay(shape.stroke(stroke, lineWidth: 1))
         } else {
             content
                 .background(shape.fill(Color.black.opacity(0.85)))
