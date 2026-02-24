@@ -50,8 +50,8 @@ final class HotkeyService {
         let settings = Settings.shared
         guard settings.hasHotkey else { return }
 
-        // Snapshot bindings so the CGEvent callback thread never touches Settings
-        cachedBindings = settings.hotkeyBindings
+        // Snapshot + normalize bindings so the callback thread never touches Settings
+        cachedBindings = settings.hotkeyBindings.map(canonicalBindingForMatching)
 
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
 
@@ -116,9 +116,7 @@ final class HotkeyService {
 
         let bindings = cachedBindings
         for binding in bindings where binding.hasBinding {
-            if isFunctionKeyBinding(binding) {
-                handleFunctionKeyEvent(type: type, event: event, binding: binding)
-            } else if binding.keyCode == nil {
+            if binding.keyCode == nil {
                 handleModifierOnlyEvent(type: type, event: event, binding: binding)
             } else {
                 handleKeyedEvent(type: type, event: event, binding: binding)
@@ -126,9 +124,14 @@ final class HotkeyService {
         }
     }
 
-    private func isFunctionKeyBinding(_ binding: HotkeyBinding) -> Bool {
-        guard let keyCode = binding.keyCode else { return false }
-        return functionKeyCodes.contains(keyCode)
+    private func canonicalBindingForMatching(_ binding: HotkeyBinding) -> HotkeyBinding {
+        guard let keyCode = binding.keyCode, functionKeyCodes.contains(keyCode) else { return binding }
+        var normalized = binding
+        var modifiers = normalized.cgModifiers
+        modifiers.insert(.maskSecondaryFn)
+        normalized.keyCode = nil
+        normalized.cgModifiers = modifiers
+        return normalized
     }
 
     private func handleKeyedEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
@@ -206,63 +209,6 @@ final class HotkeyService {
         }
     }
 
-    /// Compatibility path for legacy bindings where fn was stored as a keyCode (e.g. Key179).
-    /// Handles fn state transitions via flagsChanged and key up/down events.
-    private func handleFunctionKeyEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
-        let targetModifiers = binding.cgModifiers
-        let requiredNonFnModifiers = targetModifiers.subtracting(.maskSecondaryFn)
-        let eventModifiers = Settings.normalizedModifierFlags(event.flags)
-        let bindingID = binding.id
-        let isActive = activeBindingIDs.contains(bindingID)
-
-        func triggerDownIfNeeded() {
-            guard !isActive else { return }
-            activeBindingIDs.insert(bindingID)
-            let capturedBinding = binding
-            DispatchQueue.main.async { [weak self] in
-                self?.onKeyDown?(capturedBinding)
-            }
-        }
-
-        func triggerUpIfNeeded() {
-            guard isActive else { return }
-            activeBindingIDs.remove(bindingID)
-            let capturedBinding = binding
-            DispatchQueue.main.async { [weak self] in
-                self?.onKeyUp?(capturedBinding)
-            }
-        }
-
-        switch type {
-        case .keyDown:
-            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            guard functionKeyCodes.contains(keyCode),
-                  eventModifiers.contains(requiredNonFnModifiers) else { return }
-            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
-            guard isRepeat == 0 else { return }
-            triggerDownIfNeeded()
-
-        case .keyUp:
-            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            guard functionKeyCodes.contains(keyCode) else { return }
-            triggerUpIfNeeded()
-
-        case .flagsChanged:
-            guard eventModifiers.contains(requiredNonFnModifiers) || !isActive else {
-                triggerUpIfNeeded()
-                return
-            }
-            let isFnPressed = eventModifiers.contains(.maskSecondaryFn)
-            if isFnPressed {
-                triggerDownIfNeeded()
-            } else {
-                triggerUpIfNeeded()
-            }
-
-        default:
-            break
-        }
-    }
 }
 
 // MARK: - C Callback
