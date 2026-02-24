@@ -179,12 +179,12 @@ final class AppState {
         // Play start sound
         settings.playSound("Tink")
 
-        // Get device ID for recording
-        let deviceID = MicrophoneHelper.effectiveDeviceID()
+        // Resolve preferred input route up front; startup will retry with fallbacks if needed.
+        let preferredDeviceID = MicrophoneHelper.effectiveDeviceID()
 
         // Boost mic volume if enabled
         if settings.boostMicrophoneVolumeEnabled {
-            volumeController.boostMicrophoneVolume(deviceID: deviceID)
+            volumeController.boostMicrophoneVolume(deviceID: preferredDeviceID)
         }
 
         // Mute system audio if enabled
@@ -194,15 +194,46 @@ final class AppState {
 
         // Start recording (must complete before showing overlay so the mic
         // is actually capturing audio when the user sees the "listening" UI)
-        do {
-            try await engine.startRecording(deviceID: deviceID)
-            logger.info("startDictation: startRecording succeeded")
+        let startCandidates: [AudioDeviceID?] = {
+            var ids: [AudioDeviceID?] = [preferredDeviceID]
+            let refreshedDefault = MicrophoneHelper.currentDefaultInputDeviceID()
+            if refreshedDefault != preferredDeviceID {
+                ids.append(refreshedDefault)
+            }
+            if !ids.contains(where: { $0 == nil }) {
+                ids.append(nil)
+            }
+            return ids
+        }()
 
-            // Show overlay only after mic is confirmed active
-            overlay.show(state: .listening(level: 0, transcript: ""))
-        } catch {
-            logger.error("startDictation: startRecording failed: \(error.localizedDescription, privacy: .public)")
-            status = .error("Failed to start recording: \(error.localizedDescription)")
+        var lastStartError: Error?
+        var didStart = false
+        for (index, candidateID) in startCandidates.enumerated() {
+            if index > 0 {
+                logger.warning(
+                    "startDictation: retrying startRecording attempt \(index + 1, privacy: .public) with deviceID=\(candidateID.map { String($0) } ?? "nil", privacy: .public)"
+                )
+                try? await Task.sleep(for: .milliseconds(220))
+            }
+
+            do {
+                try await engine.startRecording(deviceID: candidateID)
+                didStart = true
+                logger.info(
+                    "startDictation: startRecording succeeded on attempt \(index + 1, privacy: .public), deviceID=\(candidateID.map { String($0) } ?? "nil", privacy: .public)"
+                )
+                break
+            } catch {
+                lastStartError = error
+                logger.error(
+                    "startDictation: startRecording attempt \(index + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        guard didStart else {
+            let message = lastStartError?.localizedDescription ?? "Unknown audio startup error"
+            status = .error("Failed to start recording: \(message)")
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
             insertionTargetApp = nil
@@ -216,6 +247,9 @@ final class AppState {
             status = .idle
             return
         }
+
+        // Show overlay only after mic is confirmed active
+        overlay.show(state: .listening(level: 0, transcript: ""))
 
         // Start audio level polling
         startAudioLevelPolling(engine: engine)
