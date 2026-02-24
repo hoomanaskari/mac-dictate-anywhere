@@ -44,6 +44,7 @@ struct ShortcutsView: View {
                             var updated = binding
                             updated.mode = newMode
                             settings.updateBinding(updated)
+                            appState.hotkeyService.restartMonitoring()
                         },
                         onDelete: {
                             settings.removeBinding(id: binding.id)

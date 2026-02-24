@@ -126,6 +126,7 @@ final class Settings {
     // MARK: - Singleton
 
     static let shared = Settings()
+    private static let functionKeyCodes: Set<UInt16> = [63, 179]
 
     /// Background queue for sound playback
     private let soundQueue = DispatchQueue(label: "com.dictate-anywhere.sounds", qos: .userInteractive)
@@ -329,7 +330,11 @@ final class Settings {
         // Hotkey bindings (with migration from legacy single-hotkey format)
         if let data = defaults.data(forKey: Keys.hotkeyBindings),
            let decoded = try? JSONDecoder().decode([HotkeyBinding].self, from: data) {
-            hotkeyBindings = decoded
+            let normalized = decoded.map(Self.canonicalizedHotkeyBinding)
+            hotkeyBindings = normalized
+            if normalized != decoded, let encoded = try? JSONEncoder().encode(normalized) {
+                defaults.set(encoded, forKey: Keys.hotkeyBindings)
+            }
         } else if defaults.object(forKey: Keys.hotkeyKeyCode) != nil
                     || defaults.object(forKey: Keys.hotkeyModifiers) != nil {
             // Migrate legacy single-hotkey properties
@@ -339,11 +344,11 @@ final class Settings {
             let name = defaults.string(forKey: Keys.hotkeyDisplayName) ?? ""
             let modeStr = defaults.string(forKey: Keys.hotkeyMode) ?? HotkeyMode.holdToRecord.rawValue
             let mode = HotkeyMode(rawValue: modeStr) ?? .holdToRecord
-            let migrated = HotkeyBinding(
+            let migrated = Self.canonicalizedHotkeyBinding(HotkeyBinding(
                 id: UUID(), keyCode: keyCode, modifiersRawValue: mods.rawValue,
                 displayName: name.isEmpty ? Self.displayName(keyCode: keyCode, modifiers: mods) : name,
                 mode: mode
-            )
+            ))
             let migratedBindings = [migrated]
             hotkeyBindings = migratedBindings
             // Persist in new format
@@ -451,18 +456,20 @@ final class Settings {
     /// Updates an existing binding by ID
     func updateBinding(_ binding: HotkeyBinding) {
         guard let index = hotkeyBindings.firstIndex(where: { $0.id == binding.id }) else { return }
-        hotkeyBindings[index] = binding
+        hotkeyBindings[index] = Self.canonicalizedHotkeyBinding(binding)
     }
 
     /// Updates a binding's key combo
     func updateBindingHotkey(id: UUID, keyCode: UInt16?, modifiers: CGEventFlags, displayName: String) {
         guard let index = hotkeyBindings.firstIndex(where: { $0.id == id }) else { return }
         let normalizedModifiers = Self.normalizedModifierFlags(modifiers)
-        hotkeyBindings[index].keyCode = keyCode
-        hotkeyBindings[index].modifiersRawValue = normalizedModifiers.rawValue
-        hotkeyBindings[index].displayName = displayName.isEmpty
+        var updated = hotkeyBindings[index]
+        updated.keyCode = keyCode
+        updated.modifiersRawValue = normalizedModifiers.rawValue
+        updated.displayName = displayName.isEmpty
             ? Self.displayName(keyCode: keyCode, modifiers: normalizedModifiers)
             : displayName
+        hotkeyBindings[index] = Self.canonicalizedHotkeyBinding(updated)
     }
 
     /// Clears a binding's key combo (keeps the row)
@@ -590,6 +597,22 @@ final class Settings {
     static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
         let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
         return modifiers.intersection(relevantFlags)
+    }
+
+    private static func canonicalizedHotkeyBinding(_ binding: HotkeyBinding) -> HotkeyBinding {
+        var normalized = binding
+        if let keyCode = normalized.keyCode, functionKeyCodes.contains(keyCode) {
+            var modifiers = normalized.cgModifiers
+            modifiers.insert(.maskSecondaryFn)
+            normalized.keyCode = nil
+            normalized.cgModifiers = modifiers
+            normalized.displayName = displayName(keyCode: nil, modifiers: modifiers)
+            return normalized
+        }
+
+        let modifiers = normalizedModifierFlags(CGEventFlags(rawValue: normalized.modifiersRawValue))
+        normalized.modifiersRawValue = modifiers.rawValue
+        return normalized
     }
 }
 
