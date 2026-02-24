@@ -47,7 +47,7 @@ final class AppState {
     let overlay = OverlayWindow()
     let audioDeviceManager = AudioDeviceManager()
     let parakeetEngine = ParakeetEngine()
-    private(set) var appleSpeechEngine: AppleSpeechEngine?
+    private var isShowingMigrationAlert = false
 
     /// Whether the app is transitioning between states (simple guard)
     private var isTransitioning = false
@@ -70,15 +70,7 @@ final class AppState {
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
-        switch settings.engineChoice {
-        case .parakeet:
-            return parakeetEngine
-        case .appleSpeech:
-            if appleSpeechEngine == nil {
-                appleSpeechEngine = AppleSpeechEngine()
-            }
-            return appleSpeechEngine!
-        }
+        parakeetEngine
     }
 
     // MARK: - Initialization
@@ -137,28 +129,13 @@ final class AppState {
 
         // Auto-default: if user hasn't explicitly chosen an engine and
         // Parakeet model is downloaded, ensure Parakeet is selected.
-        if !settings.userHasChosenEngine {
-            // Recheck model on disk off main thread, then use cached result
-            await parakeetEngine.recheckModelOnDisk()
-            if parakeetEngine.checkModelOnDisk() {
-                settings.engineChoice = .parakeet
-            }
+        await parakeetEngine.recheckModelOnDisk()
+        let hasParakeetModel = parakeetEngine.checkModelOnDisk()
+        if !settings.userHasChosenEngine, hasParakeetModel {
+            settings.engineChoice = .parakeet
         }
-
-        // When switching away from Apple Speech, fully release its
-        // SFSpeechRecognizer and audio resources.  The recognizer can
-        // hold audio-HAL state that prevents a subsequent AVAudioEngine
-        // (used by Parakeet) from receiving microphone data — especially
-        // on the first launch when the speech-recognition permission
-        // dialog reconfigures the audio subsystem.
-        if settings.engineChoice != .appleSpeech, let apple = appleSpeechEngine {
-            logger.info("prepareActiveEngine: deactivating Apple Speech engine before switch")
-            apple.deactivate()
-            appleSpeechEngine = nil
-            // Brief pause to let the audio HAL settle after releasing
-            // the speech recognizer (most relevant on first permission grant).
-            try? await Task.sleep(for: .milliseconds(150))
-            logger.info("prepareActiveEngine: Apple Speech deactivated, HAL settle delay complete")
+        if hasParakeetModel {
+            settings.legacyAppleSpeechMigrationPending = false
         }
 
         let ready = activeEngine.isReady
@@ -183,7 +160,10 @@ final class AppState {
         let engine = activeEngine
         guard engine.isReady else {
             logger.warning("startDictation: engine not ready, aborting")
-            status = .error("Engine not ready. Download or configure the speech model first.")
+            if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
+                showLegacyEngineDiscontinuedAlert()
+            }
+            status = .error("Parakeet model not ready. Download it from Speech Model settings.")
             status = .idle
             return
         }
@@ -416,6 +396,35 @@ final class AppState {
         audioLevelTask?.cancel()
         audioLevelTask = nil
         audioMonitor.reset()
+    }
+
+    private func showLegacyEngineDiscontinuedAlert() {
+        guard !isShowingMigrationAlert else { return }
+        isShowingMigrationAlert = true
+        defer { isShowingMigrationAlert = false }
+
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Apple Speech Has Been Discontinued"
+        alert.informativeText = """
+        Dictate Anywhere no longer supports Apple Speech due to inconsistent transcription quality. \
+        Download the Parakeet model to continue dictating.
+        """
+        alert.addButton(withTitle: "Open Speech Model")
+        alert.addButton(withTitle: "Not Now")
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        selectedPage = .models
+        if let window = NSApp.windows.first(where: {
+            $0.contentView != nil && !($0.contentView is NSVisualEffectView && $0.level == .floating)
+        }) {
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 }
 

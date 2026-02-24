@@ -27,12 +27,10 @@ enum AppAppearanceMode: String, CaseIterable {
 
 enum TranscriptionEngineChoice: String, CaseIterable {
     case parakeet = "parakeet"
-    case appleSpeech = "appleSpeech"
 
     var displayName: String {
         switch self {
         case .parakeet: return "Parakeet (FluidAudio)"
-        case .appleSpeech: return "Apple Speech"
         }
     }
 }
@@ -155,6 +153,7 @@ final class Settings {
         static let appAppearanceMode = "appAppearanceMode"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let userHasChosenEngine = "userHasChosenEngine"
+        static let legacyAppleSpeechMigrationPending = "legacyAppleSpeechMigrationPending"
         static let aiPostProcessingEnabled = "aiPostProcessingEnabled"
         static let aiPostProcessingPrompt = "aiPostProcessingPrompt"
         static let customVocabulary = "customVocabulary"
@@ -188,6 +187,17 @@ final class Settings {
     var userHasChosenEngine: Bool {
         didSet {
             UserDefaults.standard.set(userHasChosenEngine, forKey: Keys.userHasChosenEngine)
+        }
+    }
+
+    /// True when an existing user had the discontinued Apple Speech engine
+    /// selected and still needs to download Parakeet.
+    var legacyAppleSpeechMigrationPending: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                legacyAppleSpeechMigrationPending,
+                forKey: Keys.legacyAppleSpeechMigrationPending
+            )
         }
     }
 
@@ -353,12 +363,22 @@ final class Settings {
         // Engine
         let hasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
         userHasChosenEngine = hasChosenEngine
-        let engineStr = defaults.string(forKey: Keys.engineChoice) ?? TranscriptionEngineChoice.parakeet.rawValue
-        engineChoice = TranscriptionEngineChoice(rawValue: engineStr) ?? .parakeet
+        let storedEngineRaw = defaults.string(forKey: Keys.engineChoice)
+        let hadDiscontinuedAppleSpeech = storedEngineRaw == "appleSpeech"
+        let previouslyPendingMigration = defaults.object(forKey: Keys.legacyAppleSpeechMigrationPending) as? Bool ?? false
+        engineChoice = .parakeet
+        if storedEngineRaw != TranscriptionEngineChoice.parakeet.rawValue {
+            defaults.set(TranscriptionEngineChoice.parakeet.rawValue, forKey: Keys.engineChoice)
+        }
+        if hadDiscontinuedAppleSpeech {
+            userHasChosenEngine = false
+        }
         // Apply auto-default before first render to avoid transient startup mismatch.
-        if !hasChosenEngine, Self.parakeetModelExistsOnDisk() {
+        let parakeetExistsOnDisk = Self.parakeetModelExistsOnDisk()
+        if !hasChosenEngine, parakeetExistsOnDisk {
             engineChoice = .parakeet
         }
+        legacyAppleSpeechMigrationPending = (hadDiscontinuedAppleSpeech || previouslyPendingMigration) && !parakeetExistsOnDisk
 
         // Language
         let langCode = defaults.string(forKey: Keys.selectedLanguage) ?? "en"

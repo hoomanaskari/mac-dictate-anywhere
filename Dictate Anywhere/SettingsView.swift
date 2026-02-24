@@ -40,7 +40,7 @@ struct SettingsView: View {
             } header: {
                 Text("Language")
             } footer: {
-                Text("Parakeet auto-detects language. This setting helps Apple Speech engine.")
+                Text("Parakeet auto-detects language for dictation.")
             }
 
             // MARK: - Audio
