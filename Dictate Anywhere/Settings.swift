@@ -58,7 +58,7 @@ struct HotkeyBinding: Codable, Identifiable, Equatable {
     var displayName: String
     var mode: HotkeyMode
 
-    var cgModifiers: CGEventFlags {
+    nonisolated var cgModifiers: CGEventFlags {
         get { Settings.normalizedModifierFlags(CGEventFlags(rawValue: modifiersRawValue)) }
         set { modifiersRawValue = Settings.normalizedModifierFlags(newValue).rawValue }
     }
@@ -126,7 +126,7 @@ final class Settings {
     // MARK: - Singleton
 
     static let shared = Settings()
-    private static let functionKeyCodes: Set<UInt16> = [63, 179]
+    private nonisolated static let functionKeyCodes: Set<UInt16> = [63, 179]
 
     /// Background queue for sound playback
     private let soundQueue = DispatchQueue(label: "com.dictate-anywhere.sounds", qos: .userInteractive)
@@ -543,7 +543,7 @@ final class Settings {
 
     // MARK: - Key Name Utilities
 
-    static func keyName(for keyCode: UInt16) -> String {
+    nonisolated static func keyName(for keyCode: UInt16) -> String {
         let keyNames: [UInt16: String] = [
             0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X",
             8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R",
@@ -566,7 +566,7 @@ final class Settings {
     }
 
     /// Builds a display name from CGEventFlags + key code
-    static func displayName(keyCode: UInt16?, modifiers: CGEventFlags) -> String {
+    nonisolated static func displayName(keyCode: UInt16?, modifiers: CGEventFlags) -> String {
         let normalizedModifiers = normalizedModifierFlags(modifiers)
         var parts: [String] = []
         if normalizedModifiers.contains(.maskSecondaryFn) { parts.append("fn") }
@@ -594,12 +594,12 @@ final class Settings {
         return false
     }
 
-    static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
+    nonisolated static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
         let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
         return modifiers.intersection(relevantFlags)
     }
 
-    private static func canonicalizedHotkeyBinding(_ binding: HotkeyBinding) -> HotkeyBinding {
+    private nonisolated static func canonicalizedHotkeyBinding(_ binding: HotkeyBinding) -> HotkeyBinding {
         var normalized = binding
         if let keyCode = normalized.keyCode, functionKeyCodes.contains(keyCode) {
             var modifiers = normalized.cgModifiers
