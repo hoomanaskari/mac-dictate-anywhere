@@ -35,7 +35,7 @@ private final class SparkleUserDriverDelegate: NSObject, SPUStandardUserDriverDe
         bringSparkleWindowToFront()
     }
 
-    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, for update: SUAppcastItem, state: SPUUserUpdateState) {
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
         bringSparkleWindowToFront()
     }
 

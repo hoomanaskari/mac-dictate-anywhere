@@ -127,10 +127,10 @@ final class HotkeyService {
     private func canonicalBindingForMatching(_ binding: HotkeyBinding) -> HotkeyBinding {
         guard let keyCode = binding.keyCode, functionKeyCodes.contains(keyCode) else { return binding }
         var normalized = binding
-        var modifiers = normalized.cgModifiers
-        modifiers.insert(.maskSecondaryFn)
+        var modifiers = normalized.modifiers
+        modifiers.insert(.function)
         normalized.keyCode = nil
-        normalized.cgModifiers = modifiers
+        normalized.modifiers = modifiers
         return normalized
     }
 
@@ -141,10 +141,10 @@ final class HotkeyService {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         guard keyCode == targetKeyCode else { return }
 
-        let targetModifiers = binding.cgModifiers
-        let eventFlags = Settings.normalizedModifierFlags(event.flags)
+        let targetModifiers = binding.modifiers
+        let eventFlags = Settings.hotkeyModifiers(from: event.flags)
         if !targetModifiers.isEmpty {
-            guard eventFlags.contains(targetModifiers) else { return }
+            guard Settings.keyedModifiersMatch(event: eventFlags, target: targetModifiers) else { return }
         }
 
         let bindingID = binding.id
@@ -173,11 +173,11 @@ final class HotkeyService {
     }
 
     private func handleModifierOnlyEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
-        let targetModifiers = binding.cgModifiers
+        let targetModifiers = binding.modifiers
         guard !targetModifiers.isEmpty, type == .flagsChanged else { return }
 
-        let eventModifiers = Settings.normalizedModifierFlags(event.flags)
-        let isHotkeyActive = eventModifiers == targetModifiers
+        let eventModifiers = Settings.hotkeyModifiers(from: event.flags)
+        let isHotkeyActive = Settings.modifierOnlyModifiersMatch(event: eventModifiers, target: targetModifiers)
         let bindingID = binding.id
         let isActive = activeBindingIDs.contains(bindingID)
 

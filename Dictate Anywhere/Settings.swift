@@ -8,6 +8,7 @@
 import Foundation
 import AppKit
 import ServiceManagement
+import IOKit.hidsystem
 
 // MARK: - App Appearance Mode
 
@@ -51,6 +52,33 @@ enum HotkeyMode: String, CaseIterable, Codable {
 
 // MARK: - Hotkey Binding
 
+nonisolated struct HotkeyModifiers: OptionSet, Codable, Equatable {
+    let rawValue: UInt64
+
+    static let command = HotkeyModifiers(rawValue: CGEventFlags.maskCommand.rawValue)
+    static let control = HotkeyModifiers(rawValue: CGEventFlags.maskControl.rawValue)
+    static let option = HotkeyModifiers(rawValue: CGEventFlags.maskAlternate.rawValue)
+    static let shift = HotkeyModifiers(rawValue: CGEventFlags.maskShift.rawValue)
+    static let function = HotkeyModifiers(rawValue: CGEventFlags.maskSecondaryFn.rawValue)
+    // Retained for migration/sanitization only. Caps Lock is not supported as a hotkey.
+    static let capsLock = HotkeyModifiers(rawValue: CGEventFlags.maskAlphaShift.rawValue)
+
+    static let leftControl = HotkeyModifiers(rawValue: UInt64(NX_DEVICELCTLKEYMASK))
+    static let rightControl = HotkeyModifiers(rawValue: UInt64(NX_DEVICERCTLKEYMASK))
+    static let leftShift = HotkeyModifiers(rawValue: UInt64(NX_DEVICELSHIFTKEYMASK))
+    static let rightShift = HotkeyModifiers(rawValue: UInt64(NX_DEVICERSHIFTKEYMASK))
+    static let leftCommand = HotkeyModifiers(rawValue: UInt64(NX_DEVICELCMDKEYMASK))
+    static let rightCommand = HotkeyModifiers(rawValue: UInt64(NX_DEVICERCMDKEYMASK))
+    static let leftOption = HotkeyModifiers(rawValue: UInt64(NX_DEVICELALTKEYMASK))
+    static let rightOption = HotkeyModifiers(rawValue: UInt64(NX_DEVICERALTKEYMASK))
+
+    static let relevant: HotkeyModifiers = [
+        .command, .control, .option, .shift, .function,
+        .leftControl, .rightControl, .leftShift, .rightShift,
+        .leftCommand, .rightCommand, .leftOption, .rightOption,
+    ]
+}
+
 struct HotkeyBinding: Codable, Identifiable, Equatable {
     var id: UUID
     var keyCode: UInt16?
@@ -58,20 +86,20 @@ struct HotkeyBinding: Codable, Identifiable, Equatable {
     var displayName: String
     var mode: HotkeyMode
 
-    nonisolated var cgModifiers: CGEventFlags {
-        get { Settings.normalizedModifierFlags(CGEventFlags(rawValue: modifiersRawValue)) }
-        set { modifiersRawValue = Settings.normalizedModifierFlags(newValue).rawValue }
+    nonisolated var modifiers: HotkeyModifiers {
+        get { Settings.normalizedHotkeyModifiers(HotkeyModifiers(rawValue: modifiersRawValue)) }
+        set { modifiersRawValue = Settings.normalizedHotkeyModifiers(newValue).rawValue }
     }
 
     var hasBinding: Bool {
-        keyCode != nil || !Settings.normalizedModifierFlags(CGEventFlags(rawValue: modifiersRawValue)).isEmpty
+        keyCode != nil || !modifiers.isEmpty
     }
 
     /// Default binding: ⌃⌥⌘ (modifier-only), hold to record
     static let defaultBinding = HotkeyBinding(
         id: UUID(),
         keyCode: nil,
-        modifiersRawValue: CGEventFlags([.maskControl, .maskAlternate, .maskCommand]).rawValue,
+        modifiersRawValue: HotkeyModifiers([.control, .option, .command]).rawValue,
         displayName: "\u{2303}\u{2325}\u{2318}",
         mode: .holdToRecord
     )
@@ -83,9 +111,9 @@ enum ConflictDetector {
     /// Checks if a binding duplicates another binding in the array (by key combo, ignoring mode)
     static func internalConflict(for binding: HotkeyBinding, in bindings: [HotkeyBinding]) -> String? {
         guard binding.hasBinding else { return nil }
-        let normalizedMods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: binding.modifiersRawValue))
+        let normalizedMods = binding.modifiers
         for other in bindings where other.id != binding.id && other.hasBinding {
-            let otherMods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: other.modifiersRawValue))
+            let otherMods = other.modifiers
             if other.keyCode == binding.keyCode && otherMods == normalizedMods {
                 return "Duplicate of another shortcut"
             }
@@ -96,24 +124,23 @@ enum ConflictDetector {
     /// Checks if a binding conflicts with well-known macOS system shortcuts
     static func systemConflict(for binding: HotkeyBinding) -> String? {
         guard binding.hasBinding else { return nil }
-        let mods = Settings.normalizedModifierFlags(CGEventFlags(rawValue: binding.modifiersRawValue))
+        let mods = Settings.deviceIndependentModifiers(from: binding.modifiers)
         let key = binding.keyCode
 
         // Known system shortcuts: (keyCode, modifiers, description)
-        let systemShortcuts: [(UInt16?, CGEventFlags, String)] = [
-            (49, .maskCommand, "Spotlight"),                                                    // ⌘Space
-            (49, CGEventFlags([.maskCommand, .maskAlternate]), "Finder Search"),                // ⌘⌥Space
-            (nil, CGEventFlags([.maskControl, .maskCommand]), "Dictation"),                     // ⌃⌘ (modifier-only)
-            (12, CGEventFlags([.maskCommand, .maskAlternate]), "Force Quit"),                   // ⌘⌥Q — not exactly; Force Quit is ⌘⌥Esc
-            (53, CGEventFlags([.maskCommand, .maskAlternate]), "Force Quit"),                   // ⌘⌥Esc
-            (20, CGEventFlags([.maskCommand, .maskShift]), "Screenshot area"),                  // ⌘⇧3 (actually ⌘⇧3 = keyCode 20)
-            (21, CGEventFlags([.maskCommand, .maskShift]), "Screenshot selection"),             // ⌘⇧4
-            (23, CGEventFlags([.maskCommand, .maskShift]), "Screenshot options"),               // ⌘⇧5
+        let systemShortcuts: [(UInt16?, HotkeyModifiers, String)] = [
+            (49, .command, "Spotlight"),                                           // ⌘Space
+            (49, [.command, .option], "Finder Search"),                            // ⌘⌥Space
+            (nil, [.control, .command], "Dictation"),                              // ⌃⌘ (modifier-only)
+            (12, [.command, .option], "Force Quit"),                               // ⌘⌥Q
+            (53, [.command, .option], "Force Quit"),                               // ⌘⌥Esc
+            (20, [.command, .shift], "Screenshot area"),                           // ⌘⇧3
+            (21, [.command, .shift], "Screenshot selection"),                      // ⌘⇧4
+            (23, [.command, .shift], "Screenshot options"),                        // ⌘⇧5
         ]
 
         for (sysKey, sysMods, desc) in systemShortcuts {
-            let normalizedSysMods = Settings.normalizedModifierFlags(sysMods)
-            if key == sysKey && mods == normalizedSysMods {
+            if key == sysKey && mods == sysMods {
                 return "Conflicts with macOS \(desc)"
             }
         }
@@ -340,7 +367,7 @@ final class Settings {
             // Migrate legacy single-hotkey properties
             let keyCode: UInt16? = (defaults.object(forKey: Keys.hotkeyKeyCode) as? Int).map { UInt16($0) }
             let modRaw = defaults.object(forKey: Keys.hotkeyModifiers) as? UInt64 ?? 0
-            let mods = Self.normalizedModifierFlags(CGEventFlags(rawValue: modRaw))
+            let mods = Self.hotkeyModifiers(from: CGEventFlags(rawValue: modRaw))
             let name = defaults.string(forKey: Keys.hotkeyDisplayName) ?? ""
             let modeStr = defaults.string(forKey: Keys.hotkeyMode) ?? HotkeyMode.holdToRecord.rawValue
             let mode = HotkeyMode(rawValue: modeStr) ?? .holdToRecord
@@ -460,9 +487,9 @@ final class Settings {
     }
 
     /// Updates a binding's key combo
-    func updateBindingHotkey(id: UUID, keyCode: UInt16?, modifiers: CGEventFlags, displayName: String) {
+    func updateBindingHotkey(id: UUID, keyCode: UInt16?, modifiers: HotkeyModifiers, displayName: String) {
         guard let index = hotkeyBindings.firstIndex(where: { $0.id == id }) else { return }
-        let normalizedModifiers = Self.normalizedModifierFlags(modifiers)
+        let normalizedModifiers = Self.normalizedHotkeyModifiers(modifiers)
         var updated = hotkeyBindings[index]
         updated.keyCode = keyCode
         updated.modifiersRawValue = normalizedModifiers.rawValue
@@ -559,25 +586,57 @@ final class Settings {
             111: "F12", 113: "F15", 114: "Help", 115: "\u{2196}", 116: "\u{21DE}",
             117: "\u{2326}", 118: "F4", 119: "\u{2198}", 120: "F2", 121: "\u{21DF}",
             122: "F1", 123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
+            54: "R\u{2318}", 55: "L\u{2318}",
+            58: "L\u{2325}", 61: "R\u{2325}",
+            59: "L\u{2303}", 62: "R\u{2303}",
+            56: "L\u{21E7}", 60: "R\u{21E7}",
             63: "fn",
             179: "fn",
         ]
         return keyNames[keyCode] ?? "Key\(keyCode)"
     }
 
-    /// Builds a display name from CGEventFlags + key code
-    nonisolated static func displayName(keyCode: UInt16?, modifiers: CGEventFlags) -> String {
-        let normalizedModifiers = normalizedModifierFlags(modifiers)
+    /// Builds a display name from modifier profile + key code
+    nonisolated static func displayName(keyCode: UInt16?, modifiers: HotkeyModifiers) -> String {
+        let normalizedModifiers = normalizedHotkeyModifiers(modifiers)
         var parts: [String] = []
-        if normalizedModifiers.contains(.maskSecondaryFn) { parts.append("fn") }
-        if normalizedModifiers.contains(.maskControl) { parts.append("\u{2303}") }
-        if normalizedModifiers.contains(.maskAlternate) { parts.append("\u{2325}") }
-        if normalizedModifiers.contains(.maskShift) { parts.append("\u{21E7}") }
-        if normalizedModifiers.contains(.maskCommand) { parts.append("\u{2318}") }
+        if normalizedModifiers.contains(.function) { parts.append("fn") }
+        appendSideAware(
+            parts: &parts,
+            modifiers: normalizedModifiers,
+            any: .control,
+            left: .leftControl,
+            right: .rightControl,
+            symbol: "\u{2303}"
+        )
+        appendSideAware(
+            parts: &parts,
+            modifiers: normalizedModifiers,
+            any: .option,
+            left: .leftOption,
+            right: .rightOption,
+            symbol: "\u{2325}"
+        )
+        appendSideAware(
+            parts: &parts,
+            modifiers: normalizedModifiers,
+            any: .shift,
+            left: .leftShift,
+            right: .rightShift,
+            symbol: "\u{21E7}"
+        )
+        appendSideAware(
+            parts: &parts,
+            modifiers: normalizedModifiers,
+            any: .command,
+            left: .leftCommand,
+            right: .rightCommand,
+            symbol: "\u{2318}"
+        )
         if let keyCode {
             let key = keyName(for: keyCode)
             // Avoid rendering duplicate "fn" when a legacy binding stores fn as keyCode.
-            if !(normalizedModifiers.contains(.maskSecondaryFn) && key.lowercased() == "fn") {
+            if !(normalizedModifiers.contains(.function) && key.lowercased() == "fn") {
                 parts.append(key)
             }
         }
@@ -595,24 +654,164 @@ final class Settings {
     }
 
     nonisolated static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {
-        let relevantFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
-        return modifiers.intersection(relevantFlags)
+        cgEventFlags(from: hotkeyModifiers(from: modifiers))
+    }
+
+    nonisolated static func hotkeyModifiers(from flags: CGEventFlags) -> HotkeyModifiers {
+        var modifiers = HotkeyModifiers()
+        if flags.contains(.maskCommand) { modifiers.insert(.command) }
+        if flags.contains(.maskControl) { modifiers.insert(.control) }
+        if flags.contains(.maskAlternate) { modifiers.insert(.option) }
+        if flags.contains(.maskShift) { modifiers.insert(.shift) }
+        if flags.contains(.maskSecondaryFn) { modifiers.insert(.function) }
+
+        let raw = flags.rawValue
+        if raw & HotkeyModifiers.leftCommand.rawValue != 0 { modifiers.insert(.leftCommand) }
+        if raw & HotkeyModifiers.rightCommand.rawValue != 0 { modifiers.insert(.rightCommand) }
+        if raw & HotkeyModifiers.leftControl.rawValue != 0 { modifiers.insert(.leftControl) }
+        if raw & HotkeyModifiers.rightControl.rawValue != 0 { modifiers.insert(.rightControl) }
+        if raw & HotkeyModifiers.leftOption.rawValue != 0 { modifiers.insert(.leftOption) }
+        if raw & HotkeyModifiers.rightOption.rawValue != 0 { modifiers.insert(.rightOption) }
+        if raw & HotkeyModifiers.leftShift.rawValue != 0 { modifiers.insert(.leftShift) }
+        if raw & HotkeyModifiers.rightShift.rawValue != 0 { modifiers.insert(.rightShift) }
+        return normalizedHotkeyModifiers(modifiers)
+    }
+
+    nonisolated static func normalizedHotkeyModifiers(_ modifiers: HotkeyModifiers) -> HotkeyModifiers {
+        var normalized = modifiers.intersection(.relevant)
+        if normalized.intersection([.leftCommand, .rightCommand]).isEmpty == false {
+            normalized.insert(.command)
+        }
+        if normalized.intersection([.leftControl, .rightControl]).isEmpty == false {
+            normalized.insert(.control)
+        }
+        if normalized.intersection([.leftOption, .rightOption]).isEmpty == false {
+            normalized.insert(.option)
+        }
+        if normalized.intersection([.leftShift, .rightShift]).isEmpty == false {
+            normalized.insert(.shift)
+        }
+        return normalized
+    }
+
+    nonisolated static func deviceIndependentModifiers(from modifiers: HotkeyModifiers) -> HotkeyModifiers {
+        let normalized = normalizedHotkeyModifiers(modifiers)
+        var broad: HotkeyModifiers = []
+        if normalized.contains(.command) { broad.insert(.command) }
+        if normalized.contains(.control) { broad.insert(.control) }
+        if normalized.contains(.option) { broad.insert(.option) }
+        if normalized.contains(.shift) { broad.insert(.shift) }
+        if normalized.contains(.function) { broad.insert(.function) }
+        return broad
+    }
+
+    nonisolated static func cgEventFlags(from modifiers: HotkeyModifiers) -> CGEventFlags {
+        let broad = deviceIndependentModifiers(from: modifiers)
+        var flags = CGEventFlags(rawValue: 0)
+        if broad.contains(.command) { flags.insert(.maskCommand) }
+        if broad.contains(.control) { flags.insert(.maskControl) }
+        if broad.contains(.option) { flags.insert(.maskAlternate) }
+        if broad.contains(.shift) { flags.insert(.maskShift) }
+        if broad.contains(.function) { flags.insert(.maskSecondaryFn) }
+        return flags
+    }
+
+    nonisolated static func keyedModifiersMatch(event: HotkeyModifiers, target: HotkeyModifiers) -> Bool {
+        let normalizedEvent = normalizedHotkeyModifiers(event)
+        let normalizedTarget = normalizedHotkeyModifiers(target)
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .command, left: .leftCommand, right: .rightCommand, exact: false) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .control, left: .leftControl, right: .rightControl, exact: false) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .option, left: .leftOption, right: .rightOption, exact: false) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .shift, left: .leftShift, right: .rightShift, exact: false) else { return false }
+        if normalizedTarget.contains(.function) && !normalizedEvent.contains(.function) { return false }
+        return true
+    }
+
+    nonisolated static func modifierOnlyModifiersMatch(event: HotkeyModifiers, target: HotkeyModifiers) -> Bool {
+        let normalizedEvent = normalizedHotkeyModifiers(event)
+        let normalizedTarget = normalizedHotkeyModifiers(target)
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .command, left: .leftCommand, right: .rightCommand, exact: true) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .control, left: .leftControl, right: .rightControl, exact: true) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .option, left: .leftOption, right: .rightOption, exact: true) else { return false }
+        guard groupMatch(event: normalizedEvent, target: normalizedTarget, any: .shift, left: .leftShift, right: .rightShift, exact: true) else { return false }
+        if normalizedTarget.contains(.function) != normalizedEvent.contains(.function) { return false }
+        return true
     }
 
     private nonisolated static func canonicalizedHotkeyBinding(_ binding: HotkeyBinding) -> HotkeyBinding {
         var normalized = binding
-        if let keyCode = normalized.keyCode, functionKeyCodes.contains(keyCode) {
-            var modifiers = normalized.cgModifiers
-            modifiers.insert(.maskSecondaryFn)
+        let hadCapsKey = normalized.keyCode == 57
+        let hadCapsModifier = HotkeyModifiers(rawValue: normalized.modifiersRawValue).contains(.capsLock)
+        if hadCapsKey || hadCapsModifier {
             normalized.keyCode = nil
-            normalized.cgModifiers = modifiers
+            normalized.modifiersRawValue = 0
+            normalized.displayName = ""
+            return normalized
+        }
+
+        if let keyCode = normalized.keyCode, functionKeyCodes.contains(keyCode) {
+            var modifiers = normalized.modifiers
+            modifiers.insert(.function)
+            normalized.keyCode = nil
+            normalized.modifiers = modifiers
             normalized.displayName = displayName(keyCode: nil, modifiers: modifiers)
             return normalized
         }
 
-        let modifiers = normalizedModifierFlags(CGEventFlags(rawValue: normalized.modifiersRawValue))
+        let modifiers = normalizedHotkeyModifiers(HotkeyModifiers(rawValue: normalized.modifiersRawValue))
         normalized.modifiersRawValue = modifiers.rawValue
+        normalized.displayName = normalized.keyCode == nil && modifiers.isEmpty
+            ? ""
+            : displayName(keyCode: normalized.keyCode, modifiers: modifiers)
         return normalized
+    }
+
+    private nonisolated static func appendSideAware(
+        parts: inout [String],
+        modifiers: HotkeyModifiers,
+        any: HotkeyModifiers,
+        left: HotkeyModifiers,
+        right: HotkeyModifiers,
+        symbol: String
+    ) {
+        let hasLeft = modifiers.contains(left)
+        let hasRight = modifiers.contains(right)
+        if hasLeft { parts.append("L\(symbol)") }
+        if hasRight { parts.append("R\(symbol)") }
+        if !hasLeft && !hasRight && modifiers.contains(any) { parts.append(symbol) }
+    }
+
+    private nonisolated static func groupMatch(
+        event: HotkeyModifiers,
+        target: HotkeyModifiers,
+        any: HotkeyModifiers,
+        left: HotkeyModifiers,
+        right: HotkeyModifiers,
+        exact: Bool
+    ) -> Bool {
+        let targetAny = target.contains(any)
+        let targetLeft = target.contains(left)
+        let targetRight = target.contains(right)
+        let eventAny = event.contains(any)
+        let eventLeft = event.contains(left)
+        let eventRight = event.contains(right)
+
+        if !targetAny && !targetLeft && !targetRight {
+            return exact ? (!eventAny && !eventLeft && !eventRight) : true
+        }
+
+        if targetLeft || targetRight {
+            if targetLeft && !eventLeft { return false }
+            if targetRight && !eventRight { return false }
+            if !eventAny { return false }
+            if exact {
+                if !targetLeft && eventLeft { return false }
+                if !targetRight && eventRight { return false }
+            }
+            return true
+        }
+
+        return eventAny
     }
 }
 
