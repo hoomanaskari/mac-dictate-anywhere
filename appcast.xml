@@ -6,6 +6,16 @@
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
         <item>
+            <title>2.0.7</title>
+            <pubDate>Thu, 05 Mar 2026 11:11:05 -0500</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>2.0.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>Added configurable keyboard shortcuts for recording actions. Improved update experience by keeping Sparkle update windows in front.</description>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.0.7/DictateAnywhere-2.0.7.dmg" length="4708251" type="application/octet-stream" sparkle:edSignature="jEsjq6ffU81nrz2wdqZy89geWGCnfTm93eCqqbXGA4QSb8QH810ye5svVqjHoaG2AXXXAYi4wcaw6dSB1RTiCA=="/>
+        </item>
+        <item>
             <title>2.0.6</title>
             <pubDate>Tue, 24 Feb 2026 16:52:50 -0500</pubDate>
             <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
