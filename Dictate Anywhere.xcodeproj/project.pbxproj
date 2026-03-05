@@ -16,7 +16,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E2A66B6A2F18203D00DABF41 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		E2A66B6A2F18203D00DABF41 /* Exceptions for "Dictate Anywhere" folder in "Dictate Anywhere" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -29,7 +29,7 @@
 		E2A66B5A2F18203C00DABF41 /* Dictate Anywhere */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				E2A66B6A2F18203D00DABF41 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				E2A66B6A2F18203D00DABF41 /* Exceptions for "Dictate Anywhere" folder in "Dictate Anywhere" target */,
 			);
 			path = "Dictate Anywhere";
 			sourceTree = "<group>";
@@ -100,7 +100,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
-				LastUpgradeCheck = 2620;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					E2A66B572F18203C00DABF41 = {
 						CreatedOnToolsVersion = 26.2;
@@ -185,6 +185,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -210,6 +211,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -249,6 +251,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -267,6 +270,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -280,6 +284,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -319,6 +324,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;

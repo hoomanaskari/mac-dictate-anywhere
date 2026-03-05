@@ -10,7 +10,7 @@ import CoreGraphics
 
 struct ShortcutRecorderView: View {
     let displayName: String
-    let onRecord: (UInt16?, CGEventFlags, String) -> Void
+    let onRecord: (UInt16?, HotkeyModifiers, String) -> Void
     let onClear: () -> Void
     let onRecordingStarted: () -> Void
     let onRecordingStopped: () -> Void
@@ -20,7 +20,7 @@ struct ShortcutRecorderView: View {
 
     init(
         displayName: String,
-        onRecord: @escaping (UInt16?, CGEventFlags, String) -> Void,
+        onRecord: @escaping (UInt16?, HotkeyModifiers, String) -> Void,
         onClear: @escaping () -> Void,
         onRecordingStarted: @escaping () -> Void = {},
         onRecordingStopped: @escaping () -> Void = {}
@@ -100,12 +100,12 @@ struct ShortcutRecorderView: View {
 final class ShortcutRecorder {
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var onCapture: ((UInt16?, CGEventFlags, String) -> Void)?
+    private var onCapture: ((UInt16?, HotkeyModifiers, String) -> Void)?
     private var onCancel: (() -> Void)?
-    private var pendingModifierFlags = CGEventFlags(rawValue: 0)
+    private var pendingModifierFlags = HotkeyModifiers()
     private let functionKeyCodes: Set<UInt16> = [63, 179]
 
-    func start(onCapture: @escaping (UInt16?, CGEventFlags, String) -> Void, onCancel: @escaping () -> Void) {
+    func start(onCapture: @escaping (UInt16?, HotkeyModifiers, String) -> Void, onCancel: @escaping () -> Void) {
         stop()
         self.onCapture = onCapture
         self.onCancel = onCancel
@@ -141,7 +141,7 @@ final class ShortcutRecorder {
         }
         eventTap = nil
         runLoopSource = nil
-        pendingModifierFlags = CGEventFlags(rawValue: 0)
+        pendingModifierFlags = HotkeyModifiers()
         if let localMonitor {
             NSEvent.removeMonitor(localMonitor)
             self.localMonitor = nil
@@ -155,7 +155,7 @@ final class ShortcutRecorder {
         case .keyDown:
             handleKeyDown(event)
         case .flagsChanged:
-            handleFlagsChanged(event.flags)
+            handleFlagsChanged(event)
         default:
             break
         }
@@ -172,19 +172,25 @@ final class ShortcutRecorder {
             return
         }
 
+        // Caps Lock is intentionally unsupported as a shortcut trigger.
+        if keyCode == 57 {
+            return
+        }
+
         // Normalize fn/globe into a modifier-only shortcut so it can be matched reliably.
         if functionKeyCodes.contains(keyCode) {
-            var fnModifiers = Settings.normalizedModifierFlags(event.flags)
-            fnModifiers.insert(.maskSecondaryFn)
+            var fnModifiers = Settings.hotkeyModifiers(from: event.flags)
+            fnModifiers.insert(.function)
             capture(keyCode: nil, modifiers: fnModifiers)
             return
         }
 
-        capture(keyCode: keyCode, modifiers: event.flags)
+        capture(keyCode: keyCode, modifiers: Settings.hotkeyModifiers(from: event.flags))
     }
 
-    private func handleFlagsChanged(_ flags: CGEventFlags) {
-        let modifiers = Settings.normalizedModifierFlags(flags)
+    private func handleFlagsChanged(_ event: CGEvent) {
+        let modifiers = Settings.hotkeyModifiers(from: event.flags)
+
         if !modifiers.isEmpty {
             if pendingModifierFlags.isEmpty || modifiers.isSuperset(of: pendingModifierFlags) {
                 pendingModifierFlags = modifiers
@@ -194,12 +200,12 @@ final class ShortcutRecorder {
 
         guard !pendingModifierFlags.isEmpty else { return }
         let capturedModifiers = pendingModifierFlags
-        pendingModifierFlags = CGEventFlags(rawValue: 0)
+        pendingModifierFlags = HotkeyModifiers()
         capture(keyCode: nil, modifiers: capturedModifiers)
     }
 
-    private func capture(keyCode: UInt16?, modifiers: CGEventFlags) {
-        let normalizedModifiers = Settings.normalizedModifierFlags(modifiers)
+    private func capture(keyCode: UInt16?, modifiers: HotkeyModifiers) {
+        let normalizedModifiers = Settings.normalizedHotkeyModifiers(modifiers)
         let displayName = Settings.displayName(keyCode: keyCode, modifiers: normalizedModifiers)
         DispatchQueue.main.async { [weak self] in
             self?.onCapture?(keyCode, normalizedModifiers, displayName)
@@ -216,7 +222,8 @@ final class ShortcutRecorder {
             guard let self else { return event }
 
             if event.type == .flagsChanged {
-                let modifiers = Self.cgFlags(from: event.modifierFlags)
+                let modifiers = Self.hotkeyModifiers(from: event)
+
                 if !modifiers.isEmpty {
                     if self.pendingModifierFlags.isEmpty || modifiers.isSuperset(of: self.pendingModifierFlags) {
                         self.pendingModifierFlags = modifiers
@@ -226,7 +233,7 @@ final class ShortcutRecorder {
 
                 guard !self.pendingModifierFlags.isEmpty else { return event }
                 let capturedModifiers = self.pendingModifierFlags
-                self.pendingModifierFlags = CGEventFlags(rawValue: 0)
+                self.pendingModifierFlags = HotkeyModifiers()
                 let displayName = Settings.displayName(keyCode: nil, modifiers: capturedModifiers)
                 self.onCapture?(nil, capturedModifiers, displayName)
                 self.stop()
@@ -242,18 +249,18 @@ final class ShortcutRecorder {
             }
 
             if self.functionKeyCodes.contains(keyCode) {
-                var fnModifiers = Self.cgFlags(from: event.modifierFlags)
-                fnModifiers.insert(.maskSecondaryFn)
+                var fnModifiers = Self.hotkeyModifiers(from: event)
+                fnModifiers.insert(.function)
                 let displayName = Settings.displayName(keyCode: nil, modifiers: fnModifiers)
                 self.onCapture?(nil, fnModifiers, displayName)
                 self.stop()
                 return nil
             }
 
-            let cgFlags = Self.cgFlags(from: event.modifierFlags)
+            let modifiers = Self.hotkeyModifiers(from: event)
 
-            let displayName = Settings.displayName(keyCode: keyCode, modifiers: cgFlags)
-            self.onCapture?(keyCode, cgFlags, displayName)
+            let displayName = Settings.displayName(keyCode: keyCode, modifiers: modifiers)
+            self.onCapture?(keyCode, modifiers, displayName)
             self.stop()
             return nil
         }
@@ -268,6 +275,13 @@ final class ShortcutRecorder {
         if relevant.contains(.shift) { cgFlags.insert(.maskShift) }
         if relevant.contains(.function) { cgFlags.insert(.maskSecondaryFn) }
         return cgFlags
+    }
+
+    private static func hotkeyModifiers(from event: NSEvent) -> HotkeyModifiers {
+        if let cgFlags = event.cgEvent?.flags {
+            return Settings.hotkeyModifiers(from: cgFlags)
+        }
+        return Settings.hotkeyModifiers(from: cgFlags(from: event.modifierFlags))
     }
 }
 

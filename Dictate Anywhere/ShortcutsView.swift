@@ -82,7 +82,7 @@ struct ShortcutsView: View {
                     }
                 }
             } footer: {
-                Text("Press any key combo, or press only modifiers (like \u{2303}\u{2325}\u{2318}) and release.")
+                Text("Press any key combo, or press only modifiers (like \u{2303}\u{2325}\u{2318}) and release. Left/right modifiers are supported (e.g., R\u{2318}).")
             }
         }
         .formStyle(.grouped)
@@ -96,7 +96,7 @@ private struct HotkeyBindingRow: View {
     let binding: HotkeyBinding
     let allBindings: [HotkeyBinding]
     let canDelete: Bool
-    let onRecord: (UInt16?, CGEventFlags, String) -> Void
+    let onRecord: (UInt16?, HotkeyModifiers, String) -> Void
     let onClear: () -> Void
     let onModeChanged: (HotkeyMode) -> Void
     let onDelete: () -> Void
