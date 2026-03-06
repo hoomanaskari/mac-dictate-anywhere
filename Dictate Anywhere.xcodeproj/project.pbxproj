@@ -383,8 +383,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.12.2;
 			};
 		};
 		E2SPARKLE003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
