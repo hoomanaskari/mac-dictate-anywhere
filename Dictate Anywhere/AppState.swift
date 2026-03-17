@@ -306,27 +306,45 @@ final class AppState {
         lastTranscript = finalText
         Self.lastTranscriptForMenuBar = finalText
 
-        // AI Post Processing
+        // Transcript post-processing
         var processedText = finalText
-        if settings.aiPostProcessingEnabled,
-           !settings.aiPostProcessingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if #available(macOS 26, *) {
-                if case .available = AIPostProcessingService.availability {
-                    do {
-                        processedText = try await AIPostProcessingService.process(
-                            text: finalText,
-                            prompt: settings.aiPostProcessingPrompt,
-                            vocabulary: settings.effectiveCustomVocabulary
-                        )
-                        currentTranscript = processedText
-                        lastTranscript = processedText
-                        Self.lastTranscriptForMenuBar = processedText
-                    } catch {
-                        // Silently fall back to original text on failure
+        switch settings.transcriptPostProcessingMode {
+        case .none, .fluidAudioVocabulary:
+            break
+        case .appleIntelligence:
+            if !settings.aiPostProcessingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if #available(macOS 26, *) {
+                    if case .available = AIPostProcessingService.availability {
+                        do {
+                            processedText = try await AIPostProcessingService.process(
+                                text: finalText,
+                                prompt: settings.aiPostProcessingPrompt,
+                                vocabulary: settings.customVocabulary
+                            )
+                        } catch {
+                            // Silently fall back to original text on failure
+                        }
                     }
                 }
             }
+        case .ollama:
+            do {
+                processedText = try await OllamaPostProcessingService.process(
+                    text: finalText,
+                    baseURL: settings.ollamaBaseURL,
+                    model: settings.ollamaModel,
+                    reasoning: settings.ollamaReasoningSetting,
+                    prompt: settings.ollamaPostProcessingPrompt,
+                    vocabulary: settings.customVocabulary
+                )
+            } catch {
+                // Silently fall back to original text on failure
+            }
         }
+
+        currentTranscript = processedText
+        lastTranscript = processedText
+        Self.lastTranscriptForMenuBar = processedText
 
         // Insert text
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)

@@ -82,6 +82,86 @@ fileprivate struct PostProcessingResult {
     var text: String?
 }
 
+fileprivate struct RemotePostProcessingResult: Decodable {
+    let action: String?
+    let text: String?
+}
+
+fileprivate func postProcessingVocabularyClause(_ vocabulary: [String]) -> String {
+    guard !vocabulary.isEmpty else { return "" }
+    let terms = vocabulary.joined(separator: ", ")
+    return """
+
+    Known correct terms. Prefer these exact spellings when phonetically similar words appear: \(terms)
+    """
+}
+
+/// The model sometimes generates content (definitions, essays) instead of
+/// cleaning the transcript. If the output is drastically longer than the input,
+/// it's generating rather than processing.
+fileprivate func looksLikeGeneratedContent(input: String, output: String) -> Bool {
+    let inputLength = input.unicodeScalars.count
+    let outputLength = output.unicodeScalars.count
+    if inputLength < 30 {
+        return outputLength > max(inputLength * 3, 60)
+    }
+    return outputLength > inputLength * 2
+}
+
+fileprivate func looksLikeRefusalMessage(_ text: String) -> Bool {
+    let lowered = text.lowercased()
+    let refusalPhrases = [
+        "i cannot",
+        "i can't",
+        "i'm sorry",
+        "i am sorry",
+        "i'm unable",
+        "i am unable",
+        "sorry, i",
+        "i apologize",
+        "not able to assist",
+        "cannot assist",
+        "can't assist",
+        "cannot help",
+        "can't help",
+        "not appropriate",
+        "i'm not able",
+        "i am not able",
+        "as an ai",
+        "as a language model",
+    ]
+    return refusalPhrases.contains { lowered.contains($0) }
+}
+
+fileprivate func stripMarkdownCodeFences(from text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("```"), trimmed.hasSuffix("```") else {
+        return trimmed
+    }
+
+    var lines = trimmed.components(separatedBy: .newlines)
+    guard !lines.isEmpty else { return trimmed }
+    lines.removeFirst()
+    if !lines.isEmpty {
+        lines.removeLast()
+    }
+    return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+fileprivate actor OllamaReasoningCapabilityCache {
+    static let shared = OllamaReasoningCapabilityCache()
+
+    private var values: [String: OllamaReasoningCapability] = [:]
+
+    func value(for key: String) -> OllamaReasoningCapability? {
+        values[key]
+    }
+
+    func set(_ value: OllamaReasoningCapability, for key: String) {
+        values[key] = value
+    }
+}
+
 // MARK: - Service
 
 @available(macOS 26, *)
@@ -125,7 +205,7 @@ enum AIPostProcessingService {
                   !cleaned.isEmpty else {
                 return nil
             }
-            if looksLikeRefusal(cleaned) || looksLikeGeneration(input: text, output: cleaned) {
+            if looksLikeRefusalMessage(cleaned) || looksLikeGeneratedContent(input: text, output: cleaned) {
                 return text
             }
             return cleaned
@@ -158,7 +238,7 @@ enum AIPostProcessingService {
         // Extract the tool result
         if let cleaned = resultBox.cleanedText {
             // Keep heuristics as a safety net
-            if looksLikeRefusal(cleaned) || looksLikeGeneration(input: text, output: cleaned) {
+            if looksLikeRefusalMessage(cleaned) || looksLikeGeneratedContent(input: text, output: cleaned) {
                 return text
             }
             return cleaned
@@ -181,7 +261,7 @@ enum AIPostProcessingService {
         - Preserve meaning, wording, and intent.
         - Do not add explanations, definitions, or extra content.
         - Set action to pasteCleanedText with cleaned text, or pasteTranscriptAsIs if already clean/unclear/too short.
-        \(vocabularyClause(vocabulary))
+        \(postProcessingVocabularyClause(vocabulary))
 
         \(prompt)
         """
@@ -200,18 +280,9 @@ enum AIPostProcessingService {
         - Preserve meaning, wording, and intent.
         - Do not add explanations, definitions, or extra content.
         - Use pasteCleanedText for cleaned output, or pasteTranscriptAsIs if already clean/unclear/too short.
-        \(vocabularyClause(vocabulary))
+        \(postProcessingVocabularyClause(vocabulary))
 
         \(prompt)
-        """
-    }
-
-    private static func vocabularyClause(_ vocabulary: [String]) -> String {
-        guard !vocabulary.isEmpty else { return "" }
-        let terms = vocabulary.joined(separator: ", ")
-        return """
-        
-        Known correct terms. Prefer these exact spellings when phonetically similar words appear: \(terms)
         """
     }
 
@@ -224,43 +295,452 @@ enum AIPostProcessingService {
             maximumResponseTokens: maxTokens
         )
     }
+}
 
-    // MARK: - Safety Heuristics (fallback protection)
+enum OllamaPostProcessingService {
+    static let defaultBaseURL = "http://127.0.0.1:11434"
 
-    /// The model sometimes generates content (definitions, essays) instead of
-    /// cleaning the transcript. If the output is drastically longer than the input,
-    /// it's generating rather than processing.
-    private static func looksLikeGeneration(input: String, output: String) -> Bool {
-        let inputLength = input.unicodeScalars.count
-        let outputLength = output.unicodeScalars.count
-        if inputLength < 30 {
-            return outputLength > max(inputLength * 3, 60)
+    struct Availability: Sendable {
+        let installedModels: [String]
+        let selectedModel: String
+        let resolvedSelectedModel: String?
+        let selectedModelReasoningCapability: OllamaReasoningCapability
+
+        var selectedModelIsInstalled: Bool {
+            resolvedSelectedModel != nil
         }
-        return outputLength > inputLength * 2
     }
 
-    private static func looksLikeRefusal(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        let refusalPhrases = [
-            "i cannot",
-            "i can't",
-            "i'm sorry",
-            "i am sorry",
-            "i'm unable",
-            "i am unable",
-            "sorry, i",
-            "i apologize",
-            "not able to assist",
-            "cannot assist",
-            "can't assist",
-            "cannot help",
-            "can't help",
-            "not appropriate",
-            "i'm not able",
-            "i am not able",
-            "as an ai",
-            "as a language model",
+    enum ServiceError: LocalizedError {
+        case missingModel
+        case invalidBaseURL
+        case invalidResponse
+        case emptyResponse
+        case serverMessage(String)
+        case unexpectedStatus(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingModel:
+                return "Enter an installed Ollama model name."
+            case .invalidBaseURL:
+                return "Enter a valid Ollama server URL."
+            case .invalidResponse:
+                return "Ollama returned an invalid response."
+            case .emptyResponse:
+                return "Ollama returned an empty response."
+            case .serverMessage(let message):
+                return message
+            case .unexpectedStatus(let status):
+                return "Ollama returned HTTP \(status)."
+            }
+        }
+    }
+
+    static func availability(baseURL: String, selectedModel: String) async throws -> Availability {
+        let installedModels = try await fetchInstalledModels(baseURL: baseURL)
+        let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSelectedModel = matchingInstalledModel(for: trimmedModel, in: installedModels)
+        return Availability(
+            installedModels: installedModels,
+            selectedModel: trimmedModel,
+            resolvedSelectedModel: resolvedSelectedModel,
+            selectedModelReasoningCapability: await selectedModelReasoningCapability(
+                baseURL: baseURL,
+                selectedModel: trimmedModel,
+                resolvedSelectedModel: resolvedSelectedModel
+            )
+        )
+    }
+
+    static func process(
+        text: String,
+        baseURL: String,
+        model: String,
+        reasoning: OllamaReasoningSetting = .disabled,
+        prompt: String,
+        vocabulary: [String] = []
+    ) async throws -> String {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            throw ServiceError.missingModel
+        }
+
+        var request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .generate))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+
+        var payload: [String: Any] = [
+            "model": trimmedModel,
+            "system": instructions(prompt: prompt, vocabulary: vocabulary),
+            "prompt": requestPrompt(text: text, vocabulary: vocabulary),
+            "stream": false,
+            "format": outputSchema,
+            "options": [
+                "temperature": 0
+            ]
         ]
-        return refusalPhrases.contains { lowered.contains($0) }
+        if let think = await thinkRequestValue(
+            for: reasoning,
+            baseURL: baseURL,
+            model: trimmedModel
+        ) {
+            payload["think"] = think
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let rawResponse = try await performGenerateRequest(request)
+        return cleanedResponse(from: rawResponse, originalText: text)
+    }
+
+    private enum Endpoint {
+        case generate
+        case tags
+        case show
+
+        var pathSuffix: String {
+            switch self {
+            case .generate: return "api/generate"
+            case .tags: return "api/tags"
+            case .show: return "api/show"
+            }
+        }
+    }
+
+    private struct TagsResponse: Decodable {
+        struct Model: Decodable {
+            let name: String
+        }
+
+        let models: [Model]
+    }
+
+    private struct ShowResponse: Decodable {
+        struct Details: Decodable {
+            let family: String?
+            let families: [String]?
+        }
+
+        let capabilities: [String]?
+        let details: Details?
+    }
+
+    private struct GenerateResponse: Decodable {
+        let response: String?
+        let thinking: String?
+        let error: String?
+    }
+
+    private struct ErrorResponse: Decodable {
+        let error: String
+    }
+
+    private static let outputSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "action": [
+                "type": "string",
+                "enum": ["pasteCleanedText", "pasteTranscriptAsIs"]
+            ],
+            "text": [
+                "type": ["string", "null"]
+            ]
+        ],
+        "required": ["action", "text"]
+    ]
+
+    private static func fetchInstalledModels(baseURL: String) async throws -> [String] {
+        let request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .tags))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+        let decoded = try JSONDecoder().decode(TagsResponse.self, from: data)
+        return deduplicated(decoded.models.map(\.name).filter { !$0.isEmpty })
+    }
+
+    private static func fetchModelDetails(baseURL: String, model: String) async throws -> ShowResponse {
+        var request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .show))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(ShowResponse.self, from: data)
+    }
+
+    private static func performGenerateRequest(_ request: URLRequest) async throws -> String {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        let decoded = try JSONDecoder().decode(GenerateResponse.self, from: data)
+        if let error = decoded.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !error.isEmpty {
+            throw ServiceError.serverMessage(error)
+        }
+
+        guard let responseText = decoded.response?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !responseText.isEmpty else {
+            throw ServiceError.emptyResponse
+        }
+
+        return responseText
+    }
+
+    private static func validate(response: URLResponse, data: Data) throws {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            if let apiError = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                throw ServiceError.serverMessage(apiError.error)
+            }
+            throw ServiceError.unexpectedStatus(httpResponse.statusCode)
+        }
+    }
+
+    private static func cleanedResponse(from rawResponse: String, originalText: String) -> String {
+        let normalized = stripMarkdownCodeFences(from: rawResponse)
+        guard !normalized.isEmpty else { return originalText }
+        if let data = normalized.data(using: .utf8),
+           let structured = try? JSONDecoder().decode(RemotePostProcessingResult.self, from: data),
+           let action = structured.action?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            switch action {
+            case "pasteTranscriptAsIs":
+                return originalText
+            case "pasteCleanedText":
+                let cleaned = structured.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !cleaned.isEmpty else { return originalText }
+                if looksLikeRefusalMessage(cleaned) || looksLikeGeneratedContent(input: originalText, output: cleaned) {
+                    return originalText
+                }
+                return cleaned
+            default:
+                break
+            }
+        }
+
+        if looksLikeRefusalMessage(normalized) || looksLikeGeneratedContent(input: originalText, output: normalized) {
+            return originalText
+        }
+        return normalized
+    }
+
+    private static func instructions(prompt: String, vocabulary: [String]) -> String {
+        let customPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectivePrompt = customPrompt.isEmpty
+            ? "No extra cleanup instructions. Default to punctuation, capitalization, grammar, and sentence-boundary cleanup only."
+            : customPrompt
+
+        let knownTermsSection: String
+        if vocabulary.isEmpty {
+            knownTermsSection = "No known terms were provided."
+        } else {
+            knownTermsSection = vocabulary.map { "- \($0)" }.joined(separator: "\n")
+        }
+
+        return """
+        You are a text post-processor for dictated transcript text.
+
+        PRIORITY ORDER:
+        1. Follow the user's cleanup instructions when they request safe transcript transformations.
+        2. Preserve the speaker's meaning and intent.
+        3. Normalize known terms to the exact spelling, spacing, and capitalization from the known terms list.
+        4. Never answer the transcript or add new information.
+
+        DEFAULT BEHAVIOR:
+        - If there are no extra cleanup instructions, only fix punctuation, capitalization, grammar, and formatting.
+        - If the transcript contains a question, keep it as a cleaned-up question. Never answer it.
+        - If the transcript is already clean, ambiguous, or too short to improve safely, keep it unchanged.
+
+        KNOWN TERMS:
+        \(knownTermsSection)
+
+        VOCABULARY NORMALIZATION RULES:
+        - Compare transcript phrases against the known terms list.
+        - If a phrase is an obvious phonetic, spacing, or capitalization variant of a known term, replace it with the exact known term.
+        - Examples: "cloud code" -> "Claude Code"; "art board studio" -> "Artboard Studio".
+
+        OUTPUT:
+        - Return JSON matching the provided schema.
+        - Use action pasteCleanedText when you made any safe cleanup or normalization change.
+        - Use action pasteTranscriptAsIs only when nothing should change.
+        - Never return commentary, explanations, quotes, or markdown.
+
+        USER CLEANUP INSTRUCTIONS:
+        \(effectivePrompt)
+        """
+    }
+
+    private static func requestPrompt(text: String, vocabulary: [String]) -> String {
+        var sections: [String] = []
+        if !vocabulary.isEmpty {
+            sections.append("<known_terms>\(vocabulary.joined(separator: "\n"))</known_terms>")
+        }
+        sections.append("<transcript>\(text)</transcript>")
+        return sections.joined(separator: "\n")
+    }
+
+    private static func endpointURL(baseURL: String, endpoint: Endpoint) throws -> URL {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            throw ServiceError.invalidBaseURL
+        }
+        if !normalized.contains("://") {
+            normalized = "http://\(normalized)"
+        }
+        guard var components = URLComponents(string: normalized) else {
+            throw ServiceError.invalidBaseURL
+        }
+
+        let trimmedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch endpoint {
+        case .generate:
+            if trimmedPath.hasSuffix("api/generate") {
+                break
+            } else if trimmedPath.hasSuffix("api") {
+                components.path = "/" + [trimmedPath, "generate"].joined(separator: "/")
+            } else if trimmedPath.isEmpty {
+                components.path = "/api/generate"
+            } else {
+                components.path = "/" + [trimmedPath, "api", "generate"].joined(separator: "/")
+            }
+        case .tags:
+            if trimmedPath.hasSuffix("api/tags") {
+                break
+            } else if trimmedPath.hasSuffix("api") {
+                components.path = "/" + [trimmedPath, "tags"].joined(separator: "/")
+            } else if trimmedPath.isEmpty {
+                components.path = "/api/tags"
+            } else {
+                components.path = "/" + [trimmedPath, "api", "tags"].joined(separator: "/")
+            }
+        case .show:
+            if trimmedPath.hasSuffix("api/show") {
+                break
+            } else if trimmedPath.hasSuffix("api") {
+                components.path = "/" + [trimmedPath, "show"].joined(separator: "/")
+            } else if trimmedPath.isEmpty {
+                components.path = "/api/show"
+            } else {
+                components.path = "/" + [trimmedPath, "api", "show"].joined(separator: "/")
+            }
+        }
+
+        guard let url = components.url else {
+            throw ServiceError.invalidBaseURL
+        }
+        return url
+    }
+
+    private static func matchingInstalledModel(for selectedModel: String, in installedModels: [String]) -> String? {
+        guard !selectedModel.isEmpty else { return nil }
+        if selectedModel.contains(":") {
+            return installedModels.first(where: { $0 == selectedModel })
+        }
+        return installedModels.first(where: { $0 == selectedModel || $0.hasPrefix("\(selectedModel):") })
+    }
+
+    private static func deduplicated(_ models: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for model in models {
+            if seen.insert(model).inserted {
+                ordered.append(model)
+            }
+        }
+        return ordered
+    }
+
+    private static func selectedModelReasoningCapability(
+        baseURL: String,
+        selectedModel: String,
+        resolvedSelectedModel: String?
+    ) async -> OllamaReasoningCapability {
+        let lookupModel = (resolvedSelectedModel ?? selectedModel).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !lookupModel.isEmpty else { return .unsupported }
+        return await reasoningCapability(baseURL: baseURL, model: lookupModel)
+    }
+
+    private static func thinkRequestValue(
+        for setting: OllamaReasoningSetting,
+        baseURL: String,
+        model: String
+    ) async -> Any? {
+        let capability = await reasoningCapability(baseURL: baseURL, model: model)
+
+        switch capability {
+        case .unsupported:
+            return nil
+        case .toggle:
+            switch setting.sanitized(for: .toggle) {
+            case .automatic:
+                return nil
+            case .disabled:
+                return false
+            case .enabled:
+                return true
+            case .low, .medium, .high:
+                return true
+            }
+        case .level:
+            switch setting.sanitized(for: .level) {
+            case .automatic:
+                return nil
+            case .low:
+                return "low"
+            case .medium:
+                return "medium"
+            case .high:
+                return "high"
+            case .disabled, .enabled:
+                return nil
+            }
+        }
+    }
+
+    private static func reasoningCapability(baseURL: String, model: String) async -> OllamaReasoningCapability {
+        let key = reasoningCapabilityCacheKey(baseURL: baseURL, model: model)
+        if let cached = await OllamaReasoningCapabilityCache.shared.value(for: key) {
+            return cached
+        }
+
+        let capability: OllamaReasoningCapability
+        do {
+            let details = try await fetchModelDetails(baseURL: baseURL, model: model)
+            capability = reasoningCapability(from: details, model: model)
+        } catch {
+            capability = .unsupported
+        }
+
+        await OllamaReasoningCapabilityCache.shared.set(capability, for: key)
+        return capability
+    }
+
+    private static func reasoningCapability(from details: ShowResponse, model: String) -> OllamaReasoningCapability {
+        let capabilities = Set((details.capabilities ?? []).map { $0.lowercased() })
+        guard capabilities.contains("thinking") else {
+            return .unsupported
+        }
+
+        if supportsReasoningLevels(model: model, details: details.details) {
+            return .level
+        }
+        return .toggle
+    }
+
+    private static func supportsReasoningLevels(model: String, details: ShowResponse.Details?) -> Bool {
+        var identifiers = [model.lowercased()]
+        if let family = details?.family?.lowercased() {
+            identifiers.append(family)
+        }
+        identifiers.append(contentsOf: (details?.families ?? []).map { $0.lowercased() })
+        return identifiers.contains { $0.contains("gpt-oss") || $0.contains("gptoss") }
+    }
+
+    private static func reasoningCapabilityCacheKey(baseURL: String, model: String) -> String {
+        let normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "\(normalizedBaseURL)|\(normalizedModel)"
     }
 }
