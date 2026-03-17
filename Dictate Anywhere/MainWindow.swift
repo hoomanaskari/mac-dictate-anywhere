@@ -23,7 +23,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .settings: return "Settings"
         case .shortcuts: return "Shortcuts"
         case .textOverlay: return "Text & Overlay"
-        case .aiPostProcessing: return "AI Post Processing"
+        case .aiPostProcessing: return "Transcript Processing"
         case .about: return "About"
         }
     }

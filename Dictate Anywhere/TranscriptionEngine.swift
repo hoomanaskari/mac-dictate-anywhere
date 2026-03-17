@@ -178,6 +178,7 @@ final class ParakeetEngine: TranscriptionEngine {
     private let asrCoordinator = AsrManagerCoordinator()
     private var audioEngine: AVAudioEngine?
     private var sampleBuffer: [Float] = []
+    private var fullRecordingSamples: [Float] = []
     private var totalSampleCount: Int = 0
     private var committedTranscript: String = ""
     private let sampleLock = NSLock()
@@ -380,6 +381,7 @@ final class ParakeetEngine: TranscriptionEngine {
         // Clear state
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: true)
+            fullRecordingSamples.removeAll(keepingCapacity: true)
             totalSampleCount = 0
         }
         committedTranscript = ""
@@ -409,6 +411,7 @@ final class ParakeetEngine: TranscriptionEngine {
                                 }
                             }
                             self.sampleBuffer.append(contentsOf: samples)
+                            self.fullRecordingSamples.append(contentsOf: samples)
                             self.totalSampleCount += samples.count
                         }
                         if droppedCount > 0 {
@@ -455,6 +458,7 @@ final class ParakeetEngine: TranscriptionEngine {
         committedTranscript = ""
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: false)
+            fullRecordingSamples.removeAll(keepingCapacity: false)
             totalSampleCount = 0
         }
 
@@ -475,6 +479,7 @@ final class ParakeetEngine: TranscriptionEngine {
         committedTranscript = ""
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: false)
+            fullRecordingSamples.removeAll(keepingCapacity: false)
             totalSampleCount = 0
         }
 
@@ -550,6 +555,29 @@ final class ParakeetEngine: TranscriptionEngine {
         // Capture the live transcript before re-transcription overwrites it.
         // The transcription loop already produced a complete result in currentTranscript.
         let liveText = currentTranscript
+        let settings = Settings.shared
+        let recordedSamples = sampleLock.withLock { fullRecordingSamples }
+
+        if settings.fluidAudioVocabularyEnabled, !settings.customVocabulary.isEmpty {
+            guard recordedSamples.count > 8000, hasSignificantAudio(recordedSamples) else {
+                return liveText
+            }
+
+            do {
+                let result = try await asrCoordinator.transcribeWithCustomVocabulary(
+                    recordedSamples,
+                    terms: settings.customVocabulary
+                )
+                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    return text.count >= liveText.count ? text : liveText
+                }
+            } catch {
+                logger.error("Vocabulary final transcription failed: \(error.localizedDescription, privacy: .public)")
+            }
+
+            return liveText
+        }
 
         await commitBufferedChunksIfNeeded(force: true)
 
@@ -693,6 +721,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
 private actor AsrManagerCoordinator {
     private var manager: AsrManager?
+    private var ctcModels: CtcModels?
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
         category: "AsrCoordinator"
@@ -717,9 +746,49 @@ private actor AsrManagerCoordinator {
         return result
     }
 
+    func transcribeWithCustomVocabulary(_ samples: [Float], terms: [String]) async throws -> ASRResult {
+        guard let manager else { throw TranscriptionError.engineNotReady }
+
+        let vocabularyTerms = terms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { CustomVocabularyTerm(text: $0) }
+        guard !vocabularyTerms.isEmpty else {
+            return try await transcribe(samples)
+        }
+
+        if ctcModels == nil {
+            ctcModels = try await CtcModels.downloadAndLoad(variant: .ctc110m)
+        }
+
+        let vocabulary = CustomVocabularyContext(
+            terms: vocabularyTerms,
+            minCtcScore: -10.0,
+            minSimilarity: 0.68,
+            minCombinedConfidence: 0.68,
+            minTermLength: 4
+        )
+
+        try await manager.configureVocabularyBoosting(
+            vocabulary: vocabulary,
+            ctcModels: ctcModels!
+        )
+        defer { manager.disableVocabularyBoosting() }
+
+        logger.info(
+            "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
+        )
+        let result = try await manager.transcribe(samples)
+        logger.info(
+            "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars, appliedTerms=\(result.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
+        )
+        return result
+    }
+
     func cleanup() {
         logger.info("cleanup: releasing manager (was initialized=\(self.manager != nil, privacy: .public))")
         manager?.cleanup()
         manager = nil
+        ctcModels = nil
     }
 }

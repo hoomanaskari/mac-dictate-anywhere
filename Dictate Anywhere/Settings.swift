@@ -36,6 +36,84 @@ enum TranscriptionEngineChoice: String, CaseIterable {
     }
 }
 
+enum TranscriptPostProcessingMode: String, CaseIterable {
+    case none = "none"
+    case fluidAudioVocabulary = "fluidAudioVocabulary"
+    case appleIntelligence = "appleIntelligence"
+    case ollama = "ollama"
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .fluidAudioVocabulary: return "FluidAudio Vocabulary"
+        case .appleIntelligence: return "Apple Intelligence"
+        case .ollama: return "Ollama"
+        }
+    }
+}
+
+enum OllamaReasoningCapability: String, Sendable {
+    case unsupported = "unsupported"
+    case toggle = "toggle"
+    case level = "level"
+
+    var supportsReasoning: Bool {
+        self != .unsupported
+    }
+}
+
+enum OllamaReasoningSetting: String, CaseIterable, Sendable {
+    case automatic = "automatic"
+    case disabled = "disabled"
+    case enabled = "enabled"
+    case low = "low"
+    case medium = "medium"
+    case high = "high"
+
+    var displayName: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .disabled: return "Off"
+        case .enabled: return "On"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+
+    static func options(for capability: OllamaReasoningCapability) -> [Self] {
+        switch capability {
+        case .unsupported:
+            return []
+        case .toggle:
+            return [.automatic, .disabled, .enabled]
+        case .level:
+            return [.automatic, .low, .medium, .high]
+        }
+    }
+
+    func sanitized(for capability: OllamaReasoningCapability) -> Self {
+        switch capability {
+        case .unsupported:
+            return self
+        case .toggle:
+            switch self {
+            case .automatic, .disabled, .enabled:
+                return self
+            case .low, .medium, .high:
+                return .enabled
+            }
+        case .level:
+            switch self {
+            case .automatic, .low, .medium, .high:
+                return self
+            case .disabled, .enabled:
+                return .automatic
+            }
+        }
+    }
+}
+
 // MARK: - Hotkey Mode
 
 enum HotkeyMode: String, CaseIterable, Codable {
@@ -185,6 +263,11 @@ final class Settings {
         static let aiPostProcessingEnabled = "aiPostProcessingEnabled"
         static let aiPostProcessingPrompt = "aiPostProcessingPrompt"
         static let customVocabulary = "customVocabulary"
+        static let transcriptPostProcessingMode = "transcriptPostProcessingMode"
+        static let ollamaBaseURL = "ollamaBaseURL"
+        static let ollamaModel = "ollamaModel"
+        static let ollamaReasoningSetting = "ollamaReasoningSetting"
+        static let ollamaPostProcessingPrompt = "ollamaPostProcessingPrompt"
     }
 
     // MARK: - Hotkey Settings
@@ -257,7 +340,7 @@ final class Settings {
 
     static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
 
-    // MARK: - Custom Vocabulary (AI Post Processing)
+    // MARK: - Transcript Post Processing
 
     var customVocabulary: [String] {
         didSet {
@@ -265,11 +348,9 @@ final class Settings {
         }
     }
 
-    // MARK: - AI Post Processing
-
-    var aiPostProcessingEnabled: Bool {
+    var transcriptPostProcessingMode: TranscriptPostProcessingMode {
         didSet {
-            UserDefaults.standard.set(aiPostProcessingEnabled, forKey: Keys.aiPostProcessingEnabled)
+            UserDefaults.standard.set(transcriptPostProcessingMode.rawValue, forKey: Keys.transcriptPostProcessingMode)
         }
     }
 
@@ -279,9 +360,40 @@ final class Settings {
         }
     }
 
-    /// Vocabulary terms only apply when AI post-processing is enabled.
-    var effectiveCustomVocabulary: [String] {
-        aiPostProcessingEnabled ? customVocabulary : []
+    var ollamaBaseURL: String {
+        didSet {
+            UserDefaults.standard.set(ollamaBaseURL, forKey: Keys.ollamaBaseURL)
+        }
+    }
+
+    var ollamaModel: String {
+        didSet {
+            UserDefaults.standard.set(ollamaModel, forKey: Keys.ollamaModel)
+        }
+    }
+
+    var ollamaReasoningSetting: OllamaReasoningSetting {
+        didSet {
+            UserDefaults.standard.set(ollamaReasoningSetting.rawValue, forKey: Keys.ollamaReasoningSetting)
+        }
+    }
+
+    var ollamaPostProcessingPrompt: String {
+        didSet {
+            UserDefaults.standard.set(ollamaPostProcessingPrompt, forKey: Keys.ollamaPostProcessingPrompt)
+        }
+    }
+
+    var fluidAudioVocabularyEnabled: Bool {
+        transcriptPostProcessingMode == .fluidAudioVocabulary
+    }
+
+    var appleIntelligencePostProcessingEnabled: Bool {
+        transcriptPostProcessingMode == .appleIntelligence
+    }
+
+    var ollamaPostProcessingEnabled: Bool {
+        transcriptPostProcessingMode == .ollama
     }
 
     // MARK: - Microphone Selection
@@ -423,9 +535,23 @@ final class Settings {
         // Custom Vocabulary
         customVocabulary = defaults.object(forKey: Keys.customVocabulary) as? [String] ?? []
 
-        // AI Post Processing
-        aiPostProcessingEnabled = defaults.object(forKey: Keys.aiPostProcessingEnabled) as? Bool ?? false
+        // Transcript Post Processing
+        if let storedModeRaw = defaults.string(forKey: Keys.transcriptPostProcessingMode),
+           let storedMode = TranscriptPostProcessingMode(rawValue: storedModeRaw) {
+            transcriptPostProcessingMode = storedMode
+        } else {
+            let aiEnabled = defaults.object(forKey: Keys.aiPostProcessingEnabled) as? Bool ?? false
+            let migratedMode: TranscriptPostProcessingMode = aiEnabled ? .appleIntelligence : .none
+            transcriptPostProcessingMode = migratedMode
+            defaults.set(migratedMode.rawValue, forKey: Keys.transcriptPostProcessingMode)
+        }
         aiPostProcessingPrompt = defaults.string(forKey: Keys.aiPostProcessingPrompt) ?? ""
+        ollamaBaseURL = defaults.string(forKey: Keys.ollamaBaseURL) ?? OllamaPostProcessingService.defaultBaseURL
+        ollamaModel = defaults.string(forKey: Keys.ollamaModel) ?? ""
+        ollamaReasoningSetting = OllamaReasoningSetting(
+            rawValue: defaults.string(forKey: Keys.ollamaReasoningSetting) ?? ""
+        ) ?? .disabled
+        ollamaPostProcessingPrompt = defaults.string(forKey: Keys.ollamaPostProcessingPrompt) ?? ""
 
         // Microphone selection
         selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)
