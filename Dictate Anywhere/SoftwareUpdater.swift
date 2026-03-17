@@ -52,13 +52,7 @@ private final class SparkleUserDriverDelegate: NSObject, SPUStandardUserDriverDe
 
     private func restoreActivationPolicy() {
         DispatchQueue.main.async {
-            switch Settings.shared.appAppearanceMode {
-            case .dockAndMenuBar:
-                NSApp.setActivationPolicy(.regular)
-            case .menuBarOnly:
-                let hasVisibleWindow = NSApp.windows.contains { $0.isVisible && $0.level == .normal }
-                NSApp.setActivationPolicy(hasVisibleWindow ? .regular : .accessory)
-            }
+            NSApp.setActivationPolicy(Settings.shared.appAppearanceMode.activationPolicy)
         }
     }
 }

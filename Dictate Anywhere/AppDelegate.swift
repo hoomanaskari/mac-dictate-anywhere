@@ -117,13 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Appearance
 
     private func applyAppearanceMode() {
-        switch Settings.shared.appAppearanceMode {
-        case .menuBarOnly:
-            let isVisible = mainWindow?.isVisible ?? false
-            NSApp.setActivationPolicy(isVisible ? .regular : .accessory)
-        case .dockAndMenuBar:
-            NSApp.setActivationPolicy(.regular)
-        }
+        NSApp.setActivationPolicy(Settings.shared.appAppearanceMode.activationPolicy)
     }
 
     private func setupNotificationObservers() {
@@ -146,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu Actions
 
     @objc private func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(Settings.shared.appAppearanceMode.activationPolicy)
         NSApp.activate(ignoringOtherApps: true)
         if let window = mainWindow {
             window.makeKeyAndOrderFront(nil)

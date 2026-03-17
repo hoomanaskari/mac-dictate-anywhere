@@ -2,12 +2,12 @@
 //  SupportedLanguage.swift
 //  Dictate Anywhere
 //
-//  Defines the 25 European languages supported by FluidAudio's Parakeet model.
+//  Defines the 25 European languages supported by FluidAudio's multilingual Parakeet model.
 //
 
 import Foundation
 
-/// Languages supported by FluidAudio's Parakeet TDT model for transcription.
+/// Languages supported by FluidAudio's multilingual Parakeet TDT model for transcription.
 enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
     // Germanic languages
     case english = "en"

@@ -141,8 +141,9 @@ final class AppState {
 
         // Auto-default: if user hasn't explicitly chosen an engine and
         // Parakeet model is downloaded, ensure Parakeet is selected.
-        await parakeetEngine.recheckModelOnDisk()
-        let hasParakeetModel = parakeetEngine.checkModelOnDisk()
+        await parakeetEngine.recheckAllModelsOnDisk()
+        await parakeetEngine.handleSelectedModelChange()
+        let hasParakeetModel = parakeetEngine.checkAnyModelOnDisk()
         if !settings.userHasChosenEngine, hasParakeetModel {
             settings.engineChoice = .parakeet
         }
@@ -159,6 +160,14 @@ final class AppState {
             logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
         }
         isPreparingEngine = false
+    }
+
+    func handleParakeetModelSelectionChange(userInitiated: Bool) async {
+        guard status == .idle else { return }
+        settings.engineChoice = .parakeet
+        settings.userHasChosenEngine = userInitiated
+        await parakeetEngine.handleSelectedModelChange()
+        await prepareActiveEngine()
     }
 
     // MARK: - Ollama Model Management
@@ -241,7 +250,7 @@ final class AppState {
             if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
                 showLegacyEngineDiscontinuedAlert()
             }
-            status = .error("Parakeet model not ready. Download it from Speech Model settings.")
+            status = .error("Parakeet \(settings.parakeetModelChoice.displayName.lowercased()) model not ready. Download it from Speech Model settings.")
             status = .idle
             return
         }
@@ -259,6 +268,7 @@ final class AppState {
 
         // Resolve preferred input route up front; startup will retry with fallbacks if needed.
         let preferredDeviceID = MicrophoneHelper.effectiveDeviceID()
+        let hasExplicitMicrophoneSelection = settings.selectedMicrophoneUID != nil
 
         // Boost mic volume if enabled
         if settings.boostMicrophoneVolumeEnabled {
@@ -273,6 +283,9 @@ final class AppState {
         // Start recording (must complete before showing overlay so the mic
         // is actually capturing audio when the user sees the "listening" UI)
         let startCandidates: [AudioDeviceID?] = {
+            if hasExplicitMicrophoneSelection {
+                return preferredDeviceID.map { [$0] } ?? []
+            }
             var ids: [AudioDeviceID?] = [preferredDeviceID]
             let refreshedDefault = MicrophoneHelper.currentDefaultInputDeviceID()
             if refreshedDefault != preferredDeviceID {
@@ -284,7 +297,9 @@ final class AppState {
             return ids
         }()
 
-        var lastStartError: Error?
+        var lastStartError: Error? = hasExplicitMicrophoneSelection && preferredDeviceID == nil
+            ? TranscriptionError.deviceSelectionFailed
+            : nil
         var didStart = false
         for (index, candidateID) in startCandidates.enumerated() {
             if index > 0 {
@@ -533,8 +548,12 @@ final class AppState {
         isShowingMigrationAlert = true
         defer { isShowingMigrationAlert = false }
 
+        let restorePolicy = settings.appAppearanceMode.activationPolicy
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        defer {
+            NSApp.setActivationPolicy(restorePolicy)
+        }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -722,7 +741,7 @@ enum MicrophoneHelper {
         guard let uid = Settings.shared.selectedMicrophoneUID else {
             return currentDefaultInputDeviceID()
         }
-        return deviceID(forUID: uid) ?? currentDefaultInputDeviceID()
+        return deviceID(forUID: uid)
     }
 
     static func currentDefaultInputDeviceID() -> AudioDeviceID? {

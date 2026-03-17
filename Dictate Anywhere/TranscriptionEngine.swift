@@ -17,11 +17,146 @@ private let audioLogger = Logger(
     category: "AudioPipeline"
 )
 
+private protocol AudioCaptureController: AnyObject, Sendable {
+    func stop()
+}
+
+private final class AVAudioEngineCaptureController: @unchecked Sendable, AudioCaptureController {
+    let engine: AVAudioEngine
+
+    init(engine: AVAudioEngine) {
+        self.engine = engine
+    }
+
+    func stop() {
+        engine.inputNode.removeTap(onBus: 0)
+        if engine.isRunning {
+            engine.stop()
+        }
+        engine.reset()
+    }
+}
+
 private final class SendableAudioEngineRef: @unchecked Sendable {
     let engine: AVAudioEngine
 
     init(_ engine: AVAudioEngine) {
         self.engine = engine
+    }
+}
+
+private final class AVCaptureDeviceCaptureController: NSObject, @unchecked Sendable, AudioCaptureController, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let session = AVCaptureSession()
+    private let output = AVCaptureAudioDataOutput()
+    private let sampleQueue = DispatchQueue(label: "com.dictate-anywhere.capture-session-samples", qos: .userInitiated)
+    private let onSamples: ([Float]) -> Void
+    private var hasLoggedFirstBuffer = false
+
+    init(device: AVCaptureDevice, onSamples: @escaping ([Float]) -> Void) throws {
+        self.onSamples = onSamples
+        super.init()
+
+        let input = try AVCaptureDeviceInput(device: device)
+
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        guard session.canAddInput(input) else {
+            throw TranscriptionError.audioEngineSetupFailed
+        }
+        session.addInput(input)
+
+        output.audioSettings = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+
+        guard session.canAddOutput(output) else {
+            throw TranscriptionError.audioEngineSetupFailed
+        }
+        session.addOutput(output)
+        output.setSampleBufferDelegate(self, queue: sampleQueue)
+    }
+
+    func start() throws {
+        session.startRunning()
+        guard session.isRunning else {
+            throw TranscriptionError.audioEngineSetupFailed
+        }
+    }
+
+    func stop() {
+        output.setSampleBufferDelegate(nil, queue: nil)
+        if session.isRunning {
+            session.stopRunning()
+        }
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0 else { return }
+
+        if !hasLoggedFirstBuffer {
+            hasLoggedFirstBuffer = true
+            if let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee {
+                audioLogger.info(
+                    "captureSession: first buffer sampleRate=\(asbd.mSampleRate, privacy: .public), channelCount=\(asbd.mChannelsPerFrame, privacy: .public), formatID=\(asbd.mFormatID, privacy: .public)"
+                )
+            }
+        }
+
+        var samples = [Float](repeating: 0, count: frameCount)
+        let status = samples.withUnsafeMutableBytes { rawBytes -> OSStatus in
+            var bufferList = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(
+                    mNumberChannels: 1,
+                    mDataByteSize: UInt32(rawBytes.count),
+                    mData: rawBytes.baseAddress
+                )
+            )
+            return CMSampleBufferCopyPCMDataIntoAudioBufferList(
+                sampleBuffer,
+                at: 0,
+                frameCount: Int32(frameCount),
+                into: &bufferList
+            )
+        }
+
+        guard status == noErr else {
+            audioLogger.error("captureSession: CMSampleBufferCopyPCMDataIntoAudioBufferList failed, status=\(status, privacy: .public)")
+            return
+        }
+
+        onSamples(samples)
+    }
+}
+
+private extension ParakeetModelChoice {
+    nonisolated var asrModelVersion: AsrModelVersion {
+        switch self {
+        case .multilingual:
+            return .v3
+        case .englishOnly:
+            return .v2
+        }
+    }
+}
+
+private extension AsrModelVersion {
+    nonisolated var parakeetModelChoice: ParakeetModelChoice {
+        switch self {
+        case .v2:
+            return .englishOnly
+        case .v3:
+            return .multilingual
+        }
     }
 }
 
@@ -45,7 +180,7 @@ protocol TranscriptionEngine: AnyObject {
 private func makeRecordingEngine(
     deviceID: AudioDeviceID?,
     onSamples: @escaping ([Float]) -> Void
-) throws -> (AVAudioEngine, AVAudioConverter) {
+) throws -> AVAudioEngine {
     audioLogger.info("makeRecordingEngine: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
     let engine = AVAudioEngine()
     let inputNode = engine.inputNode
@@ -136,7 +271,49 @@ private func makeRecordingEngine(
         throw TranscriptionError.audioEngineSetupFailed
     }
 
-    return (engine, converter)
+    return engine
+}
+
+private func deviceUID(for deviceID: AudioDeviceID) -> String? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceUID,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var uid: Unmanaged<CFString>?
+    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &uid) == noErr,
+          let result = uid?.takeUnretainedValue() else {
+        return nil
+    }
+    return result as String
+}
+
+private func captureDevice(for deviceID: AudioDeviceID) -> AVCaptureDevice? {
+    guard let uid = deviceUID(for: deviceID) else { return nil }
+    return AVCaptureDevice.DiscoverySession(
+        deviceTypes: [.microphone],
+        mediaType: .audio,
+        position: .unspecified
+    ).devices.first { $0.uniqueID == uid }
+}
+
+private func makeAudioCaptureController(
+    deviceID: AudioDeviceID?,
+    onSamples: @escaping ([Float]) -> Void
+) throws -> AudioCaptureController {
+    if Settings.shared.selectedMicrophoneUID != nil,
+       let deviceID,
+       let captureDevice = captureDevice(for: deviceID) {
+        audioLogger.info(
+            "makeAudioCaptureController: using AVCaptureSession for explicit microphone \(captureDevice.uniqueID, privacy: .public)"
+        )
+        let controller = try AVCaptureDeviceCaptureController(device: captureDevice, onSamples: onSamples)
+        try controller.start()
+        return controller
+    }
+
+    return AVAudioEngineCaptureController(engine: try makeRecordingEngine(deviceID: deviceID, onSamples: onSamples))
 }
 
 // MARK: - Errors
@@ -176,7 +353,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
     private var loadedModels: AsrModels?
     private let asrCoordinator = AsrManagerCoordinator()
-    private var audioEngine: AVAudioEngine?
+    private var audioCaptureController: AudioCaptureController?
     private var sampleBuffer: [Float] = []
     private var fullRecordingSamples: [Float] = []
     private var totalSampleCount: Int = 0
@@ -187,7 +364,6 @@ final class ParakeetEngine: TranscriptionEngine {
     private var isRecordingActive = false
     private var lastTapCallbackTime: CFAbsoluteTime = 0
 
-    private let isModelDownloadedKey = "isFluidModelDownloaded"
     private let minAudioEnergy: Float = 0.005
     private let transcriptionIntervalMs: UInt64 = 500
     private let sampleRate: Int = 16_000
@@ -213,48 +389,102 @@ final class ParakeetEngine: TranscriptionEngine {
     // MARK: - Init
 
     init() {
-        isModelDownloaded = UserDefaults.standard.bool(forKey: isModelDownloadedKey)
+        isModelDownloaded = checkModelOnDisk()
     }
 
     // MARK: - Model Management
 
     /// Cached result of on-disk model check (avoids synchronous FileManager I/O on main thread)
-    private var modelOnDiskCached: Bool?
+    private var modelOnDiskCached: [ParakeetModelChoice: Bool] = [:]
+
+    private var selectedModelChoice: ParakeetModelChoice {
+        Settings.shared.parakeetModelChoice
+    }
+
+    private func updateSelectedModelDownloadedState() async {
+        let isDownloaded = checkModelOnDisk()
+        await MainActor.run {
+            self.isModelDownloaded = isDownloaded
+        }
+    }
 
     func checkModelOnDisk() -> Bool {
-        if let cached = modelOnDiskCached { return cached }
-        let result = Self.checkModelOnDiskSync()
-        modelOnDiskCached = result
+        checkModelOnDisk(for: selectedModelChoice)
+    }
+
+    func checkModelOnDisk(for modelChoice: ParakeetModelChoice) -> Bool {
+        if let cached = modelOnDiskCached[modelChoice] { return cached }
+        let result = Self.checkModelOnDiskSync(for: modelChoice)
+        modelOnDiskCached[modelChoice] = result
         return result
     }
 
     /// Recheck model on disk from a background thread and cache the result.
     func recheckModelOnDisk() async {
-        let result = await Task.detached(priority: .utility) {
-            Self.checkModelOnDiskSync()
-        }.value
-        modelOnDiskCached = result
+        await recheckModelOnDisk(for: selectedModelChoice)
     }
 
-    nonisolated private static func checkModelOnDiskSync() -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
-        guard FileManager.default.fileExists(atPath: path.path) else { return false }
-        if let contents = try? FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) {
-            return contents.contains { $0.lastPathComponent.hasPrefix("parakeet") }
+    func recheckModelOnDisk(for modelChoice: ParakeetModelChoice) async {
+        let result = await Task.detached(priority: .utility) {
+            Self.checkModelOnDiskSync(for: modelChoice)
+        }.value
+        modelOnDiskCached[modelChoice] = result
+        if modelChoice == selectedModelChoice {
+            await MainActor.run {
+                self.isModelDownloaded = result
+            }
         }
-        return false
+    }
+
+    func recheckAllModelsOnDisk() async {
+        let results = await Task.detached(priority: .utility) {
+            Dictionary(
+                uniqueKeysWithValues: ParakeetModelChoice.allCases.map {
+                    ($0, Self.checkModelOnDiskSync(for: $0))
+                }
+            )
+        }.value
+        modelOnDiskCached = results
+        await updateSelectedModelDownloadedState()
+    }
+
+    func checkAnyModelOnDisk() -> Bool {
+        ParakeetModelChoice.allCases.contains { checkModelOnDisk(for: $0) }
+    }
+
+    func handleSelectedModelChange() async {
+        let selectedModel = selectedModelChoice
+        let isSelectedModelLoaded = loadedModels?.version == selectedModel.asrModelVersion
+        if !isSelectedModelLoaded {
+            await asrCoordinator.cleanup()
+            loadedModels = nil
+        }
+
+        let coordinatorReady = await asrCoordinator.isInitialized()
+        await MainActor.run {
+            self.isReady = coordinatorReady && isSelectedModelLoaded
+        }
+        await updateSelectedModelDownloadedState()
+    }
+
+    nonisolated private static func checkModelOnDiskSync(for modelChoice: ParakeetModelChoice) -> Bool {
+        let modelDirectory = AsrModels.defaultCacheDirectory(for: modelChoice.asrModelVersion)
+        if !FileManager.default.fileExists(atPath: modelDirectory.path) {
+            return false
+        }
+        return AsrModels.modelsExist(at: modelDirectory, version: modelChoice.asrModelVersion)
     }
 
     func downloadModel() async throws {
         guard !isDownloading else { return }
+        let modelChoice = selectedModelChoice
 
         await MainActor.run {
             isDownloading = true
             downloadProgress = 0.0
         }
 
-        let modelsExist = checkModelOnDisk()
+        let modelsExist = checkModelOnDisk(for: modelChoice)
 
         // Simulate progress for fresh downloads
         let progressTask = Task { @MainActor in
@@ -267,20 +497,19 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         do {
-            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            let models = try await AsrModels.downloadAndLoad(version: modelChoice.asrModelVersion)
             progressTask.cancel()
 
             let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
             try await asrCoordinator.initialize(models: models, config: config)
             self.loadedModels = models
 
-            self.modelOnDiskCached = true
+            self.modelOnDiskCached[modelChoice] = true
             await MainActor.run {
                 self.isModelDownloaded = true
                 self.isDownloading = false
                 self.downloadProgress = 1.0
                 self.isReady = true
-                UserDefaults.standard.set(true, forKey: self.isModelDownloadedKey)
             }
         } catch {
             progressTask.cancel()
@@ -296,24 +525,24 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func deleteModel() async throws {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
+        let modelChoice = selectedModelChoice
+        let path = AsrModels.defaultCacheDirectory(for: modelChoice.asrModelVersion)
 
         if FileManager.default.fileExists(atPath: path.path) {
-            let contents = try FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil)
-            for item in contents where item.lastPathComponent.hasPrefix("parakeet") {
-                try FileManager.default.removeItem(at: item)
-            }
+            try FileManager.default.removeItem(at: path)
         }
 
-        await asrCoordinator.cleanup()
-        loadedModels = nil
-        modelOnDiskCached = nil
+        if loadedModels?.version == modelChoice.asrModelVersion {
+            await asrCoordinator.cleanup()
+            loadedModels = nil
+        }
+        modelOnDiskCached[modelChoice] = false
 
         await MainActor.run {
-            self.isModelDownloaded = false
-            self.isReady = false
-            UserDefaults.standard.set(false, forKey: self.isModelDownloadedKey)
+            if self.selectedModelChoice == modelChoice {
+                self.isModelDownloaded = false
+                self.isReady = false
+            }
         }
     }
 
@@ -324,9 +553,10 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func prepare() async throws {
-        logger.info("prepare: entry")
-        if await asrCoordinator.isInitialized() {
-            logger.info("prepare: coordinator already initialized, early return")
+        let modelChoice = selectedModelChoice
+        logger.info("prepare: entry for \(modelChoice.displayName, privacy: .public)")
+        if await asrCoordinator.isInitialized(), loadedModels?.version == modelChoice.asrModelVersion {
+            logger.info("prepare: coordinator already initialized for selected model, early return")
             await MainActor.run {
                 self.isReady = true
                 self.isModelDownloaded = true
@@ -335,7 +565,7 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Only prepare if model is on disk (don't auto-download)
-        guard checkModelOnDisk() else {
+        guard checkModelOnDisk(for: modelChoice) else {
             await MainActor.run {
                 self.isReady = false
                 self.isModelDownloaded = false
@@ -344,10 +574,10 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         let models: AsrModels
-        if let cachedModels = loadedModels {
+        if let cachedModels = loadedModels, cachedModels.version == modelChoice.asrModelVersion {
             models = cachedModels
         } else {
-            models = try await AsrModels.downloadAndLoad(version: .v3)
+            models = try await AsrModels.loadFromCache(version: modelChoice.asrModelVersion)
         }
 
         let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
@@ -361,6 +591,7 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         loadedModels = models
+        modelOnDiskCached[modelChoice] = true
 
         await MainActor.run {
             self.isReady = true
@@ -393,10 +624,10 @@ final class ParakeetEngine: TranscriptionEngine {
 
         // Start audio engine (async to avoid deadlock — the tap callback dispatches to main)
         logger.info("startRecording: dispatching to engineQueue for audio engine setup")
-        let (engine, _) = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(AVAudioEngine, AVAudioConverter), Error>) in
+        let captureController = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AudioCaptureController, Error>) in
             engineQueue.async {
                 do {
-                    let result = try makeRecordingEngine(deviceID: deviceID) { [weak self] samples in
+                    let result = try makeAudioCaptureController(deviceID: deviceID) { [weak self] samples in
                         guard let self else { return }
                         self.lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
                         var droppedCount = 0
@@ -426,7 +657,7 @@ final class ParakeetEngine: TranscriptionEngine {
             }
         }
 
-        audioEngine = engine
+        audioCaptureController = captureController
         isRecordingActive = true
         lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
         logger.info("startRecording: audio engine set up successfully, starting transcription loop")
@@ -677,22 +908,28 @@ final class ParakeetEngine: TranscriptionEngine {
     private let maxRetiredEngines = 3
 
     private func teardownAudioEngineIfNeeded() async {
-        guard let engine = audioEngine else {
-            logger.info("teardownAudioEngine: no engine to tear down")
+        guard let captureController = audioCaptureController else {
+            logger.info("teardownAudioEngine: no capture controller to tear down")
             return
         }
-        let engineRef = SendableAudioEngineRef(engine)
-        logger.info("teardownAudioEngine: engine.isRunning=\(engine.isRunning, privacy: .public)")
-        audioEngine = nil
+        let engineRef = (captureController as? AVAudioEngineCaptureController).map { SendableAudioEngineRef($0.engine) }
+        if let engineRef {
+            logger.info("teardownAudioEngine: engine.isRunning=\(engineRef.engine.isRunning, privacy: .public)")
+        } else {
+            logger.info("teardownAudioEngine: stopping AVCaptureSession backend")
+        }
+        audioCaptureController = nil
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             engineQueue.async { [weak self] in
-                let engine = engineRef.engine
-                engine.inputNode.removeTap(onBus: 0)
-                if engine.isRunning { engine.stop() }
-                engine.reset()
+                captureController.stop()
 
                 guard let self else {
+                    continuation.resume()
+                    return
+                }
+
+                guard let engineRef else {
                     continuation.resume()
                     return
                 }
@@ -703,7 +940,7 @@ final class ParakeetEngine: TranscriptionEngine {
                 }
 
                 // Keep alive briefly to avoid late CoreAudio callbacks, but don't block caller.
-                self.retiredEngines.append(engine)
+                self.retiredEngines.append(engineRef.engine)
                 self.engineQueue.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                     self?.retiredEngines.removeAll { $0 === engineRef.engine }
                 }
