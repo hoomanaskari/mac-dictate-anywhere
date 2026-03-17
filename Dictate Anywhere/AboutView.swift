@@ -50,6 +50,12 @@ struct AboutView: View {
                     description: "On-device speech recognition powered by Parakeet models."
                 )
                 LibraryRow(
+                    name: "Ollama",
+                    url: "https://github.com/ollama/ollama",
+                    license: "MIT License",
+                    description: "Local LLM runtime used for optional transcript post-processing."
+                )
+                LibraryRow(
                     name: "Sparkle",
                     url: "https://github.com/sparkle-project/Sparkle",
                     license: "MIT License",

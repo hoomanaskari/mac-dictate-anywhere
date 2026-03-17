@@ -105,8 +105,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupWindow() {
         guard let window = NSApp.windows.first(where: { $0.contentView != nil && !($0.contentView is NSVisualEffectView && $0.level == .floating) }) else { return }
         mainWindow = window
+        window.styleMask.insert(.resizable)
         window.isMovableByWindowBackground = true
-        window.minSize = NSSize(width: 500, height: 400)
+        window.contentMinSize = NSSize(width: MainWindowSizing.minimumWidth, height: MainWindowSizing.minimumHeight)
+        window.contentMaxSize = NSSize(width: MainWindowSizing.maximumWidth, height: MainWindowSizing.maximumHeight)
         window.center()
         window.delegate = self
         applyAppearanceMode()
