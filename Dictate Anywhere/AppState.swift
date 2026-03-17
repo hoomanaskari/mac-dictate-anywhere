@@ -23,6 +23,14 @@ final class AppState {
         case error(String)
     }
 
+    struct OllamaDownloadState: Equatable {
+        let model: String
+        let status: String
+        let fractionCompleted: Double?
+        let completed: Int64?
+        let total: Int64?
+    }
+
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
         category: "AppState"
@@ -32,6 +40,10 @@ final class AppState {
     var currentTranscript = ""
     var lastTranscript = ""
     var selectedPage: SidebarPage = .models
+    var ollamaDownloadState: OllamaDownloadState?
+    var ollamaDeletingModel: String?
+    var ollamaModelActionError: String?
+    var ollamaModelActionsRevision = 0
 
     /// Static accessor for AppDelegate menu bar (avoids circular dependency)
     nonisolated(unsafe) static var lastTranscriptForMenuBar = ""
@@ -147,6 +159,72 @@ final class AppState {
             logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
         }
         isPreparingEngine = false
+    }
+
+    // MARK: - Ollama Model Management
+
+    func startOllamaModelDownload(_ model: String) async {
+        guard ollamaDownloadState == nil, ollamaDeletingModel == nil else { return }
+
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return }
+
+        ollamaModelActionError = nil
+        ollamaDownloadState = OllamaDownloadState(
+            model: trimmedModel,
+            status: "Preparing model download...",
+            fractionCompleted: nil,
+            completed: nil,
+            total: nil
+        )
+
+        do {
+            for try await progress in OllamaPostProcessingService.pullModel(
+                baseURL: settings.ollamaBaseURL,
+                model: trimmedModel
+            ) {
+                guard !Task.isCancelled else { return }
+                ollamaDownloadState = OllamaDownloadState(
+                    model: trimmedModel,
+                    status: progress.displayStatus,
+                    fractionCompleted: progress.fractionCompleted,
+                    completed: progress.overallCompleted ?? progress.completed,
+                    total: progress.overallTotal ?? progress.total
+                )
+            }
+
+            ollamaDownloadState = nil
+            ollamaModelActionError = nil
+            ollamaModelActionsRevision += 1
+        } catch {
+            guard !Task.isCancelled else { return }
+            ollamaDownloadState = nil
+            ollamaModelActionError = error.localizedDescription
+        }
+    }
+
+    func deleteOllamaModel(_ model: String) async {
+        guard ollamaDownloadState == nil, ollamaDeletingModel == nil else { return }
+
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return }
+
+        ollamaDeletingModel = trimmedModel
+        ollamaModelActionError = nil
+
+        do {
+            try await OllamaPostProcessingService.removeModel(
+                baseURL: settings.ollamaBaseURL,
+                model: trimmedModel
+            )
+            ollamaDeletingModel = nil
+            ollamaModelActionError = nil
+            ollamaModelActionsRevision += 1
+        } catch {
+            guard !Task.isCancelled else { return }
+            ollamaDeletingModel = nil
+            ollamaModelActionError = error.localizedDescription
+        }
     }
 
     // MARK: - Dictation Flow

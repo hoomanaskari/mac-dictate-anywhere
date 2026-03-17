@@ -299,9 +299,56 @@ enum AIPostProcessingService {
 
 enum OllamaPostProcessingService {
     static let defaultBaseURL = "http://127.0.0.1:11434"
+    static let suggestedModels: [SuggestedModel] = [
+        SuggestedModel(
+            name: "mistral-small3.2:latest",
+            badge: "Recommended",
+            description: "Best default balance for transcript cleanup quality and latency.",
+            downloadSizeLabel: "15 GB download",
+            parameterSizeLabel: "24B params"
+        ),
+        SuggestedModel(
+            name: "mistral-nemo:12b",
+            badge: "Small",
+            description: "Smaller download that still follows cleanup prompts reliably.",
+            downloadSizeLabel: "7.1 GB download",
+            parameterSizeLabel: "12B params"
+        ),
+        SuggestedModel(
+            name: "gemma3:4b",
+            badge: "Smallest",
+            description: "Lightest suggested option for local post-processing.",
+            downloadSizeLabel: "3.3 GB download",
+            parameterSizeLabel: "4B params"
+        ),
+    ]
+
+    struct SuggestedModel: Identifiable, Hashable, Sendable {
+        let name: String
+        let badge: String
+        let description: String
+        let downloadSizeLabel: String?
+        let parameterSizeLabel: String?
+
+        var id: String { name }
+    }
+
+    struct InstalledModelMetadata: Hashable, Sendable {
+        let size: Int64?
+        let parameterSize: String?
+    }
+
+    struct CLIAvailability: Sendable {
+        let executablePath: String?
+
+        var isAvailable: Bool {
+            executablePath != nil
+        }
+    }
 
     struct Availability: Sendable {
         let installedModels: [String]
+        let installedModelMetadata: [String: InstalledModelMetadata]
         let selectedModel: String
         let resolvedSelectedModel: String?
         let selectedModelReasoningCapability: OllamaReasoningCapability
@@ -311,11 +358,67 @@ enum OllamaPostProcessingService {
         }
     }
 
+    struct PullProgress: Sendable {
+        let model: String
+        let status: String
+        let digest: String?
+        let completed: Int64?
+        let total: Int64?
+        let overallCompleted: Int64?
+        let overallTotal: Int64?
+
+        var fractionCompleted: Double? {
+            if isComplete {
+                return 1
+            }
+
+            let resolvedTotal = overallTotal ?? total
+            let resolvedCompleted = overallCompleted ?? completed
+
+            guard let resolvedTotal, resolvedTotal > 0,
+                  let resolvedCompleted else {
+                return nil
+            }
+
+            return min(max(Double(resolvedCompleted) / Double(resolvedTotal), 0), 1)
+        }
+
+        var isComplete: Bool {
+            status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "success"
+        }
+
+        var displayStatus: String {
+            let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lowered = normalized.lowercased()
+
+            if lowered == "pulling manifest" {
+                return "Preparing model download..."
+            }
+            if lowered.hasPrefix("pulling ") {
+                return "Downloading model..."
+            }
+            if lowered == "verifying sha256 digest" {
+                return "Verifying model files..."
+            }
+            if lowered == "writing manifest" {
+                return "Finalizing model..."
+            }
+            if lowered == "removing any unused layers" {
+                return "Cleaning up cached layers..."
+            }
+            if lowered == "success" {
+                return "Download complete."
+            }
+            return normalized
+        }
+    }
+
     enum ServiceError: LocalizedError {
         case missingModel
         case invalidBaseURL
         case invalidResponse
         case emptyResponse
+        case missingCLI
         case serverMessage(String)
         case unexpectedStatus(Int)
 
@@ -329,6 +432,8 @@ enum OllamaPostProcessingService {
                 return "Ollama returned an invalid response."
             case .emptyResponse:
                 return "Ollama returned an empty response."
+            case .missingCLI:
+                return "Install the Ollama CLI to manage models from the app."
             case .serverMessage(let message):
                 return message
             case .unexpectedStatus(let status):
@@ -340,9 +445,18 @@ enum OllamaPostProcessingService {
     static func availability(baseURL: String, selectedModel: String) async throws -> Availability {
         let installedModels = try await fetchInstalledModels(baseURL: baseURL)
         let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedSelectedModel = matchingInstalledModel(for: trimmedModel, in: installedModels)
+        let installedModelNames = installedModels.map(\.name)
+        let resolvedSelectedModel = matchingInstalledModel(for: trimmedModel, in: installedModelNames)
         return Availability(
-            installedModels: installedModels,
+            installedModels: installedModelNames,
+            installedModelMetadata: Dictionary(
+                uniqueKeysWithValues: installedModels.map {
+                    (
+                        $0.name,
+                        InstalledModelMetadata(size: $0.size, parameterSize: $0.details?.parameterSize)
+                    )
+                }
+            ),
             selectedModel: trimmedModel,
             resolvedSelectedModel: resolvedSelectedModel,
             selectedModelReasoningCapability: await selectedModelReasoningCapability(
@@ -394,15 +508,164 @@ enum OllamaPostProcessingService {
         return cleanedResponse(from: rawResponse, originalText: text)
     }
 
+    static func cliAvailability() -> CLIAvailability {
+        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+
+        let candidatePaths = deduplicated([
+            "/usr/local/bin/ollama",
+            "/opt/homebrew/bin/ollama",
+            "/usr/bin/ollama",
+        ] + pathEntries.map { "\($0)/ollama" })
+
+        let executablePath = candidatePaths.first {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+
+        return CLIAvailability(executablePath: executablePath)
+    }
+
+    static func isLocalServer(baseURL: String) -> Bool {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            return false
+        }
+        if !normalized.contains("://") {
+            normalized = "http://\(normalized)"
+        }
+        guard let components = URLComponents(string: normalized),
+              let host = components.host?.lowercased() else {
+            return false
+        }
+
+        return ["127.0.0.1", "localhost", "::1", "0.0.0.0"].contains(host)
+    }
+
+    static func pullModel(baseURL: String, model: String) -> AsyncThrowingStream<PullProgress, Error> {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    guard !trimmedModel.isEmpty else {
+                        throw ServiceError.missingModel
+                    }
+
+                    var request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .pull))
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.timeoutInterval = 60 * 60 * 6
+                    request.httpBody = try JSONSerialization.data(
+                        withJSONObject: [
+                            "model": trimmedModel,
+                            "stream": true,
+                        ]
+                    )
+
+                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw ServiceError.invalidResponse
+                    }
+
+                    guard (200..<300).contains(httpResponse.statusCode) else {
+                        var data = Data()
+                        for try await byte in bytes {
+                            data.append(contentsOf: [byte])
+                        }
+                        if let apiError = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                            throw ServiceError.serverMessage(apiError.error)
+                        }
+                        throw ServiceError.unexpectedStatus(httpResponse.statusCode)
+                    }
+
+                    var accumulator = PullProgressAccumulator()
+                    let decoder = JSONDecoder()
+
+                    for try await line in bytes.lines {
+                        let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmedLine.isEmpty else { continue }
+
+                        let decoded = try decoder.decode(PullResponse.self, from: Data(trimmedLine.utf8))
+                        if let error = decoded.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+                           !error.isEmpty {
+                            throw ServiceError.serverMessage(error)
+                        }
+
+                        continuation.yield(accumulator.progress(for: decoded, model: trimmedModel))
+                    }
+
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    static func removeModel(baseURL: String, model: String) async throws {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            throw ServiceError.missingModel
+        }
+
+        let availability = cliAvailability()
+        guard let executablePath = availability.executablePath else {
+            throw ServiceError.missingCLI
+        }
+
+        let cliHost = try cliHost(baseURL: baseURL)
+
+        try await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executablePath)
+            process.arguments = ["rm", trimmedModel]
+
+            var environment = ProcessInfo.processInfo.environment
+            environment["OLLAMA_HOST"] = cliHost
+            process.environment = environment
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            try process.run()
+            process.waitUntilExit()
+
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outputData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let error = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            guard process.terminationStatus == 0 else {
+                let message = [error, output]
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty }) ?? "Failed to delete \(trimmedModel)."
+                throw ServiceError.serverMessage(message)
+            }
+        }.value
+    }
+
     private enum Endpoint {
         case generate
         case tags
+        case pull
         case show
 
         var pathSuffix: String {
             switch self {
             case .generate: return "api/generate"
             case .tags: return "api/tags"
+            case .pull: return "api/pull"
             case .show: return "api/show"
             }
         }
@@ -410,7 +673,17 @@ enum OllamaPostProcessingService {
 
     private struct TagsResponse: Decodable {
         struct Model: Decodable {
+            struct Details: Decodable {
+                let parameterSize: String?
+
+                enum CodingKeys: String, CodingKey {
+                    case parameterSize = "parameter_size"
+                }
+            }
+
             let name: String
+            let size: Int64?
+            let details: Details?
         }
 
         let models: [Model]
@@ -432,8 +705,55 @@ enum OllamaPostProcessingService {
         let error: String?
     }
 
+    private struct PullResponse: Decodable {
+        let status: String?
+        let digest: String?
+        let total: Int64?
+        let completed: Int64?
+        let error: String?
+    }
+
     private struct ErrorResponse: Decodable {
         let error: String
+    }
+
+    private struct PullLayerProgress {
+        var total: Int64
+        var completed: Int64
+    }
+
+    private struct PullProgressAccumulator {
+        private var layers: [String: PullLayerProgress] = [:]
+
+        mutating func progress(for response: PullResponse, model: String) -> PullProgress {
+            if let digest = response.digest {
+                var layer = layers[digest] ?? PullLayerProgress(total: 0, completed: 0)
+                if let total = response.total {
+                    layer.total = max(total, 0)
+                }
+                if let completed = response.completed {
+                    layer.completed = max(completed, 0)
+                }
+                layers[digest] = layer
+            }
+
+            let overallTotal = layers.values.reduce(into: Int64(0)) { partialResult, layer in
+                partialResult += max(layer.total, 0)
+            }
+            let overallCompleted = layers.values.reduce(into: Int64(0)) { partialResult, layer in
+                partialResult += min(max(layer.completed, 0), max(layer.total, 0))
+            }
+
+            return PullProgress(
+                model: model,
+                status: response.status?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                digest: response.digest,
+                completed: response.completed,
+                total: response.total,
+                overallCompleted: overallTotal > 0 ? overallCompleted : nil,
+                overallTotal: overallTotal > 0 ? overallTotal : nil
+            )
+        }
     }
 
     private static let outputSchema: [String: Any] = [
@@ -450,12 +770,24 @@ enum OllamaPostProcessingService {
         "required": ["action", "text"]
     ]
 
-    private static func fetchInstalledModels(baseURL: String) async throws -> [String] {
+    private static func fetchInstalledModels(baseURL: String) async throws -> [TagsResponse.Model] {
         let request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .tags))
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response: response, data: data)
         let decoded = try JSONDecoder().decode(TagsResponse.self, from: data)
-        return deduplicated(decoded.models.map(\.name).filter { !$0.isEmpty })
+        var seen = Set<String>()
+        return decoded.models.compactMap { model in
+            let trimmedName = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedName.isEmpty, seen.insert(trimmedName).inserted else {
+                return nil
+            }
+
+            return TagsResponse.Model(
+                name: trimmedName,
+                size: model.size,
+                details: model.details
+            )
+        }
     }
 
     private static func fetchModelDetails(baseURL: String, model: String) async throws -> ShowResponse {
@@ -615,6 +947,16 @@ enum OllamaPostProcessingService {
             } else {
                 components.path = "/" + [trimmedPath, "api", "tags"].joined(separator: "/")
             }
+        case .pull:
+            if trimmedPath.hasSuffix("api/pull") {
+                break
+            } else if trimmedPath.hasSuffix("api") {
+                components.path = "/" + [trimmedPath, "pull"].joined(separator: "/")
+            } else if trimmedPath.isEmpty {
+                components.path = "/api/pull"
+            } else {
+                components.path = "/" + [trimmedPath, "api", "pull"].joined(separator: "/")
+            }
         case .show:
             if trimmedPath.hasSuffix("api/show") {
                 break
@@ -633,12 +975,51 @@ enum OllamaPostProcessingService {
         return url
     }
 
-    private static func matchingInstalledModel(for selectedModel: String, in installedModels: [String]) -> String? {
+    private static func cliHost(baseURL: String) throws -> String {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            throw ServiceError.invalidBaseURL
+        }
+        if !normalized.contains("://") {
+            normalized = "http://\(normalized)"
+        }
+
+        guard var components = URLComponents(string: normalized),
+              components.host != nil else {
+            throw ServiceError.invalidBaseURL
+        }
+
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+
+        guard let url = components.url else {
+            throw ServiceError.invalidBaseURL
+        }
+
+        return url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    static func matchingInstalledModel(for selectedModel: String, in installedModels: [String]) -> String? {
         guard !selectedModel.isEmpty else { return nil }
         if selectedModel.contains(":") {
             return installedModels.first(where: { $0 == selectedModel })
         }
         return installedModels.first(where: { $0 == selectedModel || $0.hasPrefix("\(selectedModel):") })
+    }
+
+    static func installedModelMetadata(
+        for selectedModel: String,
+        in availability: Availability?
+    ) -> InstalledModelMetadata? {
+        guard let availability else { return nil }
+        guard let resolvedModel = matchingInstalledModel(
+            for: selectedModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            in: availability.installedModels
+        ) else {
+            return nil
+        }
+        return availability.installedModelMetadata[resolvedModel]
     }
 
     private static func deduplicated(_ models: [String]) -> [String] {

@@ -17,8 +17,7 @@ struct DictateAnywhereApp: App {
             MainWindow()
                 .environment(appState)
         }
-        .defaultSize(width: 680, height: 560)
-        .windowResizability(.contentSize)
+        .defaultSize(width: MainWindowSizing.minimumWidth, height: MainWindowSizing.minimumHeight)
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: appDelegate.softwareUpdater)

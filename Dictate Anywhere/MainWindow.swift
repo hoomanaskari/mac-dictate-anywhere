@@ -92,7 +92,12 @@ struct MainWindow: View {
                 detailView
             }
         }
-        .frame(width: 680, height: 560)
+        .frame(
+            minWidth: MainWindowSizing.minimumWidth,
+            maxWidth: .infinity,
+            minHeight: MainWindowSizing.minimumHeight,
+            maxHeight: .infinity
+        )
         .task {
             await appState.permissions.check()
             await appState.prepareActiveEngine()
