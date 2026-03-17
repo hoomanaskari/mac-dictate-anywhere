@@ -14,6 +14,9 @@ struct ModelsView: View {
     @State private var downloadError: String?
 
     var body: some View {
+        @Bindable var settings = appState.settings
+        let selectedModel = settings.parakeetModelChoice
+
         Form {
             Section("Active Engine") {
                 LabeledContent("Engine") {
@@ -21,14 +24,44 @@ struct ModelsView: View {
                 }
             }
 
-            // Parakeet
             Section {
+                Picker("Variant", selection: Binding(
+                    get: { settings.parakeetModelChoice },
+                    set: { newValue in
+                        downloadError = nil
+                        settings.parakeetModelChoice = newValue
+                        Task {
+                            await appState.handleParakeetModelSelectionChange(userInitiated: true)
+                        }
+                    }
+                )) {
+                    ForEach(ParakeetModelChoice.allCases, id: \.self) { modelChoice in
+                        Text(modelChoice.displayName).tag(modelChoice)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(appState.status != .idle || appState.parakeetEngine.isDownloading)
+
+                Text(selectedModel.detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
                 LabeledContent("Type") {
                     Text("On-device speech-to-text")
                 }
 
+                LabeledContent("Languages") {
+                    Text(selectedModel.isEnglishOnly ? "English only" : "25 European languages")
+                }
+
                 LabeledContent("Size") {
                     Text("~500 MB")
+                }
+
+                if let alternateModel = alternateInstalledModel(excluding: selectedModel) {
+                    LabeledContent("Also Installed") {
+                        Text(alternateModel.displayName)
+                    }
                 }
 
                 if appState.parakeetEngine.isModelDownloaded {
@@ -63,9 +96,8 @@ struct ModelsView: View {
                         Task {
                             do {
                                 try await appState.parakeetEngine.downloadModel()
-                                // Auto-switch to Parakeet after successful download
                                 await MainActor.run {
-                                    applyParakeetSelection(userInitiated: false)
+                                    applyParakeetSelection(userInitiated: true)
                                 }
                             } catch {
                                 downloadError = error.localizedDescription
@@ -83,12 +115,14 @@ struct ModelsView: View {
                 }
             } header: {
                 Text("Parakeet (FluidAudio)")
+            } footer: {
+                Text("Choose Multilingual for automatic language detection across 25 supported languages, or English Only for stronger English accuracy when you never dictate in other languages.")
             }
 
         }
         .formStyle(.grouped)
         .navigationTitle("Speech Model")
-        .alert("Delete Model?", isPresented: $showDeleteConfirm) {
+        .alert("Delete \(selectedModel.displayName) Model?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
                     try? await appState.parakeetEngine.deleteModel()
@@ -97,15 +131,18 @@ struct ModelsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove the Parakeet model (~500 MB). You can download it again later.")
+            Text("This will remove the \(selectedModel.displayName.lowercased()) Parakeet model (~500 MB). You can download it again later.")
         }
     }
 
     private func applyParakeetSelection(userInitiated: Bool) {
         guard appState.status == .idle else { return }
-        appState.settings.engineChoice = .parakeet
-        appState.settings.userHasChosenEngine = userInitiated
-        appState.isPreparingEngine = true
-        Task { await appState.prepareActiveEngine() }
+        Task { await appState.handleParakeetModelSelectionChange(userInitiated: userInitiated) }
+    }
+
+    private func alternateInstalledModel(excluding selectedModel: ParakeetModelChoice) -> ParakeetModelChoice? {
+        ParakeetModelChoice.allCases.first {
+            $0 != selectedModel && appState.parakeetEngine.checkModelOnDisk(for: $0)
+        }
     }
 }

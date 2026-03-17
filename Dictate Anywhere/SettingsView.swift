@@ -14,6 +14,8 @@ struct SettingsView: View {
         @Bindable var settings = appState.settings
 
         Form {
+            let parakeetModelChoice = settings.parakeetModelChoice
+
             // MARK: - General
 
             Section {
@@ -31,16 +33,26 @@ struct SettingsView: View {
             // MARK: - Language
 
             Section {
-                Picker("Transcription Language", selection: $settings.selectedLanguage) {
-                    ForEach(SupportedLanguage.allCases) { lang in
-                        Text(lang.displayWithFlag).tag(lang)
+                if parakeetModelChoice.isEnglishOnly {
+                    LabeledContent("Transcription Language") {
+                        Text("English")
                     }
+                } else {
+                    Picker("Transcription Language", selection: $settings.selectedLanguage) {
+                        ForEach(SupportedLanguage.allCases) { lang in
+                            Text(lang.displayWithFlag).tag(lang)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
             } header: {
                 Text("Language")
             } footer: {
-                Text("Parakeet auto-detects language for dictation.")
+                Text(
+                    parakeetModelChoice.isEnglishOnly
+                    ? "The English-only Parakeet model is optimized for English dictation."
+                    : "The multilingual Parakeet model auto-detects among 25 supported European languages."
+                )
             }
 
             // MARK: - Audio

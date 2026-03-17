@@ -22,6 +22,13 @@ enum AppAppearanceMode: String, CaseIterable {
         case .dockAndMenuBar: return "Dock and Menu Bar"
         }
     }
+
+    var activationPolicy: NSApplication.ActivationPolicy {
+        switch self {
+        case .menuBarOnly: return .accessory
+        case .dockAndMenuBar: return .regular
+        }
+    }
 }
 
 // MARK: - Transcription Engine Choice
@@ -33,6 +40,40 @@ enum TranscriptionEngineChoice: String, CaseIterable {
         switch self {
         case .parakeet: return "Parakeet (FluidAudio)"
         }
+    }
+}
+
+enum ParakeetModelChoice: String, CaseIterable {
+    case multilingual = "multilingual"
+    case englishOnly = "englishOnly"
+
+    var displayName: String {
+        switch self {
+        case .multilingual: return "Multilingual"
+        case .englishOnly: return "English Only"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .multilingual:
+            return "25 European languages with automatic language detection."
+        case .englishOnly:
+            return "English-only vocabulary tuned for stronger English accuracy."
+        }
+    }
+
+    var modelDirectoryName: String {
+        switch self {
+        case .multilingual:
+            return "parakeet-tdt-0.6b-v3-coreml"
+        case .englishOnly:
+            return "parakeet-tdt-0.6b-v2-coreml"
+        }
+    }
+
+    var isEnglishOnly: Bool {
+        self == .englishOnly
     }
 }
 
@@ -246,6 +287,7 @@ final class Settings {
         static let hotkeyDisplayName = "hotkeyDisplayName"
         static let hotkeyMode = "hotkeyMode"
         static let engineChoice = "engineChoice"
+        static let parakeetModelChoice = "parakeetModelChoice"
         static let selectedLanguage = "selectedLanguage"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
@@ -291,6 +333,16 @@ final class Settings {
     var engineChoice: TranscriptionEngineChoice {
         didSet {
             UserDefaults.standard.set(engineChoice.rawValue, forKey: Keys.engineChoice)
+        }
+    }
+
+    /// Which Parakeet model variant to use for transcription.
+    var parakeetModelChoice: ParakeetModelChoice {
+        didSet {
+            UserDefaults.standard.set(parakeetModelChoice.rawValue, forKey: Keys.parakeetModelChoice)
+            if parakeetModelChoice.isEnglishOnly, selectedLanguage != .english {
+                selectedLanguage = .english
+            }
         }
     }
 
@@ -510,10 +562,14 @@ final class Settings {
         let storedEngineRaw = defaults.string(forKey: Keys.engineChoice)
         let hadDiscontinuedAppleSpeech = storedEngineRaw == "appleSpeech"
         let previouslyPendingMigration = defaults.object(forKey: Keys.legacyAppleSpeechMigrationPending) as? Bool ?? false
+        let persistedParakeetModelChoice = ParakeetModelChoice(
+            rawValue: defaults.string(forKey: Keys.parakeetModelChoice) ?? ""
+        ) ?? .multilingual
         engineChoice = .parakeet
         if storedEngineRaw != TranscriptionEngineChoice.parakeet.rawValue {
             defaults.set(TranscriptionEngineChoice.parakeet.rawValue, forKey: Keys.engineChoice)
         }
+        parakeetModelChoice = persistedParakeetModelChoice
         if hadDiscontinuedAppleSpeech {
             userHasChosenEngine = false
         }
@@ -527,6 +583,9 @@ final class Settings {
         // Language
         let langCode = defaults.string(forKey: Keys.selectedLanguage) ?? "en"
         selectedLanguage = SupportedLanguage(rawValue: langCode) ?? .english
+        if persistedParakeetModelChoice.isEnglishOnly {
+            selectedLanguage = .english
+        }
 
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
@@ -774,7 +833,10 @@ final class Settings {
         let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
         guard FileManager.default.fileExists(atPath: path.path) else { return false }
         if let contents = try? FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) {
-            return contents.contains { $0.lastPathComponent.hasPrefix("parakeet") }
+            let installedModelNames = Set(contents.map(\.lastPathComponent))
+            return ParakeetModelChoice.allCases.contains {
+                installedModelNames.contains($0.modelDirectoryName)
+            }
         }
         return false
     }

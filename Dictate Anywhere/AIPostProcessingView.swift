@@ -16,6 +16,19 @@ struct AIPostProcessingView: View {
     @State private var ollamaPendingDeletionModel: String?
     @State private var ollamaStatusMessage: String?
     @State private var isCheckingOllama = false
+    private let shouldAutoRefreshOllama: Bool
+
+    init(
+        initialOllamaAvailability: OllamaPostProcessingService.Availability? = nil,
+        initialOllamaCLIAvailability: OllamaPostProcessingService.CLIAvailability = OllamaPostProcessingService.cliAvailability(),
+        initialOllamaStatusMessage: String? = nil,
+        shouldAutoRefreshOllama: Bool = true
+    ) {
+        _ollamaAvailability = State(initialValue: initialOllamaAvailability)
+        _ollamaCLIAvailability = State(initialValue: initialOllamaCLIAvailability)
+        _ollamaStatusMessage = State(initialValue: initialOllamaStatusMessage)
+        self.shouldAutoRefreshOllama = shouldAutoRefreshOllama
+    }
 
     var body: some View {
         @Bindable var settings = appState.settings
@@ -62,6 +75,7 @@ struct AIPostProcessingView: View {
         .formStyle(.grouped)
         .navigationTitle("Transcript Processing")
         .task(id: ollamaTaskID(settings: settings)) {
+            guard shouldAutoRefreshOllama else { return }
             ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
             await refreshOllamaAvailabilityIfNeeded(settings: settings)
         }
@@ -185,6 +199,10 @@ struct AIPostProcessingView: View {
 
     @ViewBuilder
     private func ollamaContent(settings: Settings) -> some View {
+        if !ollamaCLIAvailability.isAvailable {
+            ollamaInstallCard(settings: settings)
+        }
+
         Section {
             TextField(
                 "Server URL",
@@ -205,7 +223,7 @@ struct AIPostProcessingView: View {
             )
 
             HStack(alignment: .top, spacing: 12) {
-                ollamaStatusView()
+                ollamaStatusView(settings: settings)
                 Spacer(minLength: 12)
                 Button(isCheckingOllama ? "Checking..." : "Refresh Models") {
                     Task {
@@ -308,6 +326,54 @@ struct AIPostProcessingView: View {
             settings: settings,
             footer: "These terms are sent to Ollama to preserve product names, names, and domain-specific wording during post-processing."
         )
+    }
+
+    @ViewBuilder
+    private func ollamaInstallCard(settings: Settings) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "shippingbox.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.tint)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Install Ollama for local transcript cleanup")
+                            .font(.headline)
+
+                        Text("Ollama lets Dictate Anywhere clean up transcripts with a local language model on your Mac. It can improve punctuation, grammar, formatting, and term normalization without relying on a hosted API.")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Run post-processing on your machine", systemImage: "lock.shield")
+                    Label("Use local models for stronger cleanup and normalization", systemImage: "sparkles.rectangle.stack")
+                    Label("Download recommended models directly from this app once installed", systemImage: "arrow.down.circle")
+                }
+                .font(.subheadline)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Button {
+                        guard let url = URL(string: "https://ollama.com/download") else { return }
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Label("Download Ollama", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Text("You can still connect to a remote Ollama server by entering its URL below.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 6)
+        } footer: {
+            Text("Ollama is optional. Install it if you want fully local AI transcript cleanup and in-app model downloads.")
+        }
     }
 
     @ViewBuilder
@@ -601,13 +667,21 @@ struct AIPostProcessingView: View {
     }
 
     @ViewBuilder
-    private func ollamaStatusView() -> some View {
+    private func ollamaStatusView(settings: Settings) -> some View {
         if isCheckingOllama {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
                 Text("Checking Ollama...")
                     .foregroundStyle(.secondary)
+            }
+        } else if !ollamaCLIAvailability.isAvailable &&
+                    OllamaPostProcessingService.isLocalServer(baseURL: settings.ollamaBaseURL) {
+            Label {
+                Text("Ollama is not installed on this Mac yet. Install it to run transcript cleanup locally, or enter a remote Ollama server URL.")
+            } icon: {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.blue)
             }
         } else if let message = ollamaStatusMessage {
             Label {
@@ -726,3 +800,40 @@ struct AIPostProcessingView: View {
         }
     }
 }
+
+#if DEBUG
+@MainActor
+private struct AIPostProcessingViewPreviewHost: View {
+    @State private var appState: AppState
+    private let cliAvailability: OllamaPostProcessingService.CLIAvailability
+
+    init(cliAvailability: OllamaPostProcessingService.CLIAvailability) {
+        self.cliAvailability = cliAvailability
+
+        let appState = AppState()
+        appState.settings.transcriptPostProcessingMode = .ollama
+        appState.settings.ollamaBaseURL = OllamaPostProcessingService.defaultBaseURL
+        appState.settings.ollamaModel = "mistral-small3.2:latest"
+        appState.settings.ollamaPostProcessingPrompt = "Fix punctuation and sentence boundaries. Keep product names exact."
+        appState.settings.customVocabulary = ["Dictate Anywhere", "Parakeet", "Ollama"]
+        _appState = State(initialValue: appState)
+    }
+
+    var body: some View {
+        NavigationStack {
+            AIPostProcessingView(
+                initialOllamaCLIAvailability: cliAvailability,
+                shouldAutoRefreshOllama: false
+            )
+        }
+        .environment(appState)
+        .frame(width: 760, height: 920)
+    }
+}
+
+#Preview("Ollama Not Installed") {
+    AIPostProcessingViewPreviewHost(
+        cliAvailability: .init(executablePath: nil)
+    )
+}
+#endif
