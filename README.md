@@ -1,6 +1,6 @@
 # Dictate Anywhere
 
-A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom shortcut) to dictate text directly into any app using on-device speech recognition.
+A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom shortcut) to dictate text directly into any app using on-device speech recognition, with optional transcript cleanup through Apple Intelligence, Ollama, or OpenRouter.
 
 [![macOS](https://img.shields.io/badge/macOS-14.0+-blue.svg)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org/)
@@ -30,7 +30,11 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 - **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
 - **Filler Word Removal** - Automatically removes "um", "uh", and other filler words
-- **Optional Transcript Cleanup** - Post-process transcripts with Apple Intelligence, Ollama, or OpenRouter
+- **Custom Vocabulary** - Preserve product names, people names, and domain-specific terms during transcript cleanup
+- **Ollama Integration** - Connect to a local or remote Ollama server, refresh installed models, and manage recommended local models from the app
+- **OpenRouter Integration** - Use hosted models through OpenRouter with model search, structured-output-aware selection, and secure API key storage
+- **Optional Transcript Cleanup** - Post-process the final transcript with Apple Intelligence, Ollama, or OpenRouter for punctuation, grammar, formatting, and wording cleanup
+- **Safe Fallbacks** - If AI cleanup fails or returns unusable output, the original local transcript is pasted instead
 - **Menu Bar App** - Runs quietly in your menu bar
 
 ## Installation
@@ -45,6 +49,103 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 
 - **Microphone** - For capturing your voice
 - **Accessibility** - For detecting the Fn key globally and inserting text
+
+## Optional AI Transcript Cleanup
+
+Dictate Anywhere always transcribes audio locally with Parakeet. AI cleanup happens only after transcription, on the final text transcript. That means your raw audio stays on your Mac even when you enable Ollama or OpenRouter.
+
+| Provider | Runs Where | Best For | Benefits |
+|----------|------------|----------|----------|
+| None | Nowhere | Fastest raw dictation | Uses the Parakeet transcript as-is |
+| FluidAudio Vocabulary | On-device | Lightweight terminology correction | Applies vocabulary rescoring without an LLM |
+| Apple Intelligence | On-device | Native macOS cleanup | On-device cleanup on supported Macs |
+| Ollama | Local or self-hosted server | Privacy-first LLM cleanup | Local model choice, optional reasoning controls, and in-app model management for local Ollama setups |
+| OpenRouter | Cloud | Broad hosted model access | Large model catalog, model search, secure key storage, and structured-output-aware selection |
+
+### Ollama
+
+Use Ollama when you want transcript cleanup with a local model or your own hosted Ollama server.
+
+Recommended models:
+
+- `gpt-oss:120b-cloud` for the best cleanup quality when you have access to a large hosted/self-hosted Ollama-backed model
+- `mistral-nemo:12b` as the recommended local model when you want a much lighter on-device setup
+
+- Runs cleanup against the configured Ollama server URL, with `http://127.0.0.1:11434` as the default local address
+- Lets you enter any installed model manually or select from detected installed models
+- Shows recommended models in the app, including size guidance and quality/latency tradeoffs
+- Can download recommended models directly from the app when the Ollama CLI is installed and the server is local
+- Can delete installed models from the app through the Ollama CLI
+- Exposes reasoning controls for models that report Ollama thinking support
+- Supports provider-specific cleanup prompts and shared custom vocabulary
+
+Sample cleanup prompt for Ollama or OpenRouter:
+
+```text
+Avoid em dashes entirely.
+
+When the speaker revises or corrects themselves, preserve the final intended phrasing and only replace the portion that was clearly superseded.
+
+In developer and editing contexts, interpret "carrot" as "caret" when the transcript is obviously referring to the text cursor.
+
+Add clean paragraph breaks or bullet points when the dictation naturally calls for structure.
+
+Convert spoken numbers into concise numeric form when that improves clarity, such as "thirteen point five percent" to "13.5%".
+
+Remove accidental duplicate words and strip filler sounds like um, uh, uhh, umm, and hmm.
+
+Keep the speaker's tone and intent intact while improving punctuation, grammar, and readability.
+```
+
+Benefits of using Ollama:
+
+- Keeps transcript cleanup local when you run Ollama on your Mac
+- Gives you more control over model choice, privacy, and latency than a fixed hosted provider
+- Works with remote/self-hosted Ollama servers if you already have one running elsewhere
+- Improves punctuation, grammar, formatting, and vocabulary normalization with stronger local models
+- Custom vocabulary gives noticeably better results for names, product terms, and specialized wording when Ollama is doing post-processing
+
+Getting started with Ollama:
+
+1. Install [Ollama](https://ollama.com/download), or point the app at an existing Ollama server.
+2. In Dictate Anywhere, open **Transcript Processing** and choose **Ollama**.
+3. Confirm the server URL, then either enter a model name manually or use **Refresh Models**.
+4. If you are using local Ollama with the CLI installed, download one of the suggested models directly from the app.
+5. Optionally add a cleanup prompt and custom vocabulary for names, product terms, and domain-specific language.
+
+### OpenRouter
+
+Use OpenRouter when you want access to hosted models without managing local model downloads.
+
+Recommended model:
+
+- `google/gemini-3-flash-preview` for the best overall balance of cost, accuracy, and latency in Dictate Anywhere
+
+- Supports direct OpenRouter API usage for transcript cleanup after local transcription is complete
+- Lets you paste an API key into the app for secure Keychain storage
+- Can also read the API key from an environment variable such as `OPENROUTER_API_KEY`
+- Fetches the latest OpenRouter model catalog in-app
+- Includes model search and prioritizes models that advertise structured output support
+- Falls back to prompt-based JSON parsing automatically when a selected model does not support structured outputs cleanly
+- Supports provider-specific cleanup prompts and shared custom vocabulary
+
+Benefits of using OpenRouter:
+
+- `google/gemini-3-flash-preview` currently gives the best overall results in this app when you care about cost, accuracy, and latency together
+- Pairing OpenRouter with a custom cleanup prompt usually produces the best transcript quality
+- Custom vocabulary gives the strongest results for names, product terms, and specialized wording when OpenRouter is doing post-processing
+- Fastest way to try higher-end hosted models without running them locally
+- One integration gives you access to a large cross-provider model catalog
+- Model search makes it easier to find a suitable cleanup model from inside the app
+- Keychain-backed API key storage keeps the common setup path simple
+
+Getting started with OpenRouter:
+
+1. Create an API key from [OpenRouter](https://openrouter.ai/).
+2. In Dictate Anywhere, open **Transcript Processing** and choose **OpenRouter**.
+3. Paste your API key, or leave the API key field empty if you launch the app with `OPENROUTER_API_KEY` set.
+4. Enter a model ID manually, click **Refresh Models**, or use **Browse Models** to explore the catalog.
+5. Add a custom cleanup prompt and custom vocabulary for the best results, especially for names, brands, and specialized terminology.
 
 ## Supported Languages
 
@@ -100,14 +201,17 @@ create-dmg \
 1. **Activation** - Press and hold Fn key (or your custom shortcut)
 2. **Recording** - Speak naturally while the key is held
 3. **Processing** - Release the key to process your speech
-4. **Insertion** - Text is automatically inserted at your cursor position
+4. **Optional Cleanup** - The final transcript can be cleaned up with Apple Intelligence, Ollama, or OpenRouter
+5. **Insertion** - Text is automatically inserted at your cursor position
 
 The app uses FluidAudio's Parakeet model for speech recognition, which runs entirely on your Mac. The model is downloaded once (~600MB) and cached locally.
 
 ## Privacy
 
 - **100% On-Device Speech Recognition** - All audio transcription happens locally on your Mac
-- **Optional Cloud Transcript Cleanup** - Audio never leaves your Mac, but transcript text can be sent to Apple Intelligence, Ollama, or OpenRouter if you enable post-processing
+- **Ollama Can Stay Fully Local** - If you use a local Ollama server, transcript cleanup can stay on your machine; if you use a remote Ollama server, only transcript text is sent there
+- **Optional Cloud Transcript Cleanup** - Audio never leaves your Mac, but transcript text can be sent to OpenRouter if you enable hosted post-processing
+- **Secure OpenRouter Key Storage** - API keys pasted into the app are stored in Keychain
 - **No Analytics** - No tracking or telemetry (optional anonymous usage stats only)
 - **Clipboard Only** - Text insertion uses the clipboard + Cmd+V simulation
 
