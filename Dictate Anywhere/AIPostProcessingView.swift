@@ -16,18 +16,25 @@ struct AIPostProcessingView: View {
     @State private var ollamaPendingDeletionModel: String?
     @State private var ollamaStatusMessage: String?
     @State private var isCheckingOllama = false
-    private let shouldAutoRefreshOllama: Bool
+    @State private var openRouterAvailability: OpenRouterPostProcessingService.Availability?
+    @State private var openRouterStatusMessage: String?
+    @State private var isCheckingOpenRouter = false
+    private let shouldAutoRefreshProviderAvailability: Bool
 
     init(
         initialOllamaAvailability: OllamaPostProcessingService.Availability? = nil,
         initialOllamaCLIAvailability: OllamaPostProcessingService.CLIAvailability = OllamaPostProcessingService.cliAvailability(),
         initialOllamaStatusMessage: String? = nil,
-        shouldAutoRefreshOllama: Bool = true
+        initialOpenRouterAvailability: OpenRouterPostProcessingService.Availability? = nil,
+        initialOpenRouterStatusMessage: String? = nil,
+        shouldAutoRefreshProviderAvailability: Bool = true
     ) {
         _ollamaAvailability = State(initialValue: initialOllamaAvailability)
         _ollamaCLIAvailability = State(initialValue: initialOllamaCLIAvailability)
         _ollamaStatusMessage = State(initialValue: initialOllamaStatusMessage)
-        self.shouldAutoRefreshOllama = shouldAutoRefreshOllama
+        _openRouterAvailability = State(initialValue: initialOpenRouterAvailability)
+        _openRouterStatusMessage = State(initialValue: initialOpenRouterStatusMessage)
+        self.shouldAutoRefreshProviderAvailability = shouldAutoRefreshProviderAvailability
     }
 
     var body: some View {
@@ -70,14 +77,16 @@ struct AIPostProcessingView: View {
                 }
             case .ollama:
                 ollamaContent(settings: settings)
+            case .openRouter:
+                openRouterContent(settings: settings)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Transcript Processing")
-        .task(id: ollamaTaskID(settings: settings)) {
-            guard shouldAutoRefreshOllama else { return }
+        .task(id: providerTaskID(settings: settings)) {
+            guard shouldAutoRefreshProviderAvailability else { return }
             ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
-            await refreshOllamaAvailabilityIfNeeded(settings: settings)
+            await refreshProviderAvailabilityIfNeeded(settings: settings)
         }
         .alert(
             "Delete Ollama Model?",
@@ -325,6 +334,95 @@ struct AIPostProcessingView: View {
         vocabularySection(
             settings: settings,
             footer: "These terms are sent to Ollama to preserve product names, names, and domain-specific wording during post-processing."
+        )
+    }
+
+    @ViewBuilder
+    private func openRouterContent(settings: Settings) -> some View {
+        Section {
+            SecureField(
+                "API Key",
+                text: Binding(
+                    get: { settings.openRouterAPIKey },
+                    set: { settings.openRouterAPIKey = $0 }
+                ),
+                prompt: Text("Paste OpenRouter API key")
+            )
+
+            TextField(
+                "API Key Environment Variable (Optional)",
+                text: Binding(
+                    get: { settings.openRouterAPIKeyEnvironmentVariable },
+                    set: { settings.openRouterAPIKeyEnvironmentVariable = $0 }
+                ),
+                prompt: Text(OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable)
+            )
+
+            TextField(
+                "Model",
+                text: Binding(
+                    get: { settings.openRouterModel },
+                    set: { settings.openRouterModel = $0 }
+                ),
+                prompt: Text("openai/gpt-5-mini")
+            )
+
+            HStack(alignment: .top, spacing: 12) {
+                openRouterStatusView(settings: settings)
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button(isCheckingOpenRouter ? "Checking..." : "Refresh Models") {
+                        Task {
+                            await refreshOpenRouterAvailability(settings: settings, debounce: false)
+                        }
+                    }
+                    .disabled(isCheckingOpenRouter)
+
+                    Button("Browse Models") {
+                        guard let url = URL(string: "https://openrouter.ai/models") else { return }
+                        NSWorkspace.shared.open(url)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    if !settings.openRouterAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Clear Stored Key", role: .destructive) {
+                            settings.openRouterAPIKey = ""
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        } header: {
+            Text("OpenRouter")
+        } footer: {
+            Text("Runs transcript cleanup through OpenRouter's cloud API. Paste a key directly to store it in Keychain, or leave the API key field blank and use the optional environment variable setting instead.")
+        }
+
+        if let availability = openRouterAvailability {
+            openRouterModelSearchSection(settings: settings, availability: availability)
+        }
+
+        Section {
+            SettingsMultilineTextArea(
+                text: Binding(
+                    get: { settings.openRouterPostProcessingPrompt },
+                    set: { settings.openRouterPostProcessingPrompt = $0 }
+                ),
+                placeholder: "Optional: add style or cleanup instructions for OpenRouter."
+            )
+            .labelsHidden()
+        } header: {
+            Text("Prompt")
+        } footer: {
+            Text("Optional. Default cleanup is punctuation, capitalization, grammar, and formatting, but this prompt can request extra safe cleanup such as removing filler words or normalizing domain terms.")
+        }
+
+        vocabularySection(
+            settings: settings,
+            footer: "These terms are sent to OpenRouter to preserve product names, names, and domain-specific wording during post-processing."
         )
     }
 
@@ -595,6 +693,88 @@ struct AIPostProcessingView: View {
         newVocabularyTerm = ""
     }
 
+    private func currentOpenRouterModel(settings: Settings) -> String {
+        settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func openRouterMatchingModels(
+        settings: Settings,
+        availability: OpenRouterPostProcessingService.Availability
+    ) -> [OpenRouterModelMatch] {
+        let query = currentOpenRouterModel(settings: settings)
+        guard !query.isEmpty else { return [] }
+
+        let normalizedQuery = query.lowercased()
+        let exactMatch = query.lowercased()
+
+        return availability.models
+            .filter { $0.id.lowercased().contains(normalizedQuery) }
+            .sorted { lhs, rhs in
+                let lhsExact = lhs.id.lowercased() == exactMatch
+                let rhsExact = rhs.id.lowercased() == exactMatch
+                if lhsExact != rhsExact {
+                    return lhsExact && !rhsExact
+                }
+
+                let lhsPrefix = lhs.id.lowercased().hasPrefix(normalizedQuery)
+                let rhsPrefix = rhs.id.lowercased().hasPrefix(normalizedQuery)
+                if lhsPrefix != rhsPrefix {
+                    return lhsPrefix && !rhsPrefix
+                }
+
+                if lhs.supportsStructuredOutputs != rhs.supportsStructuredOutputs {
+                    return lhs.supportsStructuredOutputs && !rhs.supportsStructuredOutputs
+                }
+
+                return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+            }
+            .prefix(12)
+            .map { OpenRouterModelMatch(id: $0.id, supportsStructuredOutputs: $0.supportsStructuredOutputs) }
+    }
+
+    private func openRouterModelSearchEmptyState(settings: Settings) -> String {
+        let query = currentOpenRouterModel(settings: settings)
+        if query.isEmpty {
+            return "Type part of a model id to filter the fetched OpenRouter catalog, or use Browse Models to pick one from openrouter.ai."
+        }
+        return "No fetched OpenRouter models matched \(query). Try a broader search term or browse the full model directory."
+    }
+
+    private func openRouterModelSearchFooter(
+        availability: OpenRouterPostProcessingService.Availability
+    ) -> String {
+        let structuredCount = availability.models.filter(\.supportsStructuredOutputs).count
+        return "Fetched \(availability.models.count) OpenRouter models. \(structuredCount) currently advertise structured output support, and those are prioritized in search results."
+    }
+
+    private func openRouterModelSearchSection(
+        settings: Settings,
+        availability: OpenRouterPostProcessingService.Availability
+    ) -> some View {
+        let matchingModels: [OpenRouterModelMatch] = openRouterMatchingModels(
+            settings: settings,
+            availability: availability
+        )
+
+        return Section {
+            if matchingModels.isEmpty {
+                Text(openRouterModelSearchEmptyState(settings: settings))
+                    .foregroundStyle(.secondary)
+            } else {
+                OpenRouterModelMatchesView(
+                    models: matchingModels,
+                    selectedModel: currentOpenRouterModel(settings: settings)
+                ) { modelID in
+                    settings.openRouterModel = modelID
+                }
+            }
+        } header: {
+            Text("Model Search")
+        } footer: {
+            Text(openRouterModelSearchFooter(availability: availability))
+        }
+    }
+
     @ViewBuilder
     private func ollamaBadge(text: String, foreground: Color, background: Color) -> some View {
         Text(text)
@@ -730,25 +910,144 @@ struct AIPostProcessingView: View {
         }
     }
 
-    private func ollamaTaskID(settings: Settings) -> String {
+    @ViewBuilder
+    private func openRouterStatusView(settings: Settings) -> some View {
+        let apiKeyStatus = OpenRouterPostProcessingService.apiKeyStatus(
+            apiKey: settings.openRouterAPIKey,
+            apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+        )
+        let selectedModel = currentOpenRouterModel(settings: settings)
+        let resolvedModel = OpenRouterPostProcessingService.matchingAvailableModel(
+            for: selectedModel,
+            in: openRouterAvailability
+        )
+
+        if isCheckingOpenRouter {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Checking OpenRouter...")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let message = openRouterStatusMessage {
+            Label {
+                Text(message)
+            } icon: {
+                Image(systemName: "xmark.circle")
+                    .foregroundStyle(.red)
+            }
+        } else if case .missing = apiKeyStatus.source {
+            Label {
+                Text("No OpenRouter API key is configured yet. Paste one above or set \(apiKeyStatus.environmentVariableName) in the app environment.")
+            } icon: {
+                Image(systemName: "key.slash")
+                    .foregroundStyle(.orange)
+            }
+        } else if let resolvedModel {
+            Label {
+                Text(openRouterAvailableModelStatusMessage(for: resolvedModel, apiKeyStatus: apiKeyStatus))
+            } icon: {
+                Image(systemName: resolvedModel.supportsStructuredOutputs ? "checkmark.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(resolvedModel.supportsStructuredOutputs ? .green : .orange)
+            }
+        } else if !selectedModel.isEmpty {
+            Label {
+                Text("\(openRouterCredentialSourceMessage(apiKeyStatus)) \(selectedModel) was not found in the latest OpenRouter model refresh.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+        } else if openRouterAvailability != nil {
+            Label {
+                Text("\(openRouterCredentialSourceMessage(apiKeyStatus)) Enter a model id above or search the fetched catalog below.")
+            } icon: {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.green)
+            }
+        } else {
+            Label {
+                Text("Refresh models to validate your OpenRouter setup and search the available catalog.")
+            } icon: {
+                Image(systemName: "network")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func openRouterAvailableModelStatusMessage(
+        for model: OpenRouterPostProcessingService.Model,
+        apiKeyStatus: OpenRouterPostProcessingService.APIKeyStatus
+    ) -> String {
+        if model.supportsStructuredOutputs {
+            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises structured output support."
+        }
+        return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
+    }
+
+    private func openRouterCredentialSourceMessage(
+        _ apiKeyStatus: OpenRouterPostProcessingService.APIKeyStatus
+    ) -> String {
+        switch apiKeyStatus.source {
+        case .storedKey:
+            return "OpenRouter API key is stored securely in Keychain."
+        case .inlineValue:
+            return "OpenRouter API key was pasted directly into the environment variable field."
+        case .environmentVariable:
+            return "OpenRouter API key was loaded from \(apiKeyStatus.environmentVariableName)."
+        case .missing:
+            return "No OpenRouter API key is configured."
+        }
+    }
+
+    private func providerTaskID(settings: Settings) -> String {
         [
             settings.transcriptPostProcessingMode.rawValue,
             settings.ollamaBaseURL,
             settings.ollamaModel,
+            openRouterAvailabilityRefreshKey(settings: settings),
             String(appState.ollamaModelActionsRevision),
         ].joined(separator: "|")
     }
 
-    private func refreshOllamaAvailabilityIfNeeded(settings: Settings) async {
-        await refreshOllamaAvailability(settings: settings, debounce: true)
+    private func openRouterAvailabilityRefreshKey(settings: Settings) -> String {
+        let hasStoredKey = !settings.openRouterAPIKey
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        let environmentValue = settings.openRouterAPIKeyEnvironmentVariable
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedEnvironmentValue: String
+
+        if environmentValue.isEmpty {
+            normalizedEnvironmentValue = ""
+        } else if environmentValue.lowercased().hasPrefix("sk-or-") {
+            normalizedEnvironmentValue = "inline-key"
+        } else {
+            normalizedEnvironmentValue = environmentValue
+        }
+
+        return [
+            hasStoredKey ? "stored-key" : "no-stored-key",
+            normalizedEnvironmentValue,
+        ].joined(separator: "|")
+    }
+
+    private func refreshProviderAvailabilityIfNeeded(settings: Settings) async {
+        switch settings.transcriptPostProcessingMode {
+        case .ollama:
+            resetOpenRouterAvailability()
+            await refreshOllamaAvailability(settings: settings, debounce: true)
+        case .openRouter:
+            resetOllamaAvailability()
+            await refreshOpenRouterAvailability(settings: settings, debounce: true)
+        case .none, .fluidAudioVocabulary, .appleIntelligence:
+            resetOllamaAvailability()
+            resetOpenRouterAvailability()
+        }
     }
 
     private func refreshOllamaAvailability(settings: Settings, debounce: Bool) async {
         guard settings.transcriptPostProcessingMode == .ollama else {
-            isCheckingOllama = false
-            ollamaAvailability = nil
-            ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
-            ollamaStatusMessage = nil
+            resetOllamaAvailability()
             return
         }
 
@@ -789,6 +1088,51 @@ struct AIPostProcessingView: View {
         }
     }
 
+    private func refreshOpenRouterAvailability(settings: Settings, debounce: Bool) async {
+        guard settings.transcriptPostProcessingMode == .openRouter else {
+            resetOpenRouterAvailability()
+            return
+        }
+
+        if debounce {
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+        }
+
+        isCheckingOpenRouter = true
+        defer { isCheckingOpenRouter = false }
+
+        do {
+            let availability = try await OpenRouterPostProcessingService.availability(
+                apiKey: settings.openRouterAPIKey,
+                apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+            )
+            guard !Task.isCancelled else { return }
+            openRouterAvailability = availability
+            openRouterStatusMessage = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            openRouterAvailability = nil
+            openRouterStatusMessage = error.localizedDescription
+        }
+    }
+
+    private func resetOllamaAvailability() {
+        isCheckingOllama = false
+        ollamaAvailability = nil
+        ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
+        ollamaStatusMessage = nil
+    }
+
+    private func resetOpenRouterAvailability() {
+        isCheckingOpenRouter = false
+        openRouterAvailability = nil
+        openRouterStatusMessage = nil
+    }
+
     private func ollamaReasoningFooter(for capability: OllamaReasoningCapability) -> String {
         switch capability {
         case .unsupported:
@@ -797,6 +1141,50 @@ struct AIPostProcessingView: View {
             return "Shown only when the selected model reports Ollama thinking support. Automatic keeps the model default; Off disables reasoning to reduce latency."
         case .level:
             return "Shown only when the selected model supports configurable reasoning levels. Automatic keeps the model default; low, medium, and high trade speed for more reasoning."
+        }
+    }
+}
+
+private struct OpenRouterModelMatch: Identifiable, Hashable {
+    let id: String
+    let supportsStructuredOutputs: Bool
+}
+
+private struct OpenRouterModelMatchesView: View {
+    let models: [OpenRouterModelMatch]
+    let selectedModel: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        SwiftUI.ForEach(models, id: \.id) { (model: OpenRouterModelMatch) in
+            let isSelected = selectedModel.caseInsensitiveCompare(model.id) == .orderedSame
+
+            Button {
+                onSelect(model.id)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.id)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+
+                        if !model.supportsStructuredOutputs {
+                            Text("Prompt-only fallback")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer(minLength: 12)
+
+                    if isSelected {
+                        Text("Selected")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -823,7 +1211,7 @@ private struct AIPostProcessingViewPreviewHost: View {
         NavigationStack {
             AIPostProcessingView(
                 initialOllamaCLIAvailability: cliAvailability,
-                shouldAutoRefreshOllama: false
+                shouldAutoRefreshProviderAvailability: false
             )
         }
         .environment(appState)

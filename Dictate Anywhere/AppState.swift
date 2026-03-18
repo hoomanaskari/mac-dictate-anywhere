@@ -433,6 +433,19 @@ final class AppState {
             } catch {
                 // Silently fall back to original text on failure
             }
+        case .openRouter:
+            do {
+                processedText = try await OpenRouterPostProcessingService.process(
+                    text: finalText,
+                    model: settings.openRouterModel,
+                    prompt: settings.openRouterPostProcessingPrompt,
+                    vocabulary: settings.customVocabulary,
+                    apiKey: settings.openRouterAPIKey,
+                    apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+                )
+            } catch {
+                // Silently fall back to original text on failure
+            }
         }
 
         currentTranscript = processedText
