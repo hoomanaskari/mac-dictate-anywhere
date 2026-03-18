@@ -16,9 +16,9 @@ final class OverlayWindow {
     private var hostingView: NSHostingView<OverlayContent>?
     private var hideTask: Task<Void, Never>?
     private let model = OverlayModel()
-    private let bottomMargin: CGFloat = 24
-    private let canvasWidth: CGFloat = 320
-    private let canvasHeight: CGFloat = 200
+    private let bottomMargin: CGFloat = OverlayMetrics.size(24)
+    private let canvasWidth: CGFloat = OverlayMetrics.size(320)
+    private let canvasHeight: CGFloat = OverlayMetrics.size(200)
 
     // MARK: - Public
 
