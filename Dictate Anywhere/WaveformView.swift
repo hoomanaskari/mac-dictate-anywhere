@@ -37,7 +37,7 @@ struct WaveformView: View {
                 }
             }
         }
-        .frame(height: 24)
+        .frame(height: OverlayMetrics.size(24))
     }
 
     private func drawWaveLayer(context: GraphicsContext, size: CGSize, time: TimeInterval, layer: WaveLayer) {
@@ -66,6 +66,6 @@ struct WaveformView: View {
         fillPath.closeSubpath()
 
         context.fill(fillPath, with: .color(waveColor.opacity(layer.opacity * 0.4)))
-        context.stroke(strokePath, with: .color(waveColor.opacity(layer.opacity)), lineWidth: 1.5)
+        context.stroke(strokePath, with: .color(waveColor.opacity(layer.opacity)), lineWidth: 1)
     }
 }

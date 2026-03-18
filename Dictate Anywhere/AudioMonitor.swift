@@ -17,6 +17,7 @@ final class AudioMonitor {
     private let attackSmoothing: Float = 0.08
     private let releaseSmoothing: Float = 0.65
     private let rmsWindowSize: Int = 800
+    private let visualizationGain: Float = 6.6
 
     // MARK: - Public
 
@@ -41,7 +42,7 @@ final class AudioMonitor {
         guard !samples.isEmpty else { return 0 }
         var rms: Float = 0
         vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
-        let scaled = min(1.0, rms * 5.5)
+        let scaled = min(1.0, rms * visualizationGain)
         return powf(scaled, 0.85)
     }
 }
