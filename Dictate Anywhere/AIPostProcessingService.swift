@@ -9,6 +9,7 @@
 
 import Foundation
 import FoundationModels
+import os
 
 // MARK: - Tool Result Capture
 
@@ -146,6 +147,102 @@ fileprivate func stripMarkdownCodeFences(from text: String) -> String {
         lines.removeLast()
     }
     return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+fileprivate let remotePostProcessingOutputSchema: [String: Any] = [
+    "type": "object",
+    "properties": [
+        "action": [
+            "type": "string",
+            "enum": ["pasteCleanedText", "pasteTranscriptAsIs"]
+        ],
+        "text": [
+            "type": ["string", "null"]
+        ]
+    ],
+    "required": ["action", "text"]
+]
+
+fileprivate func cleanedRemotePostProcessingResponse(from rawResponse: String, originalText: String) -> String {
+    let normalized = stripMarkdownCodeFences(from: rawResponse)
+    guard !normalized.isEmpty else { return originalText }
+    if let data = normalized.data(using: .utf8),
+       let structured = try? JSONDecoder().decode(RemotePostProcessingResult.self, from: data),
+       let action = structured.action?.trimmingCharacters(in: .whitespacesAndNewlines) {
+        switch action {
+        case "pasteTranscriptAsIs":
+            return originalText
+        case "pasteCleanedText":
+            let cleaned = structured.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !cleaned.isEmpty else { return originalText }
+            if looksLikeRefusalMessage(cleaned) || looksLikeGeneratedContent(input: originalText, output: cleaned) {
+                return originalText
+            }
+            return cleaned
+        default:
+            break
+        }
+    }
+
+    if looksLikeRefusalMessage(normalized) || looksLikeGeneratedContent(input: originalText, output: normalized) {
+        return originalText
+    }
+    return normalized
+}
+
+fileprivate func remotePostProcessingInstructions(prompt: String, vocabulary: [String]) -> String {
+    let customPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let effectivePrompt = customPrompt.isEmpty
+        ? "No extra cleanup instructions. Default to punctuation, capitalization, grammar, and sentence-boundary cleanup only."
+        : customPrompt
+
+    let knownTermsSection: String
+    if vocabulary.isEmpty {
+        knownTermsSection = "No known terms were provided."
+    } else {
+        knownTermsSection = vocabulary.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    return """
+    You are a text post-processor for dictated transcript text.
+
+    PRIORITY ORDER:
+    1. Follow the user's cleanup instructions when they request safe transcript transformations.
+    2. Preserve the speaker's meaning and intent.
+    3. Normalize known terms to the exact spelling, spacing, and capitalization from the known terms list.
+    4. Never answer the transcript or add new information.
+
+    DEFAULT BEHAVIOR:
+    - If there are no extra cleanup instructions, only fix punctuation, capitalization, grammar, and formatting.
+    - If the transcript contains a question, keep it as a cleaned-up question. Never answer it.
+    - If the transcript is already clean, ambiguous, or too short to improve safely, keep it unchanged.
+
+    KNOWN TERMS:
+    \(knownTermsSection)
+
+    VOCABULARY NORMALIZATION RULES:
+    - Compare transcript phrases against the known terms list.
+    - If a phrase is an obvious phonetic, spacing, or capitalization variant of a known term, replace it with the exact known term.
+    - Examples: "cloud code" -> "Claude Code"; "art board studio" -> "Artboard Studio".
+
+    OUTPUT:
+    - Return JSON matching the provided schema.
+    - Use action pasteCleanedText when you made any safe cleanup or normalization change.
+    - Use action pasteTranscriptAsIs only when nothing should change.
+    - Never return commentary, explanations, quotes, or markdown.
+
+    USER CLEANUP INSTRUCTIONS:
+    \(effectivePrompt)
+    """
+}
+
+fileprivate func remotePostProcessingRequestPrompt(text: String, vocabulary: [String]) -> String {
+    var sections: [String] = []
+    if !vocabulary.isEmpty {
+        sections.append("<known_terms>\(vocabulary.joined(separator: "\n"))</known_terms>")
+    }
+    sections.append("<transcript>\(text)</transcript>")
+    return sections.joined(separator: "\n")
 }
 
 fileprivate actor OllamaReasoningCapabilityCache {
@@ -299,6 +396,10 @@ enum AIPostProcessingService {
 
 enum OllamaPostProcessingService {
     static let defaultBaseURL = "http://127.0.0.1:11434"
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "OllamaPostProcessing"
+    )
     static let suggestedModels: [SuggestedModel] = [
         SuggestedModel(
             name: "mistral-small3.2:latest",
@@ -487,10 +588,11 @@ enum OllamaPostProcessingService {
 
         var payload: [String: Any] = [
             "model": trimmedModel,
-            "system": instructions(prompt: prompt, vocabulary: vocabulary),
-            "prompt": requestPrompt(text: text, vocabulary: vocabulary),
+            "system": remotePostProcessingInstructions(prompt: prompt, vocabulary: vocabulary),
+            "prompt": remotePostProcessingRequestPrompt(text: text, vocabulary: vocabulary),
             "stream": false,
-            "format": outputSchema,
+            "format": remotePostProcessingOutputSchema,
+            "keep_alive": "10m",
             "options": [
                 "temperature": 0
             ]
@@ -505,7 +607,7 @@ enum OllamaPostProcessingService {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let rawResponse = try await performGenerateRequest(request)
-        return cleanedResponse(from: rawResponse, originalText: text)
+        return cleanedRemotePostProcessingResponse(from: rawResponse, originalText: text)
     }
 
     static func cliAvailability() -> CLIAvailability {
@@ -703,6 +805,24 @@ enum OllamaPostProcessingService {
         let response: String?
         let thinking: String?
         let error: String?
+        let totalDuration: Int64?
+        let loadDuration: Int64?
+        let promptEvalCount: Int?
+        let promptEvalDuration: Int64?
+        let evalCount: Int?
+        let evalDuration: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case response
+            case thinking
+            case error
+            case totalDuration = "total_duration"
+            case loadDuration = "load_duration"
+            case promptEvalCount = "prompt_eval_count"
+            case promptEvalDuration = "prompt_eval_duration"
+            case evalCount = "eval_count"
+            case evalDuration = "eval_duration"
+        }
     }
 
     private struct PullResponse: Decodable {
@@ -756,20 +876,6 @@ enum OllamaPostProcessingService {
         }
     }
 
-    private static let outputSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "action": [
-                "type": "string",
-                "enum": ["pasteCleanedText", "pasteTranscriptAsIs"]
-            ],
-            "text": [
-                "type": ["string", "null"]
-            ]
-        ],
-        "required": ["action", "text"]
-    ]
-
     private static func fetchInstalledModels(baseURL: String) async throws -> [TagsResponse.Model] {
         let request = URLRequest(url: try endpointURL(baseURL: baseURL, endpoint: .tags))
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -816,6 +922,18 @@ enum OllamaPostProcessingService {
             throw ServiceError.emptyResponse
         }
 
+        logger.info(
+            """
+            generate request kind=full-transcript \
+            total_duration_ns=\(decoded.totalDuration ?? -1, privacy: .public) \
+            load_duration_ns=\(decoded.loadDuration ?? -1, privacy: .public) \
+            prompt_eval_duration_ns=\(decoded.promptEvalDuration ?? -1, privacy: .public) \
+            eval_duration_ns=\(decoded.evalDuration ?? -1, privacy: .public) \
+            prompt_eval_count=\(decoded.promptEvalCount ?? -1, privacy: .public) \
+            eval_count=\(decoded.evalCount ?? -1, privacy: .public)
+            """
+        )
+
         return responseText
     }
 
@@ -829,88 +947,6 @@ enum OllamaPostProcessingService {
             }
             throw ServiceError.unexpectedStatus(httpResponse.statusCode)
         }
-    }
-
-    private static func cleanedResponse(from rawResponse: String, originalText: String) -> String {
-        let normalized = stripMarkdownCodeFences(from: rawResponse)
-        guard !normalized.isEmpty else { return originalText }
-        if let data = normalized.data(using: .utf8),
-           let structured = try? JSONDecoder().decode(RemotePostProcessingResult.self, from: data),
-           let action = structured.action?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            switch action {
-            case "pasteTranscriptAsIs":
-                return originalText
-            case "pasteCleanedText":
-                let cleaned = structured.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                guard !cleaned.isEmpty else { return originalText }
-                if looksLikeRefusalMessage(cleaned) || looksLikeGeneratedContent(input: originalText, output: cleaned) {
-                    return originalText
-                }
-                return cleaned
-            default:
-                break
-            }
-        }
-
-        if looksLikeRefusalMessage(normalized) || looksLikeGeneratedContent(input: originalText, output: normalized) {
-            return originalText
-        }
-        return normalized
-    }
-
-    private static func instructions(prompt: String, vocabulary: [String]) -> String {
-        let customPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectivePrompt = customPrompt.isEmpty
-            ? "No extra cleanup instructions. Default to punctuation, capitalization, grammar, and sentence-boundary cleanup only."
-            : customPrompt
-
-        let knownTermsSection: String
-        if vocabulary.isEmpty {
-            knownTermsSection = "No known terms were provided."
-        } else {
-            knownTermsSection = vocabulary.map { "- \($0)" }.joined(separator: "\n")
-        }
-
-        return """
-        You are a text post-processor for dictated transcript text.
-
-        PRIORITY ORDER:
-        1. Follow the user's cleanup instructions when they request safe transcript transformations.
-        2. Preserve the speaker's meaning and intent.
-        3. Normalize known terms to the exact spelling, spacing, and capitalization from the known terms list.
-        4. Never answer the transcript or add new information.
-
-        DEFAULT BEHAVIOR:
-        - If there are no extra cleanup instructions, only fix punctuation, capitalization, grammar, and formatting.
-        - If the transcript contains a question, keep it as a cleaned-up question. Never answer it.
-        - If the transcript is already clean, ambiguous, or too short to improve safely, keep it unchanged.
-
-        KNOWN TERMS:
-        \(knownTermsSection)
-
-        VOCABULARY NORMALIZATION RULES:
-        - Compare transcript phrases against the known terms list.
-        - If a phrase is an obvious phonetic, spacing, or capitalization variant of a known term, replace it with the exact known term.
-        - Examples: "cloud code" -> "Claude Code"; "art board studio" -> "Artboard Studio".
-
-        OUTPUT:
-        - Return JSON matching the provided schema.
-        - Use action pasteCleanedText when you made any safe cleanup or normalization change.
-        - Use action pasteTranscriptAsIs only when nothing should change.
-        - Never return commentary, explanations, quotes, or markdown.
-
-        USER CLEANUP INSTRUCTIONS:
-        \(effectivePrompt)
-        """
-    }
-
-    private static func requestPrompt(text: String, vocabulary: [String]) -> String {
-        var sections: [String] = []
-        if !vocabulary.isEmpty {
-            sections.append("<known_terms>\(vocabulary.joined(separator: "\n"))</known_terms>")
-        }
-        sections.append("<transcript>\(text)</transcript>")
-        return sections.joined(separator: "\n")
     }
 
     private static func endpointURL(baseURL: String, endpoint: Endpoint) throws -> URL {
@@ -1123,5 +1159,381 @@ enum OllamaPostProcessingService {
         let normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return "\(normalizedBaseURL)|\(normalizedModel)"
+    }
+}
+
+enum OpenRouterPostProcessingService {
+    static let defaultAPIKeyEnvironmentVariable = "OPENROUTER_API_KEY"
+    private static let appAttributionURL = "https://github.com/hoomanaskari/mac-dictate-anywhere"
+    private static let appTitle = "Dictate Anywhere"
+
+    private static let baseURL = URL(string: "https://openrouter.ai/api/v1")!
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
+        category: "OpenRouterPostProcessing"
+    )
+
+    struct APIKeyStatus: Sendable {
+        enum Source: Sendable {
+            case storedKey
+            case inlineValue
+            case environmentVariable
+            case missing
+        }
+
+        let source: Source
+        let environmentVariableName: String
+
+        var isConfigured: Bool {
+            source != .missing
+        }
+    }
+
+    struct Model: Identifiable, Hashable, Sendable {
+        let id: String
+        let supportsStructuredOutputs: Bool
+    }
+
+    struct Availability: Sendable {
+        let models: [Model]
+        let apiKeyStatus: APIKeyStatus
+    }
+
+    enum ServiceError: LocalizedError {
+        case missingModel
+        case missingAPIKey(String)
+        case invalidResponse
+        case emptyResponse
+        case serverMessage(String)
+        case unexpectedStatus(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingModel:
+                return "Enter an OpenRouter model name."
+            case .missingAPIKey(let environmentVariable):
+                return "Paste an OpenRouter API key or set \(environmentVariable) in the app environment."
+            case .invalidResponse:
+                return "OpenRouter returned an invalid response."
+            case .emptyResponse:
+                return "OpenRouter returned an empty response."
+            case .serverMessage(let message):
+                return message
+            case .unexpectedStatus(let status):
+                return "OpenRouter returned HTTP \(status)."
+            }
+        }
+    }
+
+    static func availability(apiKey: String, apiKeyEnvironmentVariable: String) async throws -> Availability {
+        Availability(
+            models: try await fetchModels(),
+            apiKeyStatus: apiKeyStatus(
+                apiKey: apiKey,
+                apiKeyEnvironmentVariable: apiKeyEnvironmentVariable
+            )
+        )
+    }
+
+    static func apiKeyStatus(apiKey: String, apiKeyEnvironmentVariable: String) -> APIKeyStatus {
+        let environmentVariableName = normalizedAPIKeyEnvironmentVariableName(apiKeyEnvironmentVariable)
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAPIKey.isEmpty {
+            return APIKeyStatus(
+                source: .storedKey,
+                environmentVariableName: environmentVariableName
+            )
+        }
+
+        let trimmedEnvironmentValue = apiKeyEnvironmentVariable.trimmingCharacters(in: .whitespacesAndNewlines)
+        if looksLikeOpenRouterAPIKey(trimmedEnvironmentValue) {
+            return APIKeyStatus(
+                source: .inlineValue,
+                environmentVariableName: environmentVariableName
+            )
+        }
+
+        let environmentAPIKey = ProcessInfo.processInfo.environment[environmentVariableName]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return APIKeyStatus(
+            source: environmentAPIKey.isEmpty ? .missing : .environmentVariable,
+            environmentVariableName: environmentVariableName
+        )
+    }
+
+    static func matchingAvailableModel(for selectedModel: String, in availability: Availability?) -> Model? {
+        guard let availability else { return nil }
+        let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return nil }
+        return availability.models.first { $0.id.caseInsensitiveCompare(trimmedModel) == .orderedSame }
+    }
+
+    static func process(
+        text: String,
+        model: String,
+        prompt: String,
+        vocabulary: [String] = [],
+        apiKey: String,
+        apiKeyEnvironmentVariable: String
+    ) async throws -> String {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            throw ServiceError.missingModel
+        }
+
+        let apiKey = try resolvedAPIKey(
+            apiKey: apiKey,
+            apiKeyEnvironmentVariable: apiKeyEnvironmentVariable
+        )
+
+        do {
+            let rawResponse = try await performChatCompletionRequest(
+                model: trimmedModel,
+                apiKey: apiKey,
+                instructions: remotePostProcessingInstructions(prompt: prompt, vocabulary: vocabulary),
+                prompt: remotePostProcessingRequestPrompt(text: text, vocabulary: vocabulary),
+                useStructuredOutputs: true
+            )
+            return cleanedRemotePostProcessingResponse(from: rawResponse, originalText: text)
+        } catch let error as ServiceError where shouldRetryWithoutStructuredOutputs(error) {
+            let rawResponse = try await performChatCompletionRequest(
+                model: trimmedModel,
+                apiKey: apiKey,
+                instructions: remotePostProcessingInstructions(prompt: prompt, vocabulary: vocabulary),
+                prompt: remotePostProcessingRequestPrompt(text: text, vocabulary: vocabulary),
+                useStructuredOutputs: false
+            )
+            return cleanedRemotePostProcessingResponse(from: rawResponse, originalText: text)
+        }
+    }
+
+    private struct ModelsResponse: Decodable {
+        let data: [ModelResponse]
+    }
+
+    private struct ModelResponse: Decodable {
+        let id: String
+        let supportedParameters: [String]?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case supportedParameters = "supported_parameters"
+        }
+    }
+
+    private struct ChatCompletionResponse: Decodable {
+        struct Choice: Decodable {
+            struct Message: Decodable {
+                struct ContentPart: Decodable {
+                    let text: String?
+                }
+
+                let content: Content
+
+                enum Content: Decodable {
+                    case text(String)
+                    case parts([ContentPart])
+
+                    init(from decoder: Decoder) throws {
+                        let container = try decoder.singleValueContainer()
+                        if let string = try? container.decode(String.self) {
+                            self = .text(string)
+                            return
+                        }
+                        if let parts = try? container.decode([ContentPart].self) {
+                            self = .parts(parts)
+                            return
+                        }
+                        throw DecodingError.typeMismatch(
+                            Content.self,
+                            DecodingError.Context(
+                                codingPath: decoder.codingPath,
+                                debugDescription: "Unsupported message content."
+                            )
+                        )
+                    }
+
+                    var textValue: String {
+                        switch self {
+                        case .text(let value):
+                            return value
+                        case .parts(let parts):
+                            return parts.compactMap(\.text).joined(separator: "\n")
+                        }
+                    }
+                }
+            }
+
+            let message: Message
+        }
+
+        let choices: [Choice]
+    }
+
+    private struct ErrorResponse: Decodable {
+        struct ErrorPayload: Decodable {
+            let message: String?
+        }
+
+        let error: ErrorPayload?
+        let message: String?
+    }
+
+    private static func fetchModels() async throws -> [Model] {
+        let request = URLRequest(url: endpointURL(path: "models"))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        let decoded = try JSONDecoder().decode(ModelsResponse.self, from: data)
+        var seen = Set<String>()
+
+        return decoded.data.compactMap { model in
+            let trimmedID = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedID.isEmpty, seen.insert(trimmedID).inserted else {
+                return nil
+            }
+
+            let supportedParameters = Set((model.supportedParameters ?? []).map { $0.lowercased() })
+            return Model(
+                id: trimmedID,
+                supportsStructuredOutputs: supportedParameters.contains("structured_outputs")
+                    || supportedParameters.contains("response_format")
+            )
+        }
+        .sorted {
+            if $0.supportsStructuredOutputs != $1.supportsStructuredOutputs {
+                return $0.supportsStructuredOutputs && !$1.supportsStructuredOutputs
+            }
+            return $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
+        }
+    }
+
+    private static func performChatCompletionRequest(
+        model: String,
+        apiKey: String,
+        instructions: String,
+        prompt: String,
+        useStructuredOutputs: Bool
+    ) async throws -> String {
+        var request = URLRequest(url: endpointURL(path: "chat/completions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(appAttributionURL, forHTTPHeaderField: "HTTP-Referer")
+        request.setValue(appTitle, forHTTPHeaderField: "X-OpenRouter-Title")
+        request.setValue(appTitle, forHTTPHeaderField: "X-Title")
+
+        var payload: [String: Any] = [
+            "model": model,
+            "messages": [
+                [
+                    "role": "system",
+                    "content": instructions
+                ],
+                [
+                    "role": "user",
+                    "content": prompt
+                ]
+            ],
+            "temperature": 0
+        ]
+
+        if useStructuredOutputs {
+            payload["response_format"] = [
+                "type": "json_schema",
+                "json_schema": [
+                    "name": "dictate_anywhere_cleanup",
+                    "strict": true,
+                    "schema": remotePostProcessingOutputSchema
+                ]
+            ]
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        let decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+        guard let responseText = decoded.choices.first?.message.content.textValue
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !responseText.isEmpty else {
+            throw ServiceError.emptyResponse
+        }
+
+        logger.info(
+            "chat completion request kind=full-transcript structured_outputs=\(useStructuredOutputs, privacy: .public)"
+        )
+
+        return responseText
+    }
+
+    private static func validate(response: URLResponse, data: Data) throws {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            if let apiError = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                let message = apiError.error?.message?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? apiError.message?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? ""
+                if !message.isEmpty {
+                    throw ServiceError.serverMessage(message)
+                }
+            }
+            throw ServiceError.unexpectedStatus(httpResponse.statusCode)
+        }
+    }
+
+    private static func shouldRetryWithoutStructuredOutputs(_ error: ServiceError) -> Bool {
+        guard case .serverMessage(let message) = error else {
+            return false
+        }
+
+        let normalized = message.lowercased()
+        let fallbackSignals = [
+            "response_format",
+            "json_schema",
+            "structured output",
+            "structured outputs",
+            "unsupported parameter",
+            "unsupported value"
+        ]
+        return fallbackSignals.contains { normalized.contains($0) }
+    }
+
+    private static func resolvedAPIKey(apiKey: String, apiKeyEnvironmentVariable: String) throws -> String {
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedAPIKey.isEmpty {
+            return trimmedAPIKey
+        }
+
+        let trimmedEnvironmentValue = apiKeyEnvironmentVariable.trimmingCharacters(in: .whitespacesAndNewlines)
+        if looksLikeOpenRouterAPIKey(trimmedEnvironmentValue) {
+            return trimmedEnvironmentValue
+        }
+
+        let status = apiKeyStatus(apiKey: "", apiKeyEnvironmentVariable: apiKeyEnvironmentVariable)
+        guard case .environmentVariable = status.source,
+              let environmentAPIKey = ProcessInfo.processInfo.environment[status.environmentVariableName]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !environmentAPIKey.isEmpty else {
+            throw ServiceError.missingAPIKey(status.environmentVariableName)
+        }
+        return environmentAPIKey
+    }
+
+    private static func normalizedAPIKeyEnvironmentVariableName(_ apiKeyEnvironmentVariable: String) -> String {
+        let trimmed = apiKeyEnvironmentVariable.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? defaultAPIKeyEnvironmentVariable : trimmed
+    }
+
+    private static func looksLikeOpenRouterAPIKey(_ value: String) -> Bool {
+        value.hasPrefix("sk-or-")
+    }
+
+    private static func endpointURL(path: String) -> URL {
+        baseURL.appending(path: path)
     }
 }

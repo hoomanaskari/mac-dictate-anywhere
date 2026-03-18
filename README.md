@@ -30,6 +30,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 - **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
 - **Filler Word Removal** - Automatically removes "um", "uh", and other filler words
+- **Optional Transcript Cleanup** - Post-process transcripts with Apple Intelligence, Ollama, or OpenRouter
 - **Menu Bar App** - Runs quietly in your menu bar
 
 ## Installation
@@ -105,8 +106,8 @@ The app uses FluidAudio's Parakeet model for speech recognition, which runs enti
 
 ## Privacy
 
-- **100% On-Device** - All speech processing happens locally on your Mac
-- **No Cloud Services** - Your audio is never uploaded anywhere
+- **100% On-Device Speech Recognition** - All audio transcription happens locally on your Mac
+- **Optional Cloud Transcript Cleanup** - Audio never leaves your Mac, but transcript text can be sent to Apple Intelligence, Ollama, or OpenRouter if you enable post-processing
 - **No Analytics** - No tracking or telemetry (optional anonymous usage stats only)
 - **Clipboard Only** - Text insertion uses the clipboard + Cmd+V simulation
 
@@ -127,4 +128,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) - For the excellent Parakeet speech-to-text model
+- [Ollama](https://ollama.com/) - For enabling optional local LLM-based transcript cleanup
 - [create-dmg](https://github.com/create-dmg/create-dmg) - For the DMG creation tool

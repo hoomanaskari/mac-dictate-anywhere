@@ -9,6 +9,51 @@ import Foundation
 import AppKit
 import ServiceManagement
 import IOKit.hidsystem
+import Security
+
+private enum KeychainSecretStore {
+    nonisolated static func read(service: String, account: String) -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return value
+    }
+
+    nonisolated static func write(_ value: String, service: String, account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedValue.isEmpty {
+            SecItemDelete(query as CFDictionary)
+            return
+        }
+
+        let data = Data(trimmedValue.utf8)
+        let attributesToUpdate = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributesToUpdate as CFDictionary)
+        if updateStatus == errSecItemNotFound {
+            var createQuery = query
+            createQuery[kSecValueData as String] = data
+            SecItemAdd(createQuery as CFDictionary, nil)
+        }
+    }
+}
 
 // MARK: - App Appearance Mode
 
@@ -82,6 +127,7 @@ enum TranscriptPostProcessingMode: String, CaseIterable {
     case fluidAudioVocabulary = "fluidAudioVocabulary"
     case appleIntelligence = "appleIntelligence"
     case ollama = "ollama"
+    case openRouter = "openRouter"
 
     var displayName: String {
         switch self {
@@ -89,6 +135,7 @@ enum TranscriptPostProcessingMode: String, CaseIterable {
         case .fluidAudioVocabulary: return "FluidAudio Vocabulary"
         case .appleIntelligence: return "Apple Intelligence"
         case .ollama: return "Ollama"
+        case .openRouter: return "OpenRouter"
         }
     }
 }
@@ -273,6 +320,7 @@ final class Settings {
 
     static let shared = Settings()
     private nonisolated static let functionKeyCodes: Set<UInt16> = [63, 179]
+    private nonisolated static let openRouterAPIKeyKeychainAccount = "openrouter-api-key"
 
     /// Background queue for sound playback
     private let soundQueue = DispatchQueue(label: "com.dictate-anywhere.sounds", qos: .userInteractive)
@@ -310,6 +358,9 @@ final class Settings {
         static let ollamaModel = "ollamaModel"
         static let ollamaReasoningSetting = "ollamaReasoningSetting"
         static let ollamaPostProcessingPrompt = "ollamaPostProcessingPrompt"
+        static let openRouterModel = "openRouterModel"
+        static let openRouterPostProcessingPrompt = "openRouterPostProcessingPrompt"
+        static let openRouterAPIKeyEnvironmentVariable = "openRouterAPIKeyEnvironmentVariable"
     }
 
     // MARK: - Hotkey Settings
@@ -436,6 +487,33 @@ final class Settings {
         }
     }
 
+    var openRouterModel: String {
+        didSet {
+            UserDefaults.standard.set(openRouterModel, forKey: Keys.openRouterModel)
+        }
+    }
+
+    var openRouterPostProcessingPrompt: String {
+        didSet {
+            UserDefaults.standard.set(openRouterPostProcessingPrompt, forKey: Keys.openRouterPostProcessingPrompt)
+        }
+    }
+
+    var openRouterAPIKey: String {
+        didSet {
+            Self.storeOpenRouterAPIKey(openRouterAPIKey)
+        }
+    }
+
+    var openRouterAPIKeyEnvironmentVariable: String {
+        didSet {
+            UserDefaults.standard.set(
+                openRouterAPIKeyEnvironmentVariable,
+                forKey: Keys.openRouterAPIKeyEnvironmentVariable
+            )
+        }
+    }
+
     var fluidAudioVocabularyEnabled: Bool {
         transcriptPostProcessingMode == .fluidAudioVocabulary
     }
@@ -446,6 +524,10 @@ final class Settings {
 
     var ollamaPostProcessingEnabled: Bool {
         transcriptPostProcessingMode == .ollama
+    }
+
+    var openRouterPostProcessingEnabled: Bool {
+        transcriptPostProcessingMode == .openRouter
     }
 
     // MARK: - Microphone Selection
@@ -611,6 +693,23 @@ final class Settings {
             rawValue: defaults.string(forKey: Keys.ollamaReasoningSetting) ?? ""
         ) ?? .disabled
         ollamaPostProcessingPrompt = defaults.string(forKey: Keys.ollamaPostProcessingPrompt) ?? ""
+        let storedOpenRouterAPIKey = Self.storedOpenRouterAPIKey()
+        openRouterAPIKey = storedOpenRouterAPIKey
+        openRouterModel = defaults.string(forKey: Keys.openRouterModel) ?? ""
+        openRouterPostProcessingPrompt = defaults.string(forKey: Keys.openRouterPostProcessingPrompt) ?? ""
+        let storedOpenRouterCredentialHint = defaults.string(forKey: Keys.openRouterAPIKeyEnvironmentVariable)
+            ?? OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable
+        if storedOpenRouterAPIKey.isEmpty,
+           Self.looksLikeOpenRouterAPIKey(storedOpenRouterCredentialHint) {
+            openRouterAPIKey = storedOpenRouterCredentialHint
+            openRouterAPIKeyEnvironmentVariable = OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable
+            defaults.set(
+                OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable,
+                forKey: Keys.openRouterAPIKeyEnvironmentVariable
+            )
+        } else {
+            openRouterAPIKeyEnvironmentVariable = storedOpenRouterCredentialHint
+        }
 
         // Microphone selection
         selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)
@@ -1000,6 +1099,29 @@ final class Settings {
         }
 
         return eventAny
+    }
+
+    private nonisolated static var openRouterAPIKeyKeychainService: String {
+        (Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere") + ".openrouter"
+    }
+
+    private nonisolated static func storedOpenRouterAPIKey() -> String {
+        KeychainSecretStore.read(
+            service: openRouterAPIKeyKeychainService,
+            account: openRouterAPIKeyKeychainAccount
+        )
+    }
+
+    private nonisolated static func storeOpenRouterAPIKey(_ value: String) {
+        KeychainSecretStore.write(
+            value,
+            service: openRouterAPIKeyKeychainService,
+            account: openRouterAPIKeyKeychainAccount
+        )
+    }
+
+    private nonisolated static func looksLikeOpenRouterAPIKey(_ value: String) -> Bool {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("sk-or-")
     }
 }
 
