@@ -101,8 +101,6 @@ struct OverlayContent: View {
             return statusCircleDiameter
         case .copiedOnly:
             return OverlayMetrics.size(44)
-        default:
-            return OverlayMetrics.size(44)
         }
     }
 
