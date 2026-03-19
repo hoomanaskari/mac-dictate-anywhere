@@ -79,6 +79,9 @@ final class AppState {
     /// Engine pinned for the active dictation session (start -> stop/cancel).
     private var sessionEngine: TranscriptionEngine?
 
+    /// One-off experiment: capture raw audio and send it directly to OpenRouter when the selected model advertises audio input.
+    private var useOpenRouterAudioInputForCurrentSession = false
+
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
@@ -244,8 +247,9 @@ final class AppState {
             status = .idle
         }
         guard status == .idle, !isTransitioning else { return }
+        let useOpenRouterAudioInput = await shouldUseOpenRouterAudioInput()
         let engine = activeEngine
-        guard engine.isReady else {
+        guard useOpenRouterAudioInput || engine.isReady else {
             logger.warning("startDictation: engine not ready, aborting")
             if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
                 showLegacyEngineDiscontinuedAlert()
@@ -259,6 +263,7 @@ final class AppState {
         isTransitioning = true
         pendingHoldRelease = false
         sessionEngine = engine
+        useOpenRouterAudioInputForCurrentSession = useOpenRouterAudioInput
 
         status = .recording
         currentTranscript = ""
@@ -310,7 +315,11 @@ final class AppState {
             }
 
             do {
-                try await engine.startRecording(deviceID: candidateID)
+                if useOpenRouterAudioInput {
+                    try await parakeetEngine.startAudioCaptureOnly(deviceID: candidateID)
+                } else {
+                    try await engine.startRecording(deviceID: candidateID)
+                }
                 didStart = true
                 logger.info(
                     "startDictation: startRecording succeeded on attempt \(index + 1, privacy: .public), deviceID=\(candidateID.map { String($0) } ?? "nil", privacy: .public)"
@@ -337,6 +346,7 @@ final class AppState {
             isTransitioning = false
             pendingHoldRelease = false
             sessionEngine = nil
+            useOpenRouterAudioInputForCurrentSession = false
             status = .idle
             return
         }
@@ -370,15 +380,56 @@ final class AppState {
         // Play stop sound
         settings.playSound("Pop")
 
-        // Get final transcript
+        let useOpenRouterAudioInput = useOpenRouterAudioInputForCurrentSession
         let engine = sessionEngine ?? activeEngine
-        let transcript = await engine.stopRecording()
-        sessionEngine = nil
 
-        // Apply filler word removal
-        let cleaned = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
-        let liveFallback = settings.removeFillerWords(from: currentTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalText = liveFallback.count > cleaned.count ? liveFallback : cleaned
+        let finalText: String
+        if useOpenRouterAudioInput {
+            let recordedAudio = await parakeetEngine.stopAudioCaptureOnly()
+            sessionEngine = nil
+            useOpenRouterAudioInputForCurrentSession = false
+
+            if let recordedAudio {
+                do {
+                    let remoteTranscript = try await OpenRouterPostProcessingService.processAudio(
+                        audioData: recordedAudio.data,
+                        audioFormat: recordedAudio.format,
+                        model: settings.openRouterModel,
+                        prompt: settings.openRouterPostProcessingPrompt,
+                        vocabulary: settings.customVocabulary,
+                        apiKey: settings.openRouterAPIKey,
+                        apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+                    )
+                    finalText = sanitizeRemoteAudioTranscript(
+                        remoteTranscript,
+                        for: recordedAudio
+                    )
+                } catch {
+                    currentTranscript = ""
+                    volumeController.restoreMicrophoneVolume()
+                    if settings.muteSystemAudioDuringRecordingEnabled {
+                        try? await Task.sleep(for: .milliseconds(200))
+                        volumeController.restoreAfterRecording()
+                    }
+                    status = .error(error.localizedDescription)
+                    overlay.hide(afterDelay: 1.0)
+                    insertionTargetApp = nil
+                    status = .idle
+                    return
+                }
+            } else {
+                finalText = ""
+            }
+        } else {
+            // Get final transcript
+            let transcript = await engine.stopRecording()
+            sessionEngine = nil
+
+            // Apply filler word removal
+            let cleaned = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
+            let liveFallback = settings.removeFillerWords(from: currentTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
+            finalText = liveFallback.count > cleaned.count ? liveFallback : cleaned
+        }
 
         guard !finalText.isEmpty else {
             currentTranscript = ""
@@ -434,17 +485,19 @@ final class AppState {
                 // Silently fall back to original text on failure
             }
         case .openRouter:
-            do {
-                processedText = try await OpenRouterPostProcessingService.process(
-                    text: finalText,
-                    model: settings.openRouterModel,
-                    prompt: settings.openRouterPostProcessingPrompt,
-                    vocabulary: settings.customVocabulary,
-                    apiKey: settings.openRouterAPIKey,
-                    apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
-                )
-            } catch {
-                // Silently fall back to original text on failure
+            if !useOpenRouterAudioInput {
+                do {
+                    processedText = try await OpenRouterPostProcessingService.process(
+                        text: finalText,
+                        model: settings.openRouterModel,
+                        prompt: settings.openRouterPostProcessingPrompt,
+                        vocabulary: settings.customVocabulary,
+                        apiKey: settings.openRouterAPIKey,
+                        apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+                    )
+                } catch {
+                    // Silently fall back to original text on failure
+                }
             }
         }
 
@@ -479,13 +532,43 @@ final class AppState {
         status = .idle
     }
 
+    private func sanitizeRemoteAudioTranscript(_ transcript: String, for capturedAudio: CapturedAudio) -> String {
+        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "" }
+
+        let durationSeconds = capturedAudio.durationSeconds
+        let wordCount = cleaned.split(whereSeparator: \.isWhitespace).count
+        let characterCount = cleaned.count
+
+        if durationSeconds < 1.0, (wordCount > 12 || characterCount > 80) {
+            logger.warning(
+                "Discarding suspiciously long OpenRouter audio transcript (\(characterCount, privacy: .public) chars / \(wordCount, privacy: .public) words) for short clip (\(durationSeconds, privacy: .public)s)"
+            )
+            return ""
+        }
+
+        if durationSeconds < 0.6, (wordCount > 6 || characterCount > 40) {
+            logger.warning(
+                "Discarding likely hallucinated OpenRouter audio transcript (\(characterCount, privacy: .public) chars / \(wordCount, privacy: .public) words) for very short clip (\(durationSeconds, privacy: .public)s)"
+            )
+            return ""
+        }
+
+        return cleaned
+    }
+
     func cancelDictation() async {
         guard status == .recording || status == .processing else { return }
 
         stopAudioLevelPolling()
 
         let engine = sessionEngine ?? activeEngine
-        await engine.cancel()
+        if useOpenRouterAudioInputForCurrentSession {
+            await parakeetEngine.cancel()
+            useOpenRouterAudioInputForCurrentSession = false
+        } else {
+            await engine.cancel()
+        }
         sessionEngine = nil
 
         volumeController.restoreMicrophoneVolume()
@@ -516,6 +599,27 @@ final class AppState {
         guard let app = insertionTargetApp, !app.isTerminated else { return }
         if app.activate() {
             try? await Task.sleep(for: .milliseconds(120))
+        }
+    }
+
+    private func shouldUseOpenRouterAudioInput() async -> Bool {
+        guard settings.transcriptPostProcessingMode == .openRouter else { return false }
+
+        let selectedModel = settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectedModel.isEmpty else { return false }
+
+        do {
+            let availability = try await OpenRouterPostProcessingService.availability(
+                apiKey: settings.openRouterAPIKey,
+                apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
+            )
+            return OpenRouterPostProcessingService.supportsAudioInput(
+                for: selectedModel,
+                in: availability
+            )
+        } catch {
+            logger.warning("shouldUseOpenRouterAudioInput: failed to fetch model availability: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 

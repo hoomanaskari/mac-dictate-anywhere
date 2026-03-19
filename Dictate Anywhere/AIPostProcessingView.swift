@@ -729,7 +729,13 @@ struct AIPostProcessingView: View {
                 return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
             }
             .prefix(12)
-            .map { OpenRouterModelMatch(id: $0.id, supportsStructuredOutputs: $0.supportsStructuredOutputs) }
+            .map {
+                OpenRouterModelMatch(
+                    id: $0.id,
+                    supportsStructuredOutputs: $0.supportsStructuredOutputs,
+                    supportsAudioInput: $0.supportsAudioInput
+                )
+            }
     }
 
     private func openRouterModelSearchEmptyState(settings: Settings) -> String {
@@ -744,7 +750,8 @@ struct AIPostProcessingView: View {
         availability: OpenRouterPostProcessingService.Availability
     ) -> String {
         let structuredCount = availability.models.filter(\.supportsStructuredOutputs).count
-        return "Fetched \(availability.models.count) OpenRouter models. \(structuredCount) currently advertise structured output support, and those are prioritized in search results."
+        let audioInputCount = availability.models.filter(\.supportsAudioInput).count
+        return "Fetched \(availability.models.count) OpenRouter models. \(structuredCount) currently advertise structured output support and \(audioInputCount) advertise audio input support."
     }
 
     private func openRouterModelSearchSection(
@@ -979,7 +986,13 @@ struct AIPostProcessingView: View {
         apiKeyStatus: OpenRouterPostProcessingService.APIKeyStatus
     ) -> String {
         if model.supportsStructuredOutputs {
+            if model.supportsAudioInput {
+                return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises both structured output and audio input support."
+            }
             return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises structured output support."
+        }
+        if model.supportsAudioInput {
+            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises audio input support, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
         }
         return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
     }
@@ -1148,6 +1161,7 @@ struct AIPostProcessingView: View {
 private struct OpenRouterModelMatch: Identifiable, Hashable {
     let id: String
     let supportsStructuredOutputs: Bool
+    let supportsAudioInput: Bool
 }
 
 private struct OpenRouterModelMatchesView: View {
@@ -1170,6 +1184,12 @@ private struct OpenRouterModelMatchesView: View {
 
                         if !model.supportsStructuredOutputs {
                             Text("Prompt-only fallback")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if model.supportsAudioInput {
+                            Text("Audio input available")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

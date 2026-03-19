@@ -174,6 +174,25 @@ protocol TranscriptionEngine: AnyObject {
     func cancel() async
 }
 
+struct CapturedAudio: Sendable {
+    let data: Data
+    let format: String
+    let sampleRate: Int
+    let sampleCount: Int
+
+    var durationSeconds: Double {
+        guard sampleRate > 0 else { return 0 }
+        return Double(sampleCount) / Double(sampleRate)
+    }
+}
+
+private extension Data {
+    init<T>(from value: T) {
+        var mutableValue = value
+        self = Swift.withUnsafeBytes(of: &mutableValue) { Data($0) }
+    }
+}
+
 // MARK: - Shared Audio Helpers
 
 /// Creates and configures an AVAudioEngine for recording to 16kHz mono Float32
@@ -338,6 +357,11 @@ enum TranscriptionError: LocalizedError {
 
 @Observable
 final class ParakeetEngine: TranscriptionEngine {
+    private enum RecordingMode: Equatable {
+        case transcription
+        case captureOnly
+    }
+
     // MARK: - State
 
     private(set) var isReady: Bool = false
@@ -362,9 +386,14 @@ final class ParakeetEngine: TranscriptionEngine {
     private var transcriptionTask: Task<Void, Never>?
     private var isTranscribing = false
     private var isRecordingActive = false
+    private var recordingMode: RecordingMode = .transcription
     private var lastTapCallbackTime: CFAbsoluteTime = 0
 
     private let minAudioEnergy: Float = 0.005
+    private let minimumSpeechPeak: Float = 0.02
+    private let minimumSpeechSampleRatio: Float = 0.015
+    private let minimumCapturedAudioDurationSamples: Int = 4_800
+    private let minimumCapturedSpeechSamples: Int = 640
     private let transcriptionIntervalMs: UInt64 = 500
     private let sampleRate: Int = 16_000
     private let minTranscriptionDeltaSamples: Int = 4_800
@@ -600,8 +629,16 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func startRecording(deviceID: AudioDeviceID?) async throws {
+        try await startRecording(deviceID: deviceID, mode: .transcription)
+    }
+
+    func startAudioCaptureOnly(deviceID: AudioDeviceID?) async throws {
+        try await startRecording(deviceID: deviceID, mode: .captureOnly)
+    }
+
+    private func startRecording(deviceID: AudioDeviceID?, mode: RecordingMode) async throws {
         logger.info("startRecording: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
-        guard await asrCoordinator.isInitialized() else {
+        if mode == .transcription, !(await asrCoordinator.isInitialized()) {
             logger.error("startRecording: coordinator not initialized")
             throw TranscriptionError.engineNotReady
         }
@@ -621,6 +658,7 @@ final class ParakeetEngine: TranscriptionEngine {
             self.currentTranscript = ""
             self.audioSamples = []
         }
+        recordingMode = mode
 
         // Start audio engine (async to avoid deadlock — the tap callback dispatches to main)
         logger.info("startRecording: dispatching to engineQueue for audio engine setup")
@@ -660,17 +698,20 @@ final class ParakeetEngine: TranscriptionEngine {
         audioCaptureController = captureController
         isRecordingActive = true
         lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
-        logger.info("startRecording: audio engine set up successfully, starting transcription loop")
+        logger.info("startRecording: audio engine set up successfully, mode=\(String(describing: mode), privacy: .public)")
 
         // Start transcription loop
-        isTranscribing = true
-        transcriptionTask = Task { [weak self] in
-            await self?.transcriptionLoop()
+        if mode == .transcription {
+            isTranscribing = true
+            transcriptionTask = Task { [weak self] in
+                await self?.transcriptionLoop()
+            }
         }
     }
 
     func stopRecording() async -> String {
         guard isRecordingActive else { return currentTranscript }
+        guard recordingMode == .transcription else { return currentTranscript }
 
         // Stop transcription loop
         isTranscribing = false
@@ -685,20 +726,35 @@ final class ParakeetEngine: TranscriptionEngine {
 
         // Final transcription
         let final_transcript = await performFinalTranscription()
-        isRecordingActive = false
-        committedTranscript = ""
-        sampleLock.withLock {
-            sampleBuffer.removeAll(keepingCapacity: false)
-            fullRecordingSamples.removeAll(keepingCapacity: false)
-            totalSampleCount = 0
-        }
-
-        await MainActor.run {
-            self.currentTranscript = final_transcript
-            self.audioSamples = []
-        }
+        await resetAfterStop(finalTranscript: final_transcript)
 
         return final_transcript
+    }
+
+    func stopAudioCaptureOnly() async -> CapturedAudio? {
+        guard isRecordingActive else { return nil }
+        guard recordingMode == .captureOnly else { return nil }
+
+        await teardownAudioEngineIfNeeded()
+
+        let recordedSamples = sampleLock.withLock { fullRecordingSamples }
+        let shouldSubmitAudio = shouldSubmitCapturedAudio(recordedSamples)
+        let audioData = shouldSubmitAudio
+            ? Self.encodeWAV(samples: recordedSamples, sampleRate: sampleRate)
+            : Data()
+        await resetAfterStop(finalTranscript: "")
+
+        guard shouldSubmitAudio, !audioData.isEmpty else {
+            logger.info("stopAudioCaptureOnly: skipping remote audio transcription because capture looked empty or silent")
+            return nil
+        }
+
+        return CapturedAudio(
+            data: audioData,
+            format: "wav",
+            sampleRate: sampleRate,
+            sampleCount: recordedSamples.count
+        )
     }
 
     func cancel() async {
@@ -833,12 +889,95 @@ final class ParakeetEngine: TranscriptionEngine {
         return result.count >= liveText.count ? result : liveText
     }
 
+    private func resetAfterStop(finalTranscript: String) async {
+        isRecordingActive = false
+        isTranscribing = false
+        recordingMode = .transcription
+        committedTranscript = ""
+        sampleLock.withLock {
+            sampleBuffer.removeAll(keepingCapacity: false)
+            fullRecordingSamples.removeAll(keepingCapacity: false)
+            totalSampleCount = 0
+        }
+
+        await MainActor.run {
+            self.currentTranscript = finalTranscript
+            self.audioSamples = []
+        }
+    }
+
+    private static func encodeWAV(samples: [Float], sampleRate: Int) -> Data {
+        guard !samples.isEmpty else { return Data() }
+
+        var pcm16 = Data(capacity: samples.count * MemoryLayout<Int16>.size)
+        for sample in samples {
+            let clamped = max(-1.0, min(1.0, sample))
+            var value = Int16((clamped * Float(Int16.max)).rounded())
+            pcm16.append(Data(bytes: &value, count: MemoryLayout<Int16>.size))
+        }
+
+        let subchunk2Size = UInt32(pcm16.count)
+        let chunkSize = 36 + subchunk2Size
+        let byteRate = UInt32(sampleRate * 2)
+        let blockAlign: UInt16 = 2
+        let bitsPerSample: UInt16 = 16
+
+        var data = Data()
+        data.append("RIFF".data(using: .ascii)!)
+        data.append(Data(from: chunkSize))
+        data.append("WAVE".data(using: .ascii)!)
+        data.append("fmt ".data(using: .ascii)!)
+        data.append(Data(from: UInt32(16)))
+        data.append(Data(from: UInt16(1)))
+        data.append(Data(from: UInt16(1)))
+        data.append(Data(from: UInt32(sampleRate)))
+        data.append(Data(from: byteRate))
+        data.append(Data(from: blockAlign))
+        data.append(Data(from: bitsPerSample))
+        data.append("data".data(using: .ascii)!)
+        data.append(Data(from: subchunk2Size))
+        data.append(pcm16)
+        return data
+    }
+
     private func hasSignificantAudio(_ samples: [Float]) -> Bool {
         guard !samples.isEmpty else { return false }
-        var rms: Float = 0
         let recent = Array(samples.suffix(speechCheckWindowSamples))
-        vDSP_rmsqv(recent, 1, &rms, vDSP_Length(recent.count))
-        return rms > minAudioEnergy
+        return audioLooksNonEmpty(recent)
+    }
+
+    private func shouldSubmitCapturedAudio(_ samples: [Float]) -> Bool {
+        guard samples.count >= minimumCapturedAudioDurationSamples else { return false }
+        let analysisWindow = Array(samples.suffix(max(sampleRate, speechCheckWindowSamples)))
+        let metrics = audioMetrics(for: analysisWindow)
+        guard metrics.looksNonEmpty else { return false }
+        return metrics.voicedSamples >= minimumCapturedSpeechSamples
+    }
+
+    private func audioLooksNonEmpty(_ samples: [Float]) -> Bool {
+        audioMetrics(for: samples).looksNonEmpty
+    }
+
+    private func audioMetrics(for samples: [Float]) -> (looksNonEmpty: Bool, voicedSamples: Int) {
+        guard !samples.isEmpty else { return (false, 0) }
+
+        var rms: Float = 0
+        vDSP_rmsqv(samples, 1, &rms, vDSP_Length(samples.count))
+        let voicedSamples = samples.reduce(into: 0) { count, sample in
+            if abs(sample) >= minimumSpeechPeak {
+                count += 1
+            }
+        }
+
+        if rms > minAudioEnergy {
+            return (true, voicedSamples)
+        }
+
+        var peak: Float = 0
+        vDSP_maxmgv(samples, 1, &peak, vDSP_Length(samples.count))
+        guard peak >= minimumSpeechPeak else { return (false, 0) }
+        let voicedRatio = Float(voicedSamples) / Float(samples.count)
+        return (voicedRatio >= minimumSpeechSampleRatio, voicedSamples)
     }
 
     private func commitBufferedChunksIfNeeded(force: Bool) async {

@@ -48,9 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showItem.target = self
         menu.addItem(showItem)
 
-        let copyItem = NSMenuItem(title: "Copy Last Transcript", action: #selector(copyLastTranscript), keyEquivalent: "c")
+        let copyItem = NSMenuItem(title: "Copy Last Transcript", action: #selector(copyLastTranscript), keyEquivalent: "")
         copyItem.target = self
         menu.addItem(copyItem)
+
+        let vocabItem = NSMenuItem(title: "Add Custom Vocabulary", action: #selector(showVocabularyPanel), keyEquivalent: "")
+        vocabItem.target = self
+        menu.addItem(vocabItem)
 
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
@@ -163,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         Settings.shared.selectedMicrophoneUID = sender.representedObject as? String
+    }
+
+    @objc private func showVocabularyPanel() {
+        QuickVocabularyPanel.shared.toggle()
     }
 
     @objc private func quitApp() {
