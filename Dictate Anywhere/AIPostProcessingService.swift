@@ -245,6 +245,51 @@ fileprivate func remotePostProcessingRequestPrompt(text: String, vocabulary: [St
     return sections.joined(separator: "\n")
 }
 
+fileprivate func remoteAudioTranscriptionInstructions(prompt: String, vocabulary: [String]) -> String {
+    let customPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let effectivePrompt = customPrompt.isEmpty
+        ? "No extra cleanup instructions. Default to punctuation, capitalization, grammar, and sentence-boundary cleanup only."
+        : customPrompt
+
+    let knownTermsSection: String
+    if vocabulary.isEmpty {
+        knownTermsSection = "No known terms were provided."
+    } else {
+        knownTermsSection = vocabulary.map { "- \($0)" }.joined(separator: "\n")
+    }
+
+    return """
+    You are a speech transcription and text cleanup system for dictated audio.
+
+    PRIORITY ORDER:
+    1. Transcribe the spoken audio accurately.
+    2. Follow the user's cleanup instructions when they request safe transcript transformations.
+    3. Preserve the speaker's meaning and intent.
+    4. Normalize known terms to the exact spelling, spacing, and capitalization from the known terms list.
+    5. Never answer the transcript or add new information.
+
+    DEFAULT BEHAVIOR:
+    - If there are no extra cleanup instructions, only fix punctuation, capitalization, grammar, and formatting.
+    - If the speaker revises or corrects themselves, preserve the final intended phrasing when it is clear.
+    - If the dictated audio is already clean, ambiguous, or too short to improve safely, keep it unchanged apart from accurate transcription.
+
+    KNOWN TERMS:
+    \(knownTermsSection)
+
+    VOCABULARY NORMALIZATION RULES:
+    - Compare transcript phrases against the known terms list.
+    - If a phrase is an obvious phonetic, spacing, or capitalization variant of a known term, replace it with the exact known term.
+    - Examples: "cloud code" -> "Claude Code"; "art board studio" -> "Artboard Studio".
+
+    OUTPUT:
+    - Return only the final cleaned transcript text.
+    - Never return JSON, commentary, explanations, quotes, or markdown.
+
+    USER CLEANUP INSTRUCTIONS:
+    \(effectivePrompt)
+    """
+}
+
 fileprivate actor OllamaReasoningCapabilityCache {
     static let shared = OllamaReasoningCapabilityCache()
 
@@ -1192,6 +1237,7 @@ enum OpenRouterPostProcessingService {
     struct Model: Identifiable, Hashable, Sendable {
         let id: String
         let supportsStructuredOutputs: Bool
+        let supportsAudioInput: Bool
     }
 
     struct Availability: Sendable {
@@ -1268,6 +1314,10 @@ enum OpenRouterPostProcessingService {
         return availability.models.first { $0.id.caseInsensitiveCompare(trimmedModel) == .orderedSame }
     }
 
+    static func supportsAudioInput(for selectedModel: String, in availability: Availability?) -> Bool {
+        matchingAvailableModel(for: selectedModel, in: availability)?.supportsAudioInput ?? false
+    }
+
     static func process(
         text: String,
         model: String,
@@ -1307,17 +1357,66 @@ enum OpenRouterPostProcessingService {
         }
     }
 
+    static func processAudio(
+        audioData: Data,
+        audioFormat: String,
+        model: String,
+        prompt: String,
+        vocabulary: [String] = [],
+        apiKey: String,
+        apiKeyEnvironmentVariable: String
+    ) async throws -> String {
+        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            throw ServiceError.missingModel
+        }
+        guard !audioData.isEmpty else {
+            throw ServiceError.emptyResponse
+        }
+
+        let resolvedKey = try resolvedAPIKey(
+            apiKey: apiKey,
+            apiKeyEnvironmentVariable: apiKeyEnvironmentVariable
+        )
+
+        let response = try await performAudioTranscriptionRequest(
+            model: trimmedModel,
+            apiKey: resolvedKey,
+            instructions: remoteAudioTranscriptionInstructions(prompt: prompt, vocabulary: vocabulary),
+            audioData: audioData,
+            audioFormat: audioFormat
+        )
+        let cleaned = response
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            throw ServiceError.emptyResponse
+        }
+        return cleaned
+    }
+
     private struct ModelsResponse: Decodable {
         let data: [ModelResponse]
     }
 
     private struct ModelResponse: Decodable {
+        struct ArchitectureResponse: Decodable {
+            let inputModalities: [String]?
+
+            enum CodingKeys: String, CodingKey {
+                case inputModalities = "input_modalities"
+            }
+        }
+
         let id: String
         let supportedParameters: [String]?
+        let architecture: ArchitectureResponse?
 
         enum CodingKeys: String, CodingKey {
             case id
             case supportedParameters = "supported_parameters"
+            case architecture
         }
     }
 
@@ -1394,10 +1493,12 @@ enum OpenRouterPostProcessingService {
             }
 
             let supportedParameters = Set((model.supportedParameters ?? []).map { $0.lowercased() })
+            let inputModalities = Set((model.architecture?.inputModalities ?? []).map { $0.lowercased() })
             return Model(
                 id: trimmedID,
                 supportsStructuredOutputs: supportedParameters.contains("structured_outputs")
-                    || supportedParameters.contains("response_format")
+                    || supportedParameters.contains("response_format"),
+                supportsAudioInput: inputModalities.contains("audio")
             )
         }
         .sorted {
@@ -1465,6 +1566,67 @@ enum OpenRouterPostProcessingService {
         logger.info(
             "chat completion request kind=full-transcript structured_outputs=\(useStructuredOutputs, privacy: .public)"
         )
+
+        return responseText
+    }
+
+    private static func performAudioTranscriptionRequest(
+        model: String,
+        apiKey: String,
+        instructions: String,
+        audioData: Data,
+        audioFormat: String
+    ) async throws -> String {
+        var request = URLRequest(url: endpointURL(path: "chat/completions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(appAttributionURL, forHTTPHeaderField: "HTTP-Referer")
+        request.setValue(appTitle, forHTTPHeaderField: "X-OpenRouter-Title")
+        request.setValue(appTitle, forHTTPHeaderField: "X-Title")
+
+        let payload: [String: Any] = [
+            "model": model,
+            "messages": [
+                [
+                    "role": "system",
+                    "content": instructions
+                ],
+                [
+                    "role": "user",
+                    "content": [
+                        [
+                            "type": "text",
+                            "text": "Transcribe and clean up this dictated audio."
+                        ],
+                        [
+                            "type": "input_audio",
+                            "input_audio": [
+                                "data": audioData.base64EncodedString(),
+                                "format": audioFormat
+                            ]
+                        ]
+                    ]
+                ]
+            ],
+            "temperature": 0,
+            "stream": false
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        let decoded = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+        guard let responseText = decoded.choices.first?.message.content.textValue
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !responseText.isEmpty else {
+            throw ServiceError.emptyResponse
+        }
+
+        logger.info("chat completion request kind=audio-direct")
 
         return responseText
     }
