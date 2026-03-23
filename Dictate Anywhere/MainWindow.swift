@@ -100,7 +100,6 @@ struct MainWindow: View {
         )
         .task {
             await appState.permissions.check()
-            await appState.prepareActiveEngine()
             if appState.permissions.accessibilityGranted {
                 if appState.settings.hasHotkey {
                     appState.hotkeyService.startMonitoring()
@@ -110,6 +109,7 @@ struct MainWindow: View {
                 appState.permissions.promptForAccessibility()
                 appState.permissions.startPolling()
             }
+            await appState.prepareActiveEngine()
         }
         .onChange(of: appState.permissions.accessibilityGranted) { _, granted in
             if granted {
