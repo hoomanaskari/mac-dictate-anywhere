@@ -24,6 +24,8 @@ final class HotkeyService {
     private var runLoopSource: CFRunLoopSource?
     private var activeBindingIDs: Set<UUID> = []
     private let functionKeyCodes: Set<UInt16> = [63, 179]
+    private var retryWorkItem: DispatchWorkItem?
+    private var retryAttempt = 0
 
     /// Cached bindings snapshot — read from the CGEvent callback thread.
     /// Only updated at startMonitoring() / restartMonitoring() to avoid data races.
@@ -45,42 +47,11 @@ final class HotkeyService {
     // MARK: - Public
 
     func startMonitoring() {
-        guard !isMonitoring else { return }
-
-        let settings = Settings.shared
-        guard settings.hasHotkey else { return }
-
-        // Snapshot + normalize bindings so the callback thread never touches Settings
-        cachedBindings = settings.hotkeyBindings.map(canonicalBindingForMatching)
-
-        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
-
-        // Use Unmanaged to pass self as user info
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cghidEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: eventMask,
-            callback: hotkeyEventCallback,
-            userInfo: selfPtr
-        ) else {
-            logger.error("Failed to create CGEvent tap. Accessibility permission required.")
-            return
-        }
-
-        eventTap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-
-        isMonitoring = true
-        logger.info("Hotkey monitoring started")
+        attemptMonitoringStart(resetRetryState: true)
     }
 
     func stopMonitoring() {
+        cancelRetry(resetAttempts: true)
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
@@ -98,6 +69,81 @@ final class HotkeyService {
     func restartMonitoring() {
         stopMonitoring()
         startMonitoring()
+    }
+
+    // MARK: - Startup
+
+    private func attemptMonitoringStart(resetRetryState: Bool) {
+        guard !isMonitoring else { return }
+
+        let settings = Settings.shared
+        guard settings.hasHotkey else {
+            cachedBindings = []
+            cancelRetry(resetAttempts: true)
+            return
+        }
+
+        if resetRetryState {
+            cancelRetry(resetAttempts: true)
+        } else {
+            retryWorkItem = nil
+        }
+
+        // Snapshot + normalize bindings so the callback thread never touches Settings
+        cachedBindings = settings.hotkeyBindings.map(canonicalBindingForMatching)
+
+        let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+
+        // Use Unmanaged to pass self as user info
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: eventMask,
+            callback: hotkeyEventCallback,
+            userInfo: selfPtr
+        ) else {
+            cachedBindings = []
+            scheduleRetry()
+            logger.error("Failed to create CGEvent tap. Will retry until the login session is ready.")
+            return
+        }
+
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        isMonitoring = true
+        cancelRetry(resetAttempts: true)
+        logger.info("Hotkey monitoring started")
+    }
+
+    private func scheduleRetry() {
+        guard !isMonitoring, retryWorkItem == nil else { return }
+
+        retryAttempt += 1
+        let delay = min(pow(2.0, Double(max(0, retryAttempt - 1))) * 0.5, 5.0)
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.attemptMonitoringStart(resetRetryState: false)
+        }
+        retryWorkItem = workItem
+        let attemptNumber = retryAttempt
+        logger.info(
+            "Scheduling hotkey monitoring retry in \(String(format: "%.1f", delay), privacy: .public)s (attempt \(attemptNumber, privacy: .public))"
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelRetry(resetAttempts: Bool) {
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        if resetAttempts {
+            retryAttempt = 0
+        }
     }
 
     // MARK: - Event Handling

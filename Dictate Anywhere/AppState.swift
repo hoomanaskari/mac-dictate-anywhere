@@ -156,7 +156,17 @@ final class AppState {
         if !ready {
             // Set synchronously so the UI sees it before any await yields
             isPreparingEngine = true
-            try? await activeEngine.prepare()
+            do {
+                try await activeEngine.prepare()
+            } catch {
+                logger.error("prepareActiveEngine: prepare() failed on first attempt: \(error.localizedDescription, privacy: .public)")
+                try? await Task.sleep(for: .seconds(1))
+                do {
+                    try await activeEngine.prepare()
+                } catch {
+                    logger.error("prepareActiveEngine: prepare() failed on retry: \(error.localizedDescription, privacy: .public)")
+                }
+            }
             logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
         }
         isPreparingEngine = false
