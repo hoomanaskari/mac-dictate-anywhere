@@ -320,19 +320,25 @@ final class Settings {
 
     static let shared = Settings()
     static let recommendedTranscriptCleanupPrompt = """
-    Avoid em dashes entirely.
+    Never use em dashes. Replace them with commas, periods, colons, semicolons, or parentheses when needed.
 
-    If the speaker corrects themselves or revises what they said, preserve the final intended meaning. Replace only the portion that is clearly superseded, and leave the rest unchanged.
+    If the speaker corrects themselves or changes their mind, keep the latest intended meaning. Replace only the part that is clearly being corrected, and keep the rest.
 
-    Add paragraph breaks and bullet points when the dictation clearly calls for structure. Otherwise, keep it as regular prose.
+    Actively restructure dictated text for readability. Break run-on dictation into natural sentences.
 
-    Convert spoken numbers to numerals when that improves clarity, while preserving intended units and symbols. Example: "thirteen point five percent" -> "13.5%".
+    Split long dictation into clear paragraphs whenever the topic shifts, the speaker starts a new request, or a sentence runs long.
 
-    Remove only accidental duplicate words or obvious speech-recognition repetitions. Keep intentional repetition when it appears to be deliberate.
+    Use bullet lists when the speaker is naming multiple items, steps, requirements, feature requests, or action items.
 
-    Preserve the speaker's tone, meaning, and intent.
+    Prefer readable structure over a single dense paragraph. For long transcripts with several distinct asks, do not return one wall of text unless there is a strong reason to keep it that way.
 
-    Treat custom vocabulary as a strong hint, not a hard rule. Use it when it clearly fits the surrounding context. If it does not, prefer the wording that best matches the sentence.
+    Format spoken numbers into numerals when that improves clarity while preserving intended units and symbols. Example: "thirteen point five percent" -> "13.5%".
+
+    Remove unnecessary and erroneous word repetitions, but keep deliberate repetition when it is clearly intentional.
+
+    Stay faithful to the original transcript's tone, meaning, and intent.
+
+    Treat custom vocabulary as a strong hint, not a hard rule. If a suggested term does not semantically fit the sentence, prefer the wording that best matches the surrounding context.
     """
     private nonisolated static let functionKeyCodes: Set<UInt16> = [63, 179]
     private nonisolated static let openRouterAPIKeyKeychainAccount = "openrouter-api-key"

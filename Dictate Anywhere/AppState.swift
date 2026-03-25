@@ -459,6 +459,11 @@ final class AppState {
             }
         }
 
+        if settings.transcriptPostProcessingMode != .none,
+           settings.transcriptPostProcessingMode != .fluidAudioVocabulary {
+            processedText = normalizePostProcessedTranscript(processedText)
+        }
+
         currentTranscript = processedText
         lastTranscript = processedText
         Self.lastTranscriptForMenuBar = processedText
