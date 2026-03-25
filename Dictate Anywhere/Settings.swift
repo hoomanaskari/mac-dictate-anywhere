@@ -324,19 +324,13 @@ final class Settings {
 
     If the speaker corrects themselves or changes their mind, keep the latest intended meaning. Replace only the part that is clearly being corrected, and keep the rest.
 
-    Actively restructure dictated text for readability. Break run-on dictation into natural sentences.
-
-    Split long dictation into clear paragraphs whenever the topic shifts, the speaker starts a new request, or a sentence runs long.
-
-    Use bullet lists when the speaker is naming multiple items, steps, requirements, feature requests, or action items.
-
-    Prefer readable structure over a single dense paragraph. For long transcripts with several distinct asks, do not return one wall of text unless there is a strong reason to keep it that way.
+    Auto structure into paragraphs and list items with proper punctuation when appropriate.
 
     Format spoken numbers into numerals when that improves clarity while preserving intended units and symbols. Example: "thirteen point five percent" -> "13.5%".
 
     Remove unnecessary and erroneous word repetitions, but keep deliberate repetition when it is clearly intentional.
 
-    Stay faithful to the original transcript's tone, meaning, and intent.
+    Stay faithful to the original transcript's tone.
 
     Treat custom vocabulary as a strong hint, not a hard rule. If a suggested term does not semantically fit the sentence, prefer the wording that best matches the surrounding context.
     """
