@@ -20,7 +20,7 @@
 ]]></description>
             <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.6/DictateAnywhere-2.2.6.zip" length="8435928" type="application/octet-stream" sparkle:edSignature="/D1StHSBFdy0pWIck7PQdGDy7dG+hBf+btBf8jHCmQCL1eMMLNOYhNi2FQzzml/mOq06u49ZkNV+4gcFErPfAQ=="/>
             <sparkle:deltas>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.6/Dictate%20Anywhere17-16.delta" sparkle:deltaFrom="16" length="605554" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="yza4Uw63jKHAnuDk6iQgyIjCM91OLQc2K74d8hhQEoR6+NUBEwHED0eC0ACh4rqDOvLGzGRZQy6b7g/EXKZZCg=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.6/Dictate.Anywhere17-16.delta" sparkle:deltaFrom="16" length="605554" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="yza4Uw63jKHAnuDk6iQgyIjCM91OLQc2K74d8hhQEoR6+NUBEwHED0eC0ACh4rqDOvLGzGRZQy6b7g/EXKZZCg=="/>
             </sparkle:deltas>
         </item>
         <item>
