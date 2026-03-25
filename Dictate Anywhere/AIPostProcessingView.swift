@@ -328,7 +328,7 @@ struct AIPostProcessingView: View {
         } header: {
             Text("Prompt")
         } footer: {
-            Text("Optional. Default cleanup is punctuation, capitalization, grammar, and formatting, but this prompt can request extra safe cleanup such as removing filler words or normalizing domain terms.")
+            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for Ollama.")
         }
 
         vocabularySection(
@@ -417,7 +417,7 @@ struct AIPostProcessingView: View {
         } header: {
             Text("Prompt")
         } footer: {
-            Text("Optional. Default cleanup is punctuation, capitalization, grammar, and formatting, but this prompt can request extra safe cleanup such as removing filler words or normalizing domain terms.")
+            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for OpenRouter.")
         }
 
         vocabularySection(
@@ -1222,7 +1222,7 @@ private struct AIPostProcessingViewPreviewHost: View {
         appState.settings.transcriptPostProcessingMode = .ollama
         appState.settings.ollamaBaseURL = OllamaPostProcessingService.defaultBaseURL
         appState.settings.ollamaModel = "mistral-small3.2:latest"
-        appState.settings.ollamaPostProcessingPrompt = "Fix punctuation and sentence boundaries. Keep product names exact."
+        appState.settings.ollamaPostProcessingPrompt = Settings.recommendedTranscriptCleanupPrompt
         appState.settings.customVocabulary = ["Dictate Anywhere", "Parakeet", "Ollama"]
         _appState = State(initialValue: appState)
     }

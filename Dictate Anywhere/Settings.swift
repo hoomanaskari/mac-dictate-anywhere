@@ -319,6 +319,21 @@ final class Settings {
     // MARK: - Singleton
 
     static let shared = Settings()
+    static let recommendedTranscriptCleanupPrompt = """
+    Avoid em dashes entirely.
+
+    If the speaker corrects themselves or revises what they said, preserve the final intended meaning. Replace only the portion that is clearly superseded, and leave the rest unchanged.
+
+    Add paragraph breaks and bullet points when the dictation clearly calls for structure. Otherwise, keep it as regular prose.
+
+    Convert spoken numbers to numerals when that improves clarity, while preserving intended units and symbols. Example: "thirteen point five percent" -> "13.5%".
+
+    Remove only accidental duplicate words or obvious speech-recognition repetitions. Keep intentional repetition when it appears to be deliberate.
+
+    Preserve the speaker's tone, meaning, and intent.
+
+    Treat custom vocabulary as a strong hint, not a hard rule. Use it when it clearly fits the surrounding context. If it does not, prefer the wording that best matches the sentence.
+    """
     private nonisolated static let functionKeyCodes: Set<UInt16> = [63, 179]
     private nonisolated static let openRouterAPIKeyKeychainAccount = "openrouter-api-key"
 
@@ -692,11 +707,13 @@ final class Settings {
         ollamaReasoningSetting = OllamaReasoningSetting(
             rawValue: defaults.string(forKey: Keys.ollamaReasoningSetting) ?? ""
         ) ?? .disabled
-        ollamaPostProcessingPrompt = defaults.string(forKey: Keys.ollamaPostProcessingPrompt) ?? ""
+        ollamaPostProcessingPrompt = defaults.string(forKey: Keys.ollamaPostProcessingPrompt)
+            ?? Self.recommendedTranscriptCleanupPrompt
         let storedOpenRouterAPIKey = Self.storedOpenRouterAPIKey()
         openRouterAPIKey = storedOpenRouterAPIKey
         openRouterModel = defaults.string(forKey: Keys.openRouterModel) ?? ""
-        openRouterPostProcessingPrompt = defaults.string(forKey: Keys.openRouterPostProcessingPrompt) ?? ""
+        openRouterPostProcessingPrompt = defaults.string(forKey: Keys.openRouterPostProcessingPrompt)
+            ?? Self.recommendedTranscriptCleanupPrompt
         let storedOpenRouterCredentialHint = defaults.string(forKey: Keys.openRouterAPIKeyEnvironmentVariable)
             ?? OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable
         if storedOpenRouterAPIKey.isEmpty,

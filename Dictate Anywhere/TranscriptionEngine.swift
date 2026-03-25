@@ -999,7 +999,9 @@ private actor AsrManagerCoordinator {
 
     func initialize(models: AsrModels, config: ASRConfig) async throws {
         logger.info("initialize: starting (existing manager=\(self.manager != nil, privacy: .public))")
-        manager?.cleanup()
+        if let manager {
+            await manager.cleanup()
+        }
         let m = AsrManager(config: config)
         try await m.initialize(models: models)
         manager = m
@@ -1041,21 +1043,27 @@ private actor AsrManagerCoordinator {
             vocabulary: vocabulary,
             ctcModels: ctcModels!
         )
-        defer { manager.disableVocabularyBoosting() }
-
-        logger.info(
-            "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
-        )
-        let result = try await manager.transcribe(samples)
-        logger.info(
-            "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars, appliedTerms=\(result.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
-        )
-        return result
+        do {
+            logger.info(
+                "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
+            )
+            let result = try await manager.transcribe(samples)
+            logger.info(
+                "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars, appliedTerms=\(result.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
+            )
+            await manager.disableVocabularyBoosting()
+            return result
+        } catch {
+            await manager.disableVocabularyBoosting()
+            throw error
+        }
     }
 
-    func cleanup() {
+    func cleanup() async {
         logger.info("cleanup: releasing manager (was initialized=\(self.manager != nil, privacy: .public))")
-        manager?.cleanup()
+        if let manager {
+            await manager.cleanup()
+        }
         manager = nil
         ctcModels = nil
     }
