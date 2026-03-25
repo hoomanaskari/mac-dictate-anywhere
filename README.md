@@ -84,17 +84,17 @@ Sample cleanup prompt for Ollama or OpenRouter:
 ```text
 Avoid em dashes entirely.
 
-When the speaker revises or corrects themselves, preserve the final intended phrasing and only replace the portion that was clearly superseded.
+If the speaker corrects themselves or revises what they said, preserve the final intended meaning. Replace only the portion that is clearly superseded, and leave the rest unchanged.
 
-In developer and editing contexts, interpret "carrot" as "caret" when the transcript is obviously referring to the text cursor.
+Add paragraph breaks and bullet points when the dictation clearly calls for structure. Otherwise, keep it as regular prose.
 
-Add clean paragraph breaks or bullet points when the dictation naturally calls for structure.
+Convert spoken numbers to numerals when that improves clarity, while preserving intended units and symbols. Example: "thirteen point five percent" -> "13.5%".
 
-Convert spoken numbers into concise numeric form when that improves clarity, such as "thirteen point five percent" to "13.5%".
+Remove only accidental duplicate words or obvious speech-recognition repetitions. Keep intentional repetition when it appears to be deliberate.
 
-Remove accidental duplicate words and strip filler sounds like um, uh, uhh, umm, and hmm.
+Preserve the speaker's tone, meaning, and intent.
 
-Keep the speaker's tone and intent intact while improving punctuation, grammar, and readability.
+Treat custom vocabulary as a strong hint, not a hard rule. Use it when it clearly fits the surrounding context. If it does not, prefer the wording that best matches the sentence.
 ```
 
 Benefits of using Ollama:
