@@ -21,8 +21,8 @@
 ]]></description>
             <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/DictateAnywhere-2.2.8.zip" length="8546097" type="application/octet-stream" sparkle:edSignature="r4wES6uDDIdiBPvgcG84rsnLtFyKY/iMH8eCnayMVeCaAB96tT7/WFVqSwogMwgHflkV9GcS7NRdRzXIaZAADA=="/>
             <sparkle:deltas>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate%20Anywhere19-18.delta" sparkle:deltaFrom="18" length="1305666" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="5cqL1LBTORSMGiS6VpVtBwzueuOfwKTEvcYw+hUbM96uMzD71Hd3sKPvmWldLF8B+aZ2JCNSrjMHvo7NVgoBDQ=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate%20Anywhere19-17.delta" sparkle:deltaFrom="17" length="1306862" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="omGAPMmBpt9CIG1s9cm8ckDnr/aOj4/A8bzBMhdGJ6eUYVNrXCSH+2jTOP7zoMpDSzGY5EmFL+clseYH9/sSBQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate.Anywhere19-18.delta" sparkle:deltaFrom="18" length="1305666" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="5cqL1LBTORSMGiS6VpVtBwzueuOfwKTEvcYw+hUbM96uMzD71Hd3sKPvmWldLF8B+aZ2JCNSrjMHvo7NVgoBDQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate.Anywhere19-17.delta" sparkle:deltaFrom="17" length="1306862" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="omGAPMmBpt9CIG1s9cm8ckDnr/aOj4/A8bzBMhdGJ6eUYVNrXCSH+2jTOP7zoMpDSzGY5EmFL+clseYH9/sSBQ=="/>
             </sparkle:deltas>
         </item>
         <item>
