@@ -98,30 +98,6 @@ struct MainWindow: View {
             minHeight: MainWindowSizing.minimumHeight,
             maxHeight: .infinity
         )
-        .task {
-            await appState.permissions.check()
-            if appState.permissions.accessibilityGranted {
-                if appState.settings.hasHotkey {
-                    appState.hotkeyService.startMonitoring()
-                }
-            } else {
-                // Trigger the system prompt to add the app to the Accessibility list
-                appState.permissions.promptForAccessibility()
-                appState.permissions.startPolling()
-            }
-            await appState.prepareActiveEngine()
-        }
-        .onChange(of: appState.permissions.accessibilityGranted) { _, granted in
-            if granted {
-                appState.permissions.stopPolling()
-                if appState.settings.hasHotkey && !appState.hotkeyService.isMonitoring {
-                    appState.hotkeyService.startMonitoring()
-                }
-            } else {
-                appState.hotkeyService.stopMonitoring()
-                appState.permissions.startPolling()
-            }
-        }
     }
 
     @ViewBuilder

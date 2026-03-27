@@ -31,6 +31,7 @@ struct ModelsView: View {
                         downloadError = nil
                         settings.parakeetModelChoice = newValue
                         Task {
+                            await appState.parakeetEngine.recheckModelOnDisk(for: newValue)
                             await appState.handleParakeetModelSelectionChange(userInitiated: true)
                         }
                     }
@@ -51,11 +52,11 @@ struct ModelsView: View {
                 }
 
                 LabeledContent("Languages") {
-                    Text(selectedModel.isEnglishOnly ? "English only" : "25 European languages")
+                    Text(selectedModel.languageSummary)
                 }
 
                 LabeledContent("Size") {
-                    Text("~500 MB")
+                    Text(selectedModel.sizeSummary)
                 }
 
                 if let alternateModel = alternateInstalledModel(excluding: selectedModel) {
@@ -116,7 +117,7 @@ struct ModelsView: View {
             } header: {
                 Text("Parakeet (FluidAudio)")
             } footer: {
-                Text("Choose Multilingual for automatic language detection across 25 supported languages, or English Only for stronger English accuracy when you never dictate in other languages.")
+                Text(selectedModel.speechModelFooter)
             }
 
         }
@@ -131,7 +132,7 @@ struct ModelsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove the \(selectedModel.displayName.lowercased()) Parakeet model (~500 MB). You can download it again later.")
+            Text("This will remove the \(selectedModel.displayName.lowercased()) Parakeet model (\(selectedModel.sizeSummary)). You can download it again later.")
         }
     }
 

@@ -91,11 +91,13 @@ enum TranscriptionEngineChoice: String, CaseIterable {
 enum ParakeetModelChoice: String, CaseIterable {
     case multilingual = "multilingual"
     case englishOnly = "englishOnly"
+    case compactEnglish = "compactEnglish"
 
     var displayName: String {
         switch self {
         case .multilingual: return "Multilingual"
         case .englishOnly: return "English Only"
+        case .compactEnglish: return "English Compact (110M)"
         }
     }
 
@@ -105,6 +107,8 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "25 European languages with automatic language detection."
         case .englishOnly:
             return "English-only vocabulary tuned for stronger English accuracy."
+        case .compactEnglish:
+            return "Smaller English-only Parakeet model with faster downloads and lower memory use."
         }
     }
 
@@ -114,11 +118,53 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "parakeet-tdt-0.6b-v3-coreml"
         case .englishOnly:
             return "parakeet-tdt-0.6b-v2-coreml"
+        case .compactEnglish:
+            return "parakeet-tdt-ctc-110m"
         }
     }
 
     var isEnglishOnly: Bool {
-        self == .englishOnly
+        switch self {
+        case .multilingual:
+            return false
+        case .englishOnly, .compactEnglish:
+            return true
+        }
+    }
+
+    var languageSummary: String {
+        isEnglishOnly ? "English only" : "25 European languages"
+    }
+
+    var sizeSummary: String {
+        switch self {
+        case .multilingual, .englishOnly:
+            return "~500 MB"
+        case .compactEnglish:
+            return "~220 MB"
+        }
+    }
+
+    var languageSettingsFooter: String {
+        switch self {
+        case .multilingual:
+            return "The multilingual Parakeet model auto-detects among 25 supported European languages."
+        case .englishOnly:
+            return "The English-only Parakeet model is optimized for English dictation."
+        case .compactEnglish:
+            return "The compact 110M Parakeet model is English-only and optimized for faster startup with lower memory use."
+        }
+    }
+
+    var speechModelFooter: String {
+        switch self {
+        case .multilingual:
+            return "Choose Multilingual for automatic language detection across 25 supported languages."
+        case .englishOnly:
+            return "Choose English Only for stronger English accuracy when you never dictate in other languages."
+        case .compactEnglish:
+            return "Choose English Compact (110M) for a smaller, faster English-only model when download size and memory use matter most."
+        }
     }
 }
 

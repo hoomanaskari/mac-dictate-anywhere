@@ -48,11 +48,7 @@ struct SettingsView: View {
             } header: {
                 Text("Language")
             } footer: {
-                Text(
-                    parakeetModelChoice.isEnglishOnly
-                    ? "The English-only Parakeet model is optimized for English dictation."
-                    : "The multilingual Parakeet model auto-detects among 25 supported European languages."
-                )
+                Text(parakeetModelChoice.languageSettingsFooter)
             }
 
             // MARK: - Audio

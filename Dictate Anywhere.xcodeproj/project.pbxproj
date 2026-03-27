@@ -283,7 +283,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Dictate Anywhere/Dictate_Anywhere.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
@@ -291,7 +291,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dictate Anywhere/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere";
+				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere Dev";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Dictate Anywhere uses Apple Events to paste transcribed text into other applications.";
@@ -302,9 +302,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.2.7;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 2.2.8;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere.dev";
+				PRODUCT_NAME = "Dictate Anywhere Dev";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -324,7 +324,7 @@
 				CODE_SIGN_IDENTITY = "Developer ID Application";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
@@ -343,7 +343,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.2.7;
+				MARKETING_VERSION = 2.2.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -384,8 +384,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = exactVersion;
+				version = 0.13.2;
 			};
 		};
 		E2SPARKLE003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
