@@ -66,3 +66,4 @@ sparkle-releases/
 # User-specific xcconfig files
 *.xcconfig
 !*.shared.xcconfig
+.superset/config.json
