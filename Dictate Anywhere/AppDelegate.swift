@@ -9,6 +9,7 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let appState = AppState()
     let softwareUpdater = SoftwareUpdater()
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
@@ -17,15 +18,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard enforceSingleInstance() else { return }
+        NSApp.disableRelaunchOnLogin()
         FluidAudioDebugLogFilter.installIfNeeded()
         setupMenuBar()
         configureMainWindow()
         setupNotificationObservers()
         applyAppearanceMode()
+        appState.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return false }
+        showMainWindow()
+        return true
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -115,18 +124,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentMaxSize = NSSize(width: MainWindowSizing.maximumWidth, height: MainWindowSizing.maximumHeight)
         window.center()
         window.delegate = self
-        applyAppearanceMode()
     }
 
     // MARK: - Appearance
 
-    private func applyAppearanceMode() {
-        NSApp.setActivationPolicy(Settings.shared.appAppearanceMode.activationPolicy)
+    private func applyAppearanceMode(treatingMainWindowAsVisible: Bool = false) {
+        let preferredPolicy = Settings.shared.appAppearanceMode.activationPolicy
+        let shouldPresentRegularApp = preferredPolicy == .regular || treatingMainWindowAsVisible || mainWindow?.isVisible == true
+        let targetPolicy: NSApplication.ActivationPolicy = shouldPresentRegularApp ? .regular : .accessory
+        if NSApp.activationPolicy() != targetPolicy {
+            NSApp.setActivationPolicy(targetPolicy)
+        }
     }
 
     private func setupNotificationObservers() {
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppearanceChanged), name: .appAppearanceModeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(dismissMenusForPaste), name: .dismissMenusForPaste, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleShowMainWindowRequest), name: .requestShowMainWindow, object: nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -141,15 +155,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu?.cancelTracking()
     }
 
+    @objc private func handleShowMainWindowRequest() {
+        showMainWindow()
+    }
+
     // MARK: - Menu Actions
 
-    @objc private func showMainWindow() {
-        NSApp.setActivationPolicy(Settings.shared.appAppearanceMode.activationPolicy)
+    @objc func showMainWindow() {
+        applyAppearanceMode(treatingMainWindowAsVisible: true)
         NSApp.activate(ignoringOtherApps: true)
         if let window = mainWindow {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
             window.makeKeyAndOrderFront(nil)
         } else if let window = NSApp.windows.first(where: { $0.contentView != nil }) {
             mainWindow = window
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
             window.makeKeyAndOrderFront(nil)
         }
     }
@@ -219,6 +243,7 @@ extension AppDelegate: NSWindowDelegate {
 
 extension Notification.Name {
     static let dismissMenusForPaste = Notification.Name("dismissMenusForPaste")
+    static let requestShowMainWindow = Notification.Name("requestShowMainWindow")
 }
 
 // MARK: - FluidAudio Debug Log Filter

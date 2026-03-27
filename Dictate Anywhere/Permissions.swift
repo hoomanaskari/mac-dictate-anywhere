@@ -14,11 +14,18 @@ final class Permissions {
     // MARK: - State
 
     var micGranted: Bool = false
-    var accessibilityGranted: Bool = false
+    var accessibilityGranted: Bool = false {
+        didSet {
+            guard oldValue != accessibilityGranted else { return }
+            onAccessibilityPermissionChanged?(accessibilityGranted)
+        }
+    }
 
     var allGranted: Bool {
         micGranted && accessibilityGranted
     }
+
+    var onAccessibilityPermissionChanged: ((Bool) -> Void)?
 
     // MARK: - Private
 

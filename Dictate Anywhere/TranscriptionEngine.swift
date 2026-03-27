@@ -145,18 +145,16 @@ private extension ParakeetModelChoice {
             return .v3
         case .englishOnly:
             return .v2
+        case .compactEnglish:
+            return .tdtCtc110m
         }
     }
-}
 
-private extension AsrModelVersion {
-    nonisolated var parakeetModelChoice: ParakeetModelChoice {
-        switch self {
-        case .v2:
-            return .englishOnly
-        case .v3:
-            return .multilingual
-        }
+    nonisolated var asrConfig: ASRConfig {
+        ASRConfig(
+            streamingEnabled: true,
+            streamingThreshold: 160_000
+        )
     }
 }
 
@@ -462,11 +460,12 @@ final class ParakeetEngine: TranscriptionEngine {
             loadedModels = nil
         }
 
+        await recheckModelOnDisk(for: selectedModel)
+
         let coordinatorReady = await asrCoordinator.isInitialized()
         await MainActor.run {
             self.isReady = coordinatorReady && isSelectedModelLoaded
         }
-        await updateSelectedModelDownloadedState()
     }
 
     nonisolated private static func checkModelOnDiskSync(for modelChoice: ParakeetModelChoice) -> Bool {
@@ -502,7 +501,7 @@ final class ParakeetEngine: TranscriptionEngine {
             let models = try await AsrModels.downloadAndLoad(version: modelChoice.asrModelVersion)
             progressTask.cancel()
 
-            let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
+            let config = modelChoice.asrConfig
             try await asrCoordinator.initialize(models: models, config: config)
             self.loadedModels = models
 
@@ -582,7 +581,7 @@ final class ParakeetEngine: TranscriptionEngine {
             models = try await AsrModels.loadFromCache(version: modelChoice.asrModelVersion)
         }
 
-        let config = ASRConfig(streamingEnabled: true, streamingThreshold: 160_000)
+        let config = modelChoice.asrConfig
         do {
             try await asrCoordinator.initialize(models: models, config: config)
         } catch {

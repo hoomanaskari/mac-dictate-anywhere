@@ -78,6 +78,8 @@ final class AppState {
 
     /// Engine pinned for the active dictation session (start -> stop/cancel).
     private var sessionEngine: TranscriptionEngine?
+    private var startupTask: Task<Void, Never>?
+    private var hasStarted = false
 
     // MARK: - Active Engine
 
@@ -89,6 +91,7 @@ final class AppState {
 
     init() {
         setupHotkeyCallbacks()
+        setupPermissionCallbacks()
     }
 
     // MARK: - Hotkey Callbacks
@@ -128,6 +131,48 @@ final class AppState {
             Task { @MainActor [weak self] in
                 await self?.cancelDictation()
             }
+        }
+    }
+
+    private func setupPermissionCallbacks() {
+        permissions.onAccessibilityPermissionChanged = { [weak self] granted in
+            Task { @MainActor [weak self] in
+                self?.handleAccessibilityPermissionChanged(granted)
+            }
+        }
+    }
+
+    func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
+
+        startupTask = Task { [weak self] in
+            await self?.runStartupSequence()
+        }
+    }
+
+    private func runStartupSequence() async {
+        await permissions.check()
+        updateAccessibilityIntegration(granted: permissions.accessibilityGranted, promptIfNeeded: true)
+        await prepareActiveEngine()
+    }
+
+    private func handleAccessibilityPermissionChanged(_ granted: Bool) {
+        updateAccessibilityIntegration(granted: granted, promptIfNeeded: false)
+    }
+
+    private func updateAccessibilityIntegration(granted: Bool, promptIfNeeded: Bool) {
+        if granted {
+            permissions.stopPolling()
+            if settings.hasHotkey && !hotkeyService.isMonitoring {
+                hotkeyService.startMonitoring()
+            }
+        } else {
+            hotkeyService.stopMonitoring()
+            if promptIfNeeded {
+                permissions.promptForAccessibility()
+            }
+            permissions.startPolling()
         }
     }
 
@@ -598,11 +643,7 @@ final class AppState {
         guard response == .alertFirstButtonReturn else { return }
 
         selectedPage = .models
-        if let window = NSApp.windows.first(where: {
-            $0.contentView != nil && !($0.contentView is NSVisualEffectView && $0.level == .floating)
-        }) {
-            window.makeKeyAndOrderFront(nil)
-        }
+        NotificationCenter.default.post(name: .requestShowMainWindow, object: nil)
     }
 }
 

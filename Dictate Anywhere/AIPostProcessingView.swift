@@ -704,8 +704,9 @@ struct AIPostProcessingView: View {
         let query = currentOpenRouterModel(settings: settings)
         guard !query.isEmpty else { return [] }
 
-        let normalizedQuery = query.lowercased()
-        let exactMatch = query.lowercased()
+        let catalogLookupQuery = OpenRouterPostProcessingService.catalogLookupModelID(for: query)
+        let normalizedQuery = catalogLookupQuery.lowercased()
+        let exactMatch = normalizedQuery
 
         return availability.models
             .filter { $0.id.lowercased().contains(normalizedQuery) }
@@ -952,7 +953,13 @@ struct AIPostProcessingView: View {
             }
         } else if let resolvedModel {
             Label {
-                Text(openRouterAvailableModelStatusMessage(for: resolvedModel, apiKeyStatus: apiKeyStatus))
+                Text(
+                    openRouterAvailableModelStatusMessage(
+                        selectedModel: selectedModel,
+                        resolvedModel: resolvedModel,
+                        apiKeyStatus: apiKeyStatus
+                    )
+                )
             } icon: {
                 Image(systemName: resolvedModel.supportsStructuredOutputs ? "checkmark.circle" : "exclamationmark.triangle")
                     .foregroundStyle(resolvedModel.supportsStructuredOutputs ? .green : .orange)
@@ -982,19 +989,32 @@ struct AIPostProcessingView: View {
     }
 
     private func openRouterAvailableModelStatusMessage(
-        for model: OpenRouterPostProcessingService.Model,
+        selectedModel: String,
+        resolvedModel model: OpenRouterPostProcessingService.Model,
         apiKeyStatus: OpenRouterPostProcessingService.APIKeyStatus
     ) -> String {
+        let selectedCatalogLookupModel = OpenRouterPostProcessingService.catalogLookupModelID(for: selectedModel)
+        let usesDynamicVariant = !selectedModel.isEmpty
+            && selectedModel.caseInsensitiveCompare(model.id) != .orderedSame
+            && selectedCatalogLookupModel.caseInsensitiveCompare(model.id) == .orderedSame
+        let modelReference: String
+
+        if usesDynamicVariant {
+            modelReference = "\(selectedModel) is valid on OpenRouter and uses the \(model.id) catalog entry"
+        } else {
+            modelReference = "\(model.id) is available on OpenRouter"
+        }
+
         if model.supportsStructuredOutputs {
             if model.supportsAudioInput {
-                return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises both structured output and audio input support."
+                return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(modelReference), which advertises both structured output and audio input support."
             }
-            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises structured output support."
+            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(modelReference), which advertises structured output support."
         }
         if model.supportsAudioInput {
-            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter and advertises audio input support, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
+            return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(modelReference), which advertises audio input support, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
         }
-        return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(model.id) is available on OpenRouter, but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
+        return "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(modelReference), but it does not advertise structured outputs. Dictate Anywhere will fall back to prompt-based JSON parsing if needed."
     }
 
     private func openRouterCredentialSourceMessage(

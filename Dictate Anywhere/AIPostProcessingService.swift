@@ -1203,6 +1203,12 @@ enum OpenRouterPostProcessingService {
     static let defaultAPIKeyEnvironmentVariable = "OPENROUTER_API_KEY"
     private static let appAttributionURL = "https://github.com/hoomanaskari/mac-dictate-anywhere"
     private static let appTitle = "Dictate Anywhere"
+    private static let dynamicModelVariants: Set<String> = [
+        "exacto",
+        "floor",
+        "nitro",
+        "online",
+    ]
 
     private static let baseURL = URL(string: "https://openrouter.ai/api/v1")!
     private static let logger = Logger(
@@ -1303,11 +1309,39 @@ enum OpenRouterPostProcessingService {
         guard let availability else { return nil }
         let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedModel.isEmpty else { return nil }
-        return availability.models.first { $0.id.caseInsensitiveCompare(trimmedModel) == .orderedSame }
+        if let exactMatch = availability.models.first(where: {
+            $0.id.caseInsensitiveCompare(trimmedModel) == .orderedSame
+        }) {
+            return exactMatch
+        }
+
+        let catalogLookupModel = catalogLookupModelID(for: trimmedModel)
+        guard !catalogLookupModel.isEmpty,
+              catalogLookupModel.caseInsensitiveCompare(trimmedModel) != .orderedSame else {
+            return nil
+        }
+
+        return availability.models.first { $0.id.caseInsensitiveCompare(catalogLookupModel) == .orderedSame }
     }
 
     static func supportsAudioInput(for selectedModel: String, in availability: Availability?) -> Bool {
         matchingAvailableModel(for: selectedModel, in: availability)?.supportsAudioInput ?? false
+    }
+
+    static func catalogLookupModelID(for selectedModel: String) -> String {
+        let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else { return "" }
+
+        var components = trimmedModel
+            .split(separator: ":")
+            .map(String.init)
+        while components.count > 1,
+              let suffix = components.last?.lowercased(),
+              dynamicModelVariants.contains(suffix) {
+            components.removeLast()
+        }
+
+        return components.joined(separator: ":")
     }
 
     static func process(
