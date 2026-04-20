@@ -47,13 +47,23 @@ struct OverlayContent: View {
     }
 
     private var overlayTextColor: Color {
-        if #available(macOS 26, *) { return .white.opacity(0.95) }
-        return .white
+        if colorScheme == .dark {
+            if #available(macOS 26, *) { return .white.opacity(0.95) }
+            return .white
+        }
+
+        if #available(macOS 26, *) { return .black.opacity(0.88) }
+        return .black
     }
 
     private var overlaySecondaryTextColor: Color {
-        if #available(macOS 26, *) { return .white.opacity(0.82) }
-        return .white.opacity(0.85)
+        if colorScheme == .dark {
+            if #available(macOS 26, *) { return .white.opacity(0.82) }
+            return .white.opacity(0.85)
+        }
+
+        if #available(macOS 26, *) { return .black.opacity(0.72) }
+        return .black.opacity(0.78)
     }
 
     private var stateCategory: String {
@@ -229,7 +239,6 @@ private struct GlassPillModifier: ViewModifier {
     @ViewBuilder
     private func decorated<S: Shape>(content: Content, shape: S) -> some View {
         if #available(macOS 26, *) {
-            // Keep a dark glass base in both themes so overlay text remains readable.
             let tint = colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.24)
             let stroke = colorScheme == .dark ? Color.white.opacity(0.25) : Color.white.opacity(0.18)
             content

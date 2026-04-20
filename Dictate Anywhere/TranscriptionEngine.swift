@@ -989,6 +989,7 @@ final class ParakeetEngine: TranscriptionEngine {
 private actor AsrManagerCoordinator {
     private var manager: AsrManager?
     private var ctcModels: CtcModels?
+    private var ctcTokenizer: CtcTokenizer?
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
         category: "AsrCoordinator"
@@ -1002,7 +1003,7 @@ private actor AsrManagerCoordinator {
             await manager.cleanup()
         }
         let m = AsrManager(config: config)
-        try await m.initialize(models: models)
+        try await m.loadModels(models)
         manager = m
         logger.info("initialize: completed successfully")
     }
@@ -1018,16 +1019,35 @@ private actor AsrManagerCoordinator {
     func transcribeWithCustomVocabulary(_ samples: [Float], terms: [String]) async throws -> ASRResult {
         guard let manager else { throw TranscriptionError.engineNotReady }
 
-        let vocabularyTerms = terms
+        let rawTerms = terms
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .map { CustomVocabularyTerm(text: $0) }
-        guard !vocabularyTerms.isEmpty else {
+        guard !rawTerms.isEmpty else {
             return try await transcribe(samples)
         }
 
         if ctcModels == nil {
             ctcModels = try await CtcModels.downloadAndLoad(variant: .ctc110m)
+        }
+        guard let ctcModels else {
+            return try await transcribe(samples)
+        }
+
+        if ctcTokenizer == nil {
+            let ctcModelDir = CtcModels.defaultCacheDirectory(for: ctcModels.variant)
+            ctcTokenizer = try await CtcTokenizer.load(from: ctcModelDir)
+        }
+        guard let ctcTokenizer else {
+            return try await transcribe(samples)
+        }
+
+        let vocabularyTerms = rawTerms.compactMap { term -> CustomVocabularyTerm? in
+            let tokenIds = ctcTokenizer.encode(term)
+            guard !tokenIds.isEmpty else { return nil }
+            return CustomVocabularyTerm(text: term, ctcTokenIds: tokenIds)
+        }
+        guard !vocabularyTerms.isEmpty else {
+            return try await transcribe(samples)
         }
 
         let vocabulary = CustomVocabularyContext(
@@ -1038,24 +1058,69 @@ private actor AsrManagerCoordinator {
             minTermLength: 4
         )
 
-        try await manager.configureVocabularyBoosting(
-            vocabulary: vocabulary,
-            ctcModels: ctcModels!
+        logger.info(
+            "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
         )
-        do {
-            logger.info(
-                "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
-            )
-            let result = try await manager.transcribe(samples)
-            logger.info(
-                "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars, appliedTerms=\(result.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
-            )
-            await manager.disableVocabularyBoosting()
+
+        let result = try await manager.transcribe(samples)
+        guard let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty else {
             return result
-        } catch {
-            await manager.disableVocabularyBoosting()
-            throw error
         }
+
+        let blankId = ctcModels.vocabulary.count
+        let spotter = CtcKeywordSpotter(models: ctcModels, blankId: blankId)
+        let ctcModelDir = CtcModels.defaultCacheDirectory(for: ctcModels.variant)
+        let rescorer = try await VocabularyRescorer.create(
+            spotter: spotter,
+            vocabulary: vocabulary,
+            config: .default,
+            ctcModelDirectory: ctcModelDir
+        )
+
+        let spotResult = try await spotter.spotKeywordsWithLogProbs(
+            audioSamples: samples,
+            customVocabulary: vocabulary,
+            minScore: nil
+        )
+        guard !spotResult.logProbs.isEmpty else {
+            return result
+        }
+
+        let vocabConfig = ContextBiasingConstants.rescorerConfig(forVocabSize: vocabulary.terms.count)
+        let minSimilarity = max(vocabConfig.minSimilarity, vocabulary.minSimilarity)
+        let rescoreOutput = rescorer.ctcTokenRescore(
+            transcript: result.text,
+            tokenTimings: tokenTimings,
+            logProbs: spotResult.logProbs,
+            frameDuration: spotResult.frameDuration,
+            cbw: vocabConfig.cbw,
+            marginSeconds: 0.5,
+            minSimilarity: minSimilarity
+        )
+
+        guard rescoreOutput.wasModified else {
+            logger.info(
+                "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars without vocabulary replacements"
+            )
+            return result
+        }
+
+        let detected = deduplicatedTerms(
+            from: rescoreOutput.replacements.compactMap(\.replacementWord)
+        )
+        let applied = deduplicatedTerms(
+            from: rescoreOutput.replacements.filter(\.shouldReplace).compactMap(\.replacementWord)
+        )
+
+        let rescoredResult = result.withRescoring(
+            text: rescoreOutput.text,
+            detected: detected.isEmpty ? nil : detected,
+            applied: applied.isEmpty ? nil : applied
+        )
+        logger.info(
+            "transcribeWithCustomVocabulary: returned \(rescoredResult.text.count, privacy: .public) chars, appliedTerms=\(rescoredResult.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
+        )
+        return rescoredResult
     }
 
     func cleanup() async {
@@ -1065,5 +1130,15 @@ private actor AsrManagerCoordinator {
         }
         manager = nil
         ctcModels = nil
+        ctcTokenizer = nil
+    }
+
+    private func deduplicatedTerms(from terms: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for term in terms where seen.insert(term).inserted {
+            ordered.append(term)
+        }
+        return ordered
     }
 }
