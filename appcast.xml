@@ -12,7 +12,11 @@
             <sparkle:version>20</sparkle:version>
             <sparkle:shortVersionString>2.2.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <sparkle:releaseNotesLink>https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/sparkle-releases/DictateAnywhere-2.2.9.md</sparkle:releaseNotesLink>
+            <description sparkle:format="markdown"><![CDATA[# Dictate Anywhere 2.2.9
+
+- Updated FluidAudio to 0.13.6.
+- Improved release packaging so direct GitHub downloads use a notarized DMG.
+]]></description>
             <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.9/DictateAnywhere-2.2.9.zip" length="5084221" type="application/octet-stream" sparkle:edSignature="ArFCrV83IwiDhvV4zkyAlvSig3qpKsV1hPqkv08dtGP9JrSuzWtqtI/FWCFN6kDpqKMLUAwTjqYjnoJLPQ+kDA=="/>
             <sparkle:deltas>
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.9/Dictate%20Anywhere20-19.delta" sparkle:deltaFrom="19" length="1225218" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="hHHfwt/zJe5an9mJzJRI5Jc8OHlrZAWAettF9SEw8rRFUFb0zS0OcBBRlGCPStyz2+3r3rF/f+rgavv++Z5IAw=="/>
