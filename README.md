@@ -41,7 +41,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 
 ### Download
 
-1. Download the latest `Dictate.Anywhere.dmg` from [Releases](../../releases)
+1. Download the latest notarized `.dmg` from [Releases](../../releases)
 2. Open the DMG and drag **Dictate Anywhere** to your Applications folder
 3. Launch the app and grant the required permissions
 

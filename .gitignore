@@ -48,7 +48,8 @@ Thumbs.db
 
 # Distribution
 dist/
-sparkle-releases/
+sparkle-releases/*
+!sparkle-releases/*.md
 
 # Secrets / signing keys / certificates (defense-in-depth)
 *.pem

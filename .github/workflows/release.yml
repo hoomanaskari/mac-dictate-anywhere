@@ -20,9 +20,15 @@ jobs:
           body: |
             ## Installation
 
-            1. Download `Dictate.Anywhere.dmg` below
+            1. Download the notarized `.dmg` below for manual installs
             2. Open the DMG and drag **Dictate Anywhere** to Applications
             3. Launch and grant Microphone + Accessibility permissions
+
+            ## Maintainer Checklist
+
+            - Build release artifacts with `./scripts/release-macos.sh`
+            - Upload both the notarized `.dmg` and the Sparkle `.zip`
+            - Do not publish the release with only a `.pkg` or an unstapled container
 
             ## What's Changed
 
