@@ -13,8 +13,8 @@ Do not upload a `.pkg` unless it has been separately signed, notarized, and veri
 
 This Mac must have:
 
-- `Developer ID Application: Pixel Forty Inc. (2SQ9JNU8XE)`
-- `Developer ID Installer: Pixel Forty Inc. (2SQ9JNU8XE)` only if you ever want to ship a `.pkg`
+- your own `Developer ID Application` certificate
+- your own `Developer ID Installer` certificate only if you ever want to ship a `.pkg`
 
 You can verify them with:
 
@@ -24,7 +24,7 @@ security find-identity -v -p basic
 
 ### 2. Store Apple notarization credentials
 
-Create the notarization profile used by the release script:
+Create the notarization profile used by your local release script:
 
 ```bash
 xcrun notarytool store-credentials "notarytool-profile"
@@ -53,6 +53,16 @@ To import the private key on a new machine:
 brew install create-dmg
 ```
 
+### 5. Set your local signing team
+
+Create `Config/Signing.local.xcconfig` on your machine:
+
+```xcconfig
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+```
+
+This file is ignored by Git.
+
 ## Release Steps
 
 ### 1. Bump the version
@@ -76,7 +86,14 @@ git push origin "refs/tags/v${VERSION}"
 
 ### 3. Build, notarize, and generate release artifacts
 
-Run the release script:
+If you have not done it yet, create your local release script:
+
+```bash
+cp scripts/release-macos.template.sh scripts/release-macos.sh
+chmod +x scripts/release-macos.sh
+```
+
+Then run it:
 
 ```bash
 ./scripts/release-macos.sh

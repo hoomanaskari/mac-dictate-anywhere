@@ -13,6 +13,7 @@
 
 /* Begin PBXFileReference section */
 		E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Dictate Anywhere.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.shared.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -53,6 +54,7 @@
 			isa = PBXGroup;
 			children = (
 				E2A66B5A2F18203C00DABF41 /* Dictate Anywhere */,
+				E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */,
 				E2A66B592F18203C00DABF41 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -187,7 +189,6 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -253,7 +254,6 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -277,6 +277,7 @@
 		};
 		E2A66B642F18203D00DABF41 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -285,7 +286,6 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 20;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -317,6 +317,7 @@
 		};
 		E2A66B652F18203D00DABF41 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -326,7 +327,6 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 20;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;

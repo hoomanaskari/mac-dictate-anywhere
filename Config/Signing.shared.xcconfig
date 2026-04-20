@@ -1,0 +1,4 @@
+#include? "Signing.local.xcconfig"
+
+// Create Config/Signing.local.xcconfig on your machine and set:
+// DEVELOPMENT_TEAM = YOUR_TEAM_ID

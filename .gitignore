@@ -50,6 +50,7 @@ Thumbs.db
 dist/
 sparkle-releases/*
 !sparkle-releases/*.md
+scripts/release-macos.sh
 
 # Secrets / signing keys / certificates (defense-in-depth)
 *.pem

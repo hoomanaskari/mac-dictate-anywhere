@@ -182,6 +182,14 @@ open "Dictate Anywhere.xcodeproj"
 xcodebuild -project "Dictate Anywhere.xcodeproj" -scheme "Dictate Anywhere" -configuration Release build
 ```
 
+If you only want to run the app locally, you do not need the release packaging script.
+
+If you want to sign builds with your own Apple Developer account, create `Config/Signing.local.xcconfig` on your machine with:
+
+```xcconfig
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+```
+
 ### Create DMG (optional)
 
 ```bash
@@ -194,6 +202,31 @@ create-dmg \
   --app-drop-link 450 185 \
   "dist/Dictate Anywhere.dmg" \
   "dist"
+```
+
+### Signed Release Packaging
+
+The maintainer release script is intentionally not tracked. Create your own local copy like this:
+
+```bash
+cp scripts/release-macos.template.sh scripts/release-macos.sh
+chmod +x scripts/release-macos.sh
+```
+
+Then edit `scripts/release-macos.sh` and set your own values for:
+
+- `NOTARY_PROFILE`
+- `TEAM_ID`
+- `DEVELOPER_ID_APP`
+- `DOWNLOAD_URL_PREFIX`
+- `REPOSITORY_LINK`
+
+Also create `Config/Signing.local.xcconfig` with your own Apple Developer team ID, and update the Xcode signing settings and bundle identifiers if your local release setup needs different values.
+
+When your local signing setup is ready, package the release with:
+
+```bash
+./scripts/release-macos.sh
 ```
 
 ## How It Works
