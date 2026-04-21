@@ -174,6 +174,7 @@ enum TranscriptPostProcessingMode: String, CaseIterable {
     case appleIntelligence = "appleIntelligence"
     case ollama = "ollama"
     case openRouter = "openRouter"
+    case openAICompatible = "openAICompatible"
 
     var displayName: String {
         switch self {
@@ -182,6 +183,7 @@ enum TranscriptPostProcessingMode: String, CaseIterable {
         case .appleIntelligence: return "Apple Intelligence"
         case .ollama: return "Ollama"
         case .openRouter: return "OpenRouter"
+        case .openAICompatible: return "OpenAI Compatible"
         }
     }
 }
@@ -382,6 +384,7 @@ final class Settings {
     """
     private nonisolated static let functionKeyCodes: Set<UInt16> = [63, 179]
     private nonisolated static let openRouterAPIKeyKeychainAccount = "openrouter-api-key"
+    private nonisolated static let openAICompatibleAPIKeyKeychainAccount = "openai-compatible-api-key"
 
     /// Background queue for sound playback
     private let soundQueue = DispatchQueue(label: "com.dictate-anywhere.sounds", qos: .userInteractive)
@@ -422,6 +425,9 @@ final class Settings {
         static let openRouterModel = "openRouterModel"
         static let openRouterPostProcessingPrompt = "openRouterPostProcessingPrompt"
         static let openRouterAPIKeyEnvironmentVariable = "openRouterAPIKeyEnvironmentVariable"
+        static let openAICompatibleBaseURL = "openAICompatibleBaseURL"
+        static let openAICompatibleModel = "openAICompatibleModel"
+        static let openAICompatiblePostProcessingPrompt = "openAICompatiblePostProcessingPrompt"
     }
 
     // MARK: - Hotkey Settings
@@ -575,6 +581,33 @@ final class Settings {
         }
     }
 
+    var openAICompatibleBaseURL: String {
+        didSet {
+            UserDefaults.standard.set(openAICompatibleBaseURL, forKey: Keys.openAICompatibleBaseURL)
+        }
+    }
+
+    var openAICompatibleModel: String {
+        didSet {
+            UserDefaults.standard.set(openAICompatibleModel, forKey: Keys.openAICompatibleModel)
+        }
+    }
+
+    var openAICompatibleAPIKey: String {
+        didSet {
+            Self.storeOpenAICompatibleAPIKey(openAICompatibleAPIKey)
+        }
+    }
+
+    var openAICompatiblePostProcessingPrompt: String {
+        didSet {
+            UserDefaults.standard.set(
+                openAICompatiblePostProcessingPrompt,
+                forKey: Keys.openAICompatiblePostProcessingPrompt
+            )
+        }
+    }
+
     var fluidAudioVocabularyEnabled: Bool {
         transcriptPostProcessingMode == .fluidAudioVocabulary
     }
@@ -589,6 +622,10 @@ final class Settings {
 
     var openRouterPostProcessingEnabled: Bool {
         transcriptPostProcessingMode == .openRouter
+    }
+
+    var openAICompatiblePostProcessingEnabled: Bool {
+        transcriptPostProcessingMode == .openAICompatible
     }
 
     // MARK: - Microphone Selection
@@ -773,6 +810,12 @@ final class Settings {
         } else {
             openRouterAPIKeyEnvironmentVariable = storedOpenRouterCredentialHint
         }
+        openAICompatibleBaseURL = defaults.string(forKey: Keys.openAICompatibleBaseURL)
+            ?? OpenAICompatiblePostProcessingService.defaultBaseURL
+        openAICompatibleModel = defaults.string(forKey: Keys.openAICompatibleModel) ?? ""
+        openAICompatibleAPIKey = Self.storedOpenAICompatibleAPIKey()
+        openAICompatiblePostProcessingPrompt = defaults.string(forKey: Keys.openAICompatiblePostProcessingPrompt)
+            ?? Self.recommendedTranscriptCleanupPrompt
 
         // Microphone selection
         selectedMicrophoneUID = defaults.string(forKey: Keys.selectedMicrophoneUID)
@@ -1180,6 +1223,25 @@ final class Settings {
             value,
             service: openRouterAPIKeyKeychainService,
             account: openRouterAPIKeyKeychainAccount
+        )
+    }
+
+    private nonisolated static var openAICompatibleAPIKeyKeychainService: String {
+        (Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere") + ".openai-compatible"
+    }
+
+    private nonisolated static func storedOpenAICompatibleAPIKey() -> String {
+        KeychainSecretStore.read(
+            service: openAICompatibleAPIKeyKeychainService,
+            account: openAICompatibleAPIKeyKeychainAccount
+        )
+    }
+
+    private nonisolated static func storeOpenAICompatibleAPIKey(_ value: String) {
+        KeychainSecretStore.write(
+            value,
+            service: openAICompatibleAPIKeyKeychainService,
+            account: openAICompatibleAPIKeyKeychainAccount
         )
     }
 

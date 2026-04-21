@@ -502,6 +502,19 @@ final class AppState {
             } catch {
                 // Silently fall back to original text on failure
             }
+        case .openAICompatible:
+            do {
+                processedText = try await OpenAICompatiblePostProcessingService.process(
+                    text: finalText,
+                    baseURL: settings.openAICompatibleBaseURL,
+                    model: settings.openAICompatibleModel,
+                    apiKey: settings.openAICompatibleAPIKey,
+                    prompt: settings.openAICompatiblePostProcessingPrompt,
+                    vocabulary: settings.customVocabulary
+                )
+            } catch {
+                // Silently fall back to original text on failure
+            }
         }
 
         if settings.transcriptPostProcessingMode != .none,

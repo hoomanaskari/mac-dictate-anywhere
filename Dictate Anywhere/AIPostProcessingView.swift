@@ -19,6 +19,9 @@ struct AIPostProcessingView: View {
     @State private var openRouterAvailability: OpenRouterPostProcessingService.Availability?
     @State private var openRouterStatusMessage: String?
     @State private var isCheckingOpenRouter = false
+    @State private var openAICompatibleAvailability: OpenAICompatiblePostProcessingService.Availability?
+    @State private var openAICompatibleStatusMessage: String?
+    @State private var isCheckingOpenAICompatible = false
     private let shouldAutoRefreshProviderAvailability: Bool
 
     init(
@@ -27,6 +30,8 @@ struct AIPostProcessingView: View {
         initialOllamaStatusMessage: String? = nil,
         initialOpenRouterAvailability: OpenRouterPostProcessingService.Availability? = nil,
         initialOpenRouterStatusMessage: String? = nil,
+        initialOpenAICompatibleAvailability: OpenAICompatiblePostProcessingService.Availability? = nil,
+        initialOpenAICompatibleStatusMessage: String? = nil,
         shouldAutoRefreshProviderAvailability: Bool = true
     ) {
         _ollamaAvailability = State(initialValue: initialOllamaAvailability)
@@ -34,6 +39,8 @@ struct AIPostProcessingView: View {
         _ollamaStatusMessage = State(initialValue: initialOllamaStatusMessage)
         _openRouterAvailability = State(initialValue: initialOpenRouterAvailability)
         _openRouterStatusMessage = State(initialValue: initialOpenRouterStatusMessage)
+        _openAICompatibleAvailability = State(initialValue: initialOpenAICompatibleAvailability)
+        _openAICompatibleStatusMessage = State(initialValue: initialOpenAICompatibleStatusMessage)
         self.shouldAutoRefreshProviderAvailability = shouldAutoRefreshProviderAvailability
     }
 
@@ -79,6 +86,8 @@ struct AIPostProcessingView: View {
                 ollamaContent(settings: settings)
             case .openRouter:
                 openRouterContent(settings: settings)
+            case .openAICompatible:
+                openAICompatibleContent(settings: settings)
             }
         }
         .formStyle(.grouped)
@@ -423,6 +432,110 @@ struct AIPostProcessingView: View {
         vocabularySection(
             settings: settings,
             footer: "These terms are sent to OpenRouter to preserve product names, names, and domain-specific wording during post-processing."
+        )
+    }
+
+    @ViewBuilder
+    private func openAICompatibleContent(settings: Settings) -> some View {
+        Section {
+            TextField(
+                "Server URL",
+                text: Binding(
+                    get: { settings.openAICompatibleBaseURL },
+                    set: { settings.openAICompatibleBaseURL = $0 }
+                ),
+                prompt: Text(OpenAICompatiblePostProcessingService.defaultBaseURL)
+            )
+
+            SecureField(
+                "API Key (Optional)",
+                text: Binding(
+                    get: { settings.openAICompatibleAPIKey },
+                    set: { settings.openAICompatibleAPIKey = $0 }
+                ),
+                prompt: Text("Leave blank for local servers without auth")
+            )
+
+            TextField(
+                "Model",
+                text: Binding(
+                    get: { settings.openAICompatibleModel },
+                    set: { settings.openAICompatibleModel = $0 }
+                ),
+                prompt: Text("local-model")
+            )
+
+            HStack(alignment: .top, spacing: 12) {
+                openAICompatibleStatusView(settings: settings)
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button(isCheckingOpenAICompatible ? "Checking..." : "Refresh Models") {
+                        Task {
+                            await refreshOpenAICompatibleAvailability(settings: settings, debounce: false)
+                        }
+                    }
+                    .disabled(isCheckingOpenAICompatible)
+
+                    if !settings.openAICompatibleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Clear Stored Key", role: .destructive) {
+                            settings.openAICompatibleAPIKey = ""
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            if let availability = openAICompatibleAvailability, !availability.models.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Available Models")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    FlowLayout(spacing: 6) {
+                        ForEach(availability.models, id: \.self) { model in
+                            let isSelected = settings.openAICompatibleModel.caseInsensitiveCompare(model) == .orderedSame
+                            Button {
+                                settings.openAICompatibleModel = model
+                            } label: {
+                                Text(model)
+                                    .font(.caption)
+                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12))
+                            .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("OpenAI Compatible")
+        } footer: {
+            Text("Runs transcript cleanup through a local or self-hosted OpenAI-compatible chat completions server, such as LM Studio, llama.cpp, vLLM, or LocalAI. Use the base URL and model name reported by that server.")
+        }
+
+        Section {
+            SettingsMultilineTextArea(
+                text: Binding(
+                    get: { settings.openAICompatiblePostProcessingPrompt },
+                    set: { settings.openAICompatiblePostProcessingPrompt = $0 }
+                ),
+                placeholder: "Optional: add style or cleanup instructions for this server."
+            )
+            .labelsHidden()
+        } header: {
+            Text("Prompt")
+        } footer: {
+            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for this server.")
+        }
+
+        vocabularySection(
+            settings: settings,
+            footer: "These terms are sent to the OpenAI-compatible server to preserve product names, names, and domain-specific wording during post-processing."
         )
     }
 
@@ -1032,12 +1145,73 @@ struct AIPostProcessingView: View {
         }
     }
 
+    @ViewBuilder
+    private func openAICompatibleStatusView(settings: Settings) -> some View {
+        let selectedModel = settings.openAICompatibleModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if isCheckingOpenAICompatible {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Checking server...")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let message = openAICompatibleStatusMessage {
+            Label {
+                Text(message)
+            } icon: {
+                Image(systemName: "xmark.circle")
+                    .foregroundStyle(.red)
+            }
+        } else if let availability = openAICompatibleAvailability {
+            if availability.models.isEmpty {
+                Label {
+                    Text("Connected, but the server did not report any models.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            } else if selectedModel.isEmpty {
+                Label {
+                    Text("Connected. Choose a model below or enter one manually.")
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                }
+            } else if availability.selectedModelIsAvailable {
+                Label {
+                    Text("Connected. \(selectedModel) is available.")
+                } icon: {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                }
+            } else {
+                Label {
+                    Text("Connected, but \(selectedModel) was not listed by this server.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            }
+        } else {
+            Label {
+                Text("Enter a server URL and refresh models to check connectivity.")
+            } icon: {
+                Image(systemName: "network")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func providerTaskID(settings: Settings) -> String {
         [
             settings.transcriptPostProcessingMode.rawValue,
             settings.ollamaBaseURL,
             settings.ollamaModel,
             openRouterAvailabilityRefreshKey(settings: settings),
+            settings.openAICompatibleBaseURL,
+            settings.openAICompatibleModel,
+            openAICompatibleAvailabilityRefreshKey(settings: settings),
             String(appState.ollamaModelActionsRevision),
         ].joined(separator: "|")
     }
@@ -1064,17 +1238,31 @@ struct AIPostProcessingView: View {
         ].joined(separator: "|")
     }
 
+    private func openAICompatibleAvailabilityRefreshKey(settings: Settings) -> String {
+        let hasStoredKey = !settings.openAICompatibleAPIKey
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        return hasStoredKey ? "stored-key" : "no-stored-key"
+    }
+
     private func refreshProviderAvailabilityIfNeeded(settings: Settings) async {
         switch settings.transcriptPostProcessingMode {
         case .ollama:
             resetOpenRouterAvailability()
+            resetOpenAICompatibleAvailability()
             await refreshOllamaAvailability(settings: settings, debounce: true)
         case .openRouter:
             resetOllamaAvailability()
+            resetOpenAICompatibleAvailability()
             await refreshOpenRouterAvailability(settings: settings, debounce: true)
+        case .openAICompatible:
+            resetOllamaAvailability()
+            resetOpenRouterAvailability()
+            await refreshOpenAICompatibleAvailability(settings: settings, debounce: true)
         case .none, .fluidAudioVocabulary, .appleIntelligence:
             resetOllamaAvailability()
             resetOpenRouterAvailability()
+            resetOpenAICompatibleAvailability()
         }
     }
 
@@ -1153,6 +1341,39 @@ struct AIPostProcessingView: View {
         }
     }
 
+    private func refreshOpenAICompatibleAvailability(settings: Settings, debounce: Bool) async {
+        guard settings.transcriptPostProcessingMode == .openAICompatible else {
+            resetOpenAICompatibleAvailability()
+            return
+        }
+
+        if debounce {
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+        }
+
+        isCheckingOpenAICompatible = true
+        defer { isCheckingOpenAICompatible = false }
+
+        do {
+            let availability = try await OpenAICompatiblePostProcessingService.availability(
+                baseURL: settings.openAICompatibleBaseURL,
+                apiKey: settings.openAICompatibleAPIKey,
+                selectedModel: settings.openAICompatibleModel
+            )
+            guard !Task.isCancelled else { return }
+            openAICompatibleAvailability = availability
+            openAICompatibleStatusMessage = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            openAICompatibleAvailability = nil
+            openAICompatibleStatusMessage = error.localizedDescription
+        }
+    }
+
     private func resetOllamaAvailability() {
         isCheckingOllama = false
         ollamaAvailability = nil
@@ -1164,6 +1385,12 @@ struct AIPostProcessingView: View {
         isCheckingOpenRouter = false
         openRouterAvailability = nil
         openRouterStatusMessage = nil
+    }
+
+    private func resetOpenAICompatibleAvailability() {
+        isCheckingOpenAICompatible = false
+        openAICompatibleAvailability = nil
+        openAICompatibleStatusMessage = nil
     }
 
     private func ollamaReasoningFooter(for capability: OllamaReasoningCapability) -> String {
