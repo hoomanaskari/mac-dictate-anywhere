@@ -439,24 +439,10 @@ enum OllamaPostProcessingService {
     )
     static let suggestedModels: [SuggestedModel] = [
         SuggestedModel(
-            name: "mistral-small3.2:latest",
+            name: "gemma4:e4b",
             badge: "Recommended",
             description: "Best default balance for transcript cleanup quality and latency.",
-            downloadSizeLabel: "15 GB download",
-            parameterSizeLabel: "24B params"
-        ),
-        SuggestedModel(
-            name: "mistral-nemo:12b",
-            badge: "Small",
-            description: "Smaller download that still follows cleanup prompts reliably.",
-            downloadSizeLabel: "7.1 GB download",
-            parameterSizeLabel: "12B params"
-        ),
-        SuggestedModel(
-            name: "gemma3:4b",
-            badge: "Smallest",
-            description: "Lightest suggested option for local post-processing.",
-            downloadSizeLabel: "3.3 GB download",
+            downloadSizeLabel: nil,
             parameterSizeLabel: "4B params"
         ),
     ]

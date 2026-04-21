@@ -237,7 +237,7 @@ struct AIPostProcessingView: View {
                     get: { settings.ollamaModel },
                     set: { settings.ollamaModel = $0 }
                 ),
-                prompt: Text("llama3.2")
+                prompt: Text("gemma4:e4b")
             )
 
             HStack(alignment: .top, spacing: 12) {
@@ -1468,7 +1468,7 @@ private struct AIPostProcessingViewPreviewHost: View {
         let appState = AppState()
         appState.settings.transcriptPostProcessingMode = .ollama
         appState.settings.ollamaBaseURL = OllamaPostProcessingService.defaultBaseURL
-        appState.settings.ollamaModel = "mistral-small3.2:latest"
+        appState.settings.ollamaModel = "gemma4:e4b"
         appState.settings.ollamaPostProcessingPrompt = Settings.recommendedTranscriptCleanupPrompt
         appState.settings.customVocabulary = ["Dictate Anywhere", "Parakeet", "Ollama"]
         _appState = State(initialValue: appState)
