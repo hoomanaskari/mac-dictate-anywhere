@@ -6,6 +6,26 @@
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
         <item>
+            <title>2.2.11</title>
+            <pubDate>Tue, 21 Apr 2026 15:09:29 -0400</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>22</sparkle:version>
+            <sparkle:shortVersionString>2.2.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Dictate Anywhere 2.2.11
+
+- Updated the Ollama suggested model list to a single recommended model.
+]]></description>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/DictateAnywhere-2.2.11.zip" length="5146183" type="application/octet-stream" sparkle:edSignature="kVMK2Y4H+mfFn8a6KPCEhXbtFrBEPaWvDzNZ/o/efcbjYg2uzThJ05l+6ADTKzqUpsK///yrGguIvUQ79ODYDA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/Dictate.Anywhere22-21.delta" sparkle:deltaFrom="21" length="249430" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="0ZlJlFNXu6/2AuU6ulvB5KE0jVOmOsHkl5hizwY9m1CYYh7UQPmPLMvMYDxBwjcUFMP/dxyRBg+5uzi47l28BQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/Dictate.Anywhere22-20.delta" sparkle:deltaFrom="20" length="589386" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="BNVbBhtipH+w29OEvmQvtzX93dyGVmsWcQxXa6vUh25m3Eu32gSHc1O8XSJ2cbJF2njT+NlFTavwgsgSY6+hAQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/Dictate.Anywhere22-19.delta" sparkle:deltaFrom="19" length="1329290" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="33wAziGhS/Z9vVCLYPdSf3HaRmqGF5t8mSLrxkC/6fmVCfcip9fiO+8LmlcXRrs+280OAvt6ydbRI/pCsMxNBw=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/Dictate.Anywhere22-18.delta" sparkle:deltaFrom="18" length="1500458" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ZKVGqSH2lPU6nJcjfG4X09MKRosFvUKBM1ZEWk3smuGdouKVz3QZGOXFoXIfPwwTdeMPSdtdTfKUElxo1+f7Aw=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.11/Dictate.Anywhere22-17.delta" sparkle:deltaFrom="17" length="1501270" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="YRa0pfAHkt/F7u2ekK7uY86xj6hwipmed2oxuFlft8JgYhrzuhREdGnxfaB0B2XRCPKlsDr5UYSsmQdOzBxTBw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>2.2.10</title>
             <pubDate>Tue, 21 Apr 2026 14:41:01 -0400</pubDate>
             <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
@@ -45,20 +65,6 @@
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.9/Dictate.Anywhere20-18.delta" sparkle:deltaFrom="18" length="1419934" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="FgMMdD78je9SAl6KJvajYi7CkYnxwLSQ9Tk7Tnqc5O3yrRgEj2OjoDYxiaIXQErF3rBzOr7s1EI+bC6lRbofDA=="/>
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.9/Dictate.Anywhere20-17.delta" sparkle:deltaFrom="17" length="1420266" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2oa0TT4h3aEChDQ1pdNEgPqIqWnZ1g380tzMelXldtfDbLmac4Cs4qVU59jMe+QVWySt6XaBcsjLmrh+yHP+Dg=="/>
             </sparkle:deltas>
-        </item>
-        <item>
-            <title>2.2.8</title>
-            <pubDate>Fri, 27 Mar 2026 13:39:38 -0400</pubDate>
-            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
-            <sparkle:version>19</sparkle:version>
-            <sparkle:shortVersionString>2.2.8</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/DictateAnywhere-2.2.8.zip" length="8546097" type="application/octet-stream" sparkle:edSignature="r4wES6uDDIdiBPvgcG84rsnLtFyKY/iMH8eCnayMVeCaAB96tT7/WFVqSwogMwgHflkV9GcS7NRdRzXIaZAADA=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate.Anywhere19-18.delta" sparkle:deltaFrom="18" length="1305666" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="5cqL1LBTORSMGiS6VpVtBwzueuOfwKTEvcYw+hUbM96uMzD71Hd3sKPvmWldLF8B+aZ2JCNSrjMHvo7NVgoBDQ=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.2.8/Dictate.Anywhere19-17.delta" sparkle:deltaFrom="17" length="1306862" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="omGAPMmBpt9CIG1s9cm8ckDnr/aOj4/A8bzBMhdGJ6eUYVNrXCSH+2jTOP7zoMpDSzGY5EmFL+clseYH9/sSBQ=="/>
-            </sparkle:deltas>
-            <sparkle:releaseNotesLink>https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/sparkle-releases/DictateAnywhere-2.2.8.md</sparkle:releaseNotesLink>
         </item>
     </channel>
 </rss>
