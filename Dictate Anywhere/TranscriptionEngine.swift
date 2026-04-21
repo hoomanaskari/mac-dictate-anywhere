@@ -272,6 +272,32 @@ private func makeRecordingEngine(
     return engine
 }
 
+nonisolated private func makePCMBuffer(from samples: [Float], sampleRate: Double = 16_000) throws -> AVAudioPCMBuffer {
+    guard !samples.isEmpty else {
+        throw TranscriptionError.audioFormatError
+    }
+    guard let format = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: sampleRate,
+        channels: 1,
+        interleaved: false
+    ),
+          let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(samples.count)
+          ),
+          let channelData = buffer.floatChannelData else {
+        throw TranscriptionError.audioFormatError
+    }
+
+    buffer.frameLength = AVAudioFrameCount(samples.count)
+    samples.withUnsafeBufferPointer { source in
+        guard let baseAddress = source.baseAddress else { return }
+        memcpy(channelData[0], baseAddress, samples.count * MemoryLayout<Float>.stride)
+    }
+    return buffer
+}
+
 private func deviceUID(for deviceID: AudioDeviceID) -> String? {
     var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyDeviceUID,
@@ -780,7 +806,7 @@ final class ParakeetEngine: TranscriptionEngine {
         let recordedSamples = sampleLock.withLock { fullRecordingSamples }
 
         if settings.fluidAudioVocabularyEnabled, !settings.customVocabulary.isEmpty {
-            guard recordedSamples.count > 8000, hasSignificantAudio(recordedSamples) else {
+            guard recordedSamples.count > 8000, containsSignificantAudio(recordedSamples) else {
                 return liveText
             }
 
@@ -805,7 +831,7 @@ final class ParakeetEngine: TranscriptionEngine {
         let samples = sampleLock.withLock { sampleBuffer }
         var finalTranscript = committedTranscript
 
-        guard samples.count > 8000, hasSignificantAudio(samples) else {
+        guard samples.count > 8000, containsSignificantAudio(samples) else {
             let result = finalTranscript.isEmpty ? liveText : finalTranscript
             return result.count >= liveText.count ? result : liveText
         }
@@ -843,6 +869,28 @@ final class ParakeetEngine: TranscriptionEngine {
         guard !samples.isEmpty else { return false }
         let recent = Array(samples.suffix(speechCheckWindowSamples))
         return audioLooksNonEmpty(recent)
+    }
+
+    private func containsSignificantAudio(_ samples: [Float]) -> Bool {
+        guard !samples.isEmpty else { return false }
+        guard samples.count > speechCheckWindowSamples else {
+            return audioLooksNonEmpty(samples)
+        }
+
+        let hopSize = max(1, speechCheckWindowSamples / 2)
+        var startIndex = 0
+        while startIndex < samples.count {
+            let endIndex = min(startIndex + speechCheckWindowSamples, samples.count)
+            if audioLooksNonEmpty(Array(samples[startIndex..<endIndex])) {
+                return true
+            }
+            if endIndex == samples.count {
+                break
+            }
+            startIndex += hopSize
+        }
+
+        return false
     }
 
     private func audioLooksNonEmpty(_ samples: [Float]) -> Bool {
@@ -988,6 +1036,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
 private actor AsrManagerCoordinator {
     private var manager: AsrManager?
+    private var models: AsrModels?
     private var ctcModels: CtcModels?
     private var ctcTokenizer: CtcTokenizer?
     private let logger = Logger(
@@ -1001,10 +1050,13 @@ private actor AsrManagerCoordinator {
         logger.info("initialize: starting (existing manager=\(self.manager != nil, privacy: .public))")
         if let manager {
             await manager.cleanup()
+            self.manager = nil
+            self.models = nil
         }
         let m = AsrManager(config: config)
         try await m.loadModels(models)
         manager = m
+        self.models = models
         logger.info("initialize: completed successfully")
     }
 
@@ -1018,6 +1070,7 @@ private actor AsrManagerCoordinator {
 
     func transcribeWithCustomVocabulary(_ samples: [Float], terms: [String]) async throws -> ASRResult {
         guard let manager else { throw TranscriptionError.engineNotReady }
+        guard let models else { throw TranscriptionError.engineNotReady }
 
         let rawTerms = terms
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1050,77 +1103,60 @@ private actor AsrManagerCoordinator {
             return try await transcribe(samples)
         }
 
-        let vocabulary = CustomVocabularyContext(
-            terms: vocabularyTerms,
-            minCtcScore: -10.0,
-            minSimilarity: 0.68,
-            minCombinedConfidence: 0.68,
-            minTermLength: 4
-        )
+        let vocabulary = CustomVocabularyContext(terms: vocabularyTerms)
 
         logger.info(
-            "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with \(vocabularyTerms.count, privacy: .public) custom terms"
+            "transcribeWithCustomVocabulary: transcribing \(samples.count, privacy: .public) samples with FluidAudio vocabulary boosting and \(vocabularyTerms.count, privacy: .public) custom terms"
         )
 
-        let result = try await manager.transcribe(samples)
-        guard let tokenTimings = result.tokenTimings, !tokenTimings.isEmpty else {
-            return result
-        }
-
-        let blankId = ctcModels.vocabulary.count
-        let spotter = CtcKeywordSpotter(models: ctcModels, blankId: blankId)
-        let ctcModelDir = CtcModels.defaultCacheDirectory(for: ctcModels.variant)
-        let rescorer = try await VocabularyRescorer.create(
-            spotter: spotter,
-            vocabulary: vocabulary,
-            config: .default,
-            ctcModelDirectory: ctcModelDir
+        let startedAt = Date()
+        let streamingManager = SlidingWindowAsrManager(
+            config: SlidingWindowAsrConfig(
+                chunkSeconds: 11.0,
+                hypothesisChunkSeconds: 1.0,
+                leftContextSeconds: 2.0,
+                rightContextSeconds: 2.0,
+                minContextForConfirmation: 0.0,
+                confirmationThreshold: 0.0
+            )
         )
 
-        let spotResult = try await spotter.spotKeywordsWithLogProbs(
-            audioSamples: samples,
-            customVocabulary: vocabulary,
-            minScore: nil
-        )
-        guard !spotResult.logProbs.isEmpty else {
-            return result
-        }
+        do {
+            try await streamingManager.configureVocabularyBoosting(
+                vocabulary: vocabulary,
+                ctcModels: ctcModels
+            )
+            try await streamingManager.start(models: models, source: .microphone)
 
-        let vocabConfig = ContextBiasingConstants.rescorerConfig(forVocabSize: vocabulary.terms.count)
-        let minSimilarity = max(vocabConfig.minSimilarity, vocabulary.minSimilarity)
-        let rescoreOutput = rescorer.ctcTokenRescore(
-            transcript: result.text,
-            tokenTimings: tokenTimings,
-            logProbs: spotResult.logProbs,
-            frameDuration: spotResult.frameDuration,
-            cbw: vocabConfig.cbw,
-            marginSeconds: 0.5,
-            minSimilarity: minSimilarity
-        )
+            let streamChunkSize = 16_000
+            var offset = 0
+            while offset < samples.count {
+                let end = min(offset + streamChunkSize, samples.count)
+                let buffer = try makePCMBuffer(from: Array(samples[offset..<end]))
+                await streamingManager.streamAudio(buffer)
+                offset = end
+            }
 
-        guard rescoreOutput.wasModified else {
+            let text = try await streamingManager.finish()
+            await streamingManager.cleanup()
+
+            let result = ASRResult(
+                text: text,
+                confidence: 0.0,
+                duration: Double(samples.count) / 16_000.0,
+                processingTime: Date().timeIntervalSince(startedAt)
+            )
             logger.info(
-                "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars without vocabulary replacements"
+                "transcribeWithCustomVocabulary: returned \(result.text.count, privacy: .public) chars from FluidAudio vocabulary boosting"
             )
             return result
+        } catch {
+            await streamingManager.cleanup()
+            logger.error(
+                "transcribeWithCustomVocabulary: FluidAudio vocabulary boosting failed: \(error.localizedDescription, privacy: .public)"
+            )
+            return try await manager.transcribe(samples)
         }
-
-        let detected = deduplicatedTerms(
-            from: rescoreOutput.replacements.compactMap(\.replacementWord)
-        )
-        let applied = deduplicatedTerms(
-            from: rescoreOutput.replacements.filter(\.shouldReplace).compactMap(\.replacementWord)
-        )
-
-        let rescoredResult = result.withRescoring(
-            text: rescoreOutput.text,
-            detected: detected.isEmpty ? nil : detected,
-            applied: applied.isEmpty ? nil : applied
-        )
-        logger.info(
-            "transcribeWithCustomVocabulary: returned \(rescoredResult.text.count, privacy: .public) chars, appliedTerms=\(rescoredResult.ctcAppliedTerms?.joined(separator: ", ") ?? "", privacy: .public)"
-        )
-        return rescoredResult
     }
 
     func cleanup() async {
@@ -1129,16 +1165,8 @@ private actor AsrManagerCoordinator {
             await manager.cleanup()
         }
         manager = nil
+        models = nil
         ctcModels = nil
         ctcTokenizer = nil
-    }
-
-    private func deduplicatedTerms(from terms: [String]) -> [String] {
-        var seen = Set<String>()
-        var ordered: [String] = []
-        for term in terms where seen.insert(term).inserted {
-            ordered.append(term)
-        }
-        return ordered
     }
 }

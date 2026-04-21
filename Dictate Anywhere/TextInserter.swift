@@ -20,11 +20,11 @@ final class TextInserter {
 
     /// Inserts text into the currently focused input field
     func insertText(_ text: String) async -> TextInsertionResult {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failed }
+        let insertionText = Self.preparedTextForInsertion(text)
+        guard !insertionText.isEmpty else { return .failed }
 
         // Copy to clipboard first (always)
-        guard await copyToClipboard(trimmed) else { return .failed }
+        guard await copyToClipboard(insertionText) else { return .failed }
 
         // Check accessibility permission
         guard hasAccessibilityPermission(promptIfNeeded: true) else { return .copiedOnly }
@@ -47,6 +47,42 @@ final class TextInserter {
     }
 
     // MARK: - Private
+
+    private static func preparedTextForInsertion(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return trimmed + (hasTerminalPunctuation(trimmed) ? " " : ". ")
+    }
+
+    private static func hasTerminalPunctuation(_ text: String) -> Bool {
+        let closingScalarValues: Set<UInt32> = [
+            34, // "
+            39, // '
+            41, // )
+            93, // ]
+            125, // }
+            0x2019,
+            0x201D,
+        ]
+        let punctuationScalarValues: Set<UInt32> = [
+            33, // !
+            44, // ,
+            46, // .
+            58, // :
+            59, // ;
+            63, // ?
+            0x2026,
+        ]
+
+        for scalar in text.unicodeScalars.reversed() {
+            if closingScalarValues.contains(scalar.value) {
+                continue
+            }
+            return punctuationScalarValues.contains(scalar.value)
+        }
+
+        return false
+    }
 
     private func copyToClipboard(_ text: String) async -> Bool {
         let pasteboard = NSPasteboard.general
