@@ -16,15 +16,21 @@ enum TextInsertionResult {
 }
 
 final class TextInserter {
+    private var pendingSeparator = ""
+    private var pendingSeparatorTargetBundleIdentifier: String?
+
     // MARK: - Public
 
     /// Inserts text into the currently focused input field
     func insertText(_ text: String) async -> TextInsertionResult {
-        let insertionText = Self.preparedTextForInsertion(text)
+        let targetBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let insertionText = preparedTextForInsertion(text, targetBundleIdentifier: targetBundleIdentifier)
         guard !insertionText.isEmpty else { return .failed }
 
         // Copy to clipboard first (always)
         guard await copyToClipboard(insertionText) else { return .failed }
+
+        prepareForNextInsertion(targetBundleIdentifier: targetBundleIdentifier)
 
         // Check accessibility permission
         guard hasAccessibilityPermission(promptIfNeeded: true) else { return .copiedOnly }
@@ -48,10 +54,30 @@ final class TextInserter {
 
     // MARK: - Private
 
-    private static func preparedTextForInsertion(_ text: String) -> String {
+    private func preparedTextForInsertion(_ text: String, targetBundleIdentifier: String?) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        return trimmed + (hasTerminalPunctuation(trimmed) ? " " : ". ")
+
+        let separatorPrefix = separatorPrefixIfNeeded(for: targetBundleIdentifier)
+        let normalized = Self.hasTerminalPunctuation(trimmed) ? trimmed : trimmed + "."
+        return separatorPrefix + normalized
+    }
+
+    private func separatorPrefixIfNeeded(for targetBundleIdentifier: String?) -> String {
+        guard !pendingSeparator.isEmpty else { return "" }
+
+        guard pendingSeparatorTargetBundleIdentifier == targetBundleIdentifier else {
+            pendingSeparator = ""
+            pendingSeparatorTargetBundleIdentifier = nil
+            return ""
+        }
+
+        return pendingSeparator
+    }
+
+    private func prepareForNextInsertion(targetBundleIdentifier: String?) {
+        pendingSeparator = " "
+        pendingSeparatorTargetBundleIdentifier = targetBundleIdentifier
     }
 
     private static func hasTerminalPunctuation(_ text: String) -> Bool {
