@@ -94,6 +94,7 @@ normalize_appcast_links() {
     (my $raw_base = $repository_link) =~ s{^https://github\.com/}{https://raw.githubusercontent.com/};
     $raw_base .= "/main";
     s{https://github\.com/[^/]+/[^/]+/releases/download/v[^/]+/(DictateAnywhere-([0-9.]+)\.zip)}{"$download_url_prefix/v$2/$1"}ge;
+    s{(https://github\.com/[^/]+/[^/]+/releases/download/v[^/]+/)Dictate%20Anywhere([0-9]+-[0-9]+\.delta)}{$1Dictate.Anywhere$2}g;
     s{https://raw\.githubusercontent\.com/[^/]+/[^/]+/main/DictateAnywhere-([0-9.]+)\.md}{"$raw_base/sparkle-releases/DictateAnywhere-$1.md"}ge;
   ' "$APPCAST_PATH"
 }
