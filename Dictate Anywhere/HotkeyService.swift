@@ -100,7 +100,7 @@ final class HotkeyService {
         guard let tap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: hotkeyEventCallback,
             userInfo: selfPtr
@@ -148,7 +148,7 @@ final class HotkeyService {
 
     // MARK: - Event Handling
 
-    fileprivate func handleEvent(_ proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) {
+    fileprivate func handleEvent(_ proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
         // Handle escape key for cancelling hands-free mode
         if type == .keyDown {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
@@ -156,18 +156,22 @@ final class HotkeyService {
                 DispatchQueue.main.async { [weak self] in
                     self?.onEscape?()
                 }
-                return
+                return false
             }
         }
 
         let bindings = cachedBindings
+        var shouldConsumeEvent = false
         for binding in bindings where binding.hasBinding {
             if binding.keyCode == nil {
                 handleModifierOnlyEvent(type: type, event: event, binding: binding)
             } else {
-                handleKeyedEvent(type: type, event: event, binding: binding)
+                if handleKeyedEvent(type: type, event: event, binding: binding) {
+                    shouldConsumeEvent = true
+                }
             }
         }
+        return shouldConsumeEvent
     }
 
     private func canonicalBindingForMatching(_ binding: HotkeyBinding) -> HotkeyBinding {
@@ -180,41 +184,45 @@ final class HotkeyService {
         return normalized
     }
 
-    private func handleKeyedEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) {
-        guard let targetKeyCode = binding.keyCode else { return }
-        guard type == .keyDown || type == .keyUp else { return }
+    private func handleKeyedEvent(type: CGEventType, event: CGEvent, binding: HotkeyBinding) -> Bool {
+        guard let targetKeyCode = binding.keyCode else { return false }
+        guard type == .keyDown || type == .keyUp else { return false }
 
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        guard keyCode == targetKeyCode else { return }
-
-        let targetModifiers = binding.modifiers
-        let eventFlags = Settings.hotkeyModifiers(from: event.flags)
-        if !targetModifiers.isEmpty {
-            guard Settings.keyedModifiersMatch(event: eventFlags, target: targetModifiers) else { return }
-        }
+        guard keyCode == targetKeyCode else { return false }
 
         let bindingID = binding.id
+        let targetModifiers = binding.modifiers
+        let eventFlags = Settings.hotkeyModifiers(from: event.flags)
+        let isActive = activeBindingIDs.contains(bindingID)
+        let modifiersMatch = targetModifiers.isEmpty || Settings.keyedModifiersMatch(
+            event: eventFlags,
+            target: targetModifiers
+        )
+        guard modifiersMatch || (type == .keyUp && isActive) else { return false }
 
         switch type {
         case .keyDown:
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
-            guard isRepeat == 0, !activeBindingIDs.contains(bindingID) else { return }
+            guard isRepeat == 0, !isActive else { return true }
             activeBindingIDs.insert(bindingID)
             let capturedBinding = binding
             DispatchQueue.main.async { [weak self] in
                 self?.onKeyDown?(capturedBinding)
             }
+            return true
 
         case .keyUp:
-            guard activeBindingIDs.contains(bindingID) else { return }
+            guard isActive else { return modifiersMatch }
             activeBindingIDs.remove(bindingID)
             let capturedBinding = binding
             DispatchQueue.main.async { [weak self] in
                 self?.onKeyUp?(capturedBinding)
             }
+            return true
 
         default:
-            break
+            return false
         }
     }
 
@@ -278,7 +286,9 @@ private func hotkeyEventCallback(
     }
 
     let service = Unmanaged<HotkeyService>.fromOpaque(userInfo).takeUnretainedValue()
-    service.handleEvent(proxy, type: type, event: event)
+    if service.handleEvent(proxy, type: type, event: event) {
+        return nil
+    }
 
     return Unmanaged.passUnretained(event)
 }

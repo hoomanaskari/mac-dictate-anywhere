@@ -104,27 +104,19 @@ private struct QuickVocabularyView: View {
                 ScrollView {
                     FlowLayout(spacing: 6) {
                         ForEach(settings.customVocabulary, id: \.self) { term in
-                            HStack(spacing: 4) {
-                                Text(term)
-                                    .font(.callout)
-                                Button {
-                                    withAnimation(.easeOut(duration: 0.2)) {
-                                        settings.customVocabulary.removeAll { $0 == term }
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundStyle(.secondary)
+                            VocabularyChip(
+                                term: term,
+                                font: .callout,
+                                horizontalPadding: 10,
+                                verticalPadding: 5,
+                                backgroundColor: justAdded == term
+                                    ? Color.accentColor.opacity(0.15)
+                                    : Color(nsColor: .quaternaryLabelColor)
+                            ) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    settings.customVocabulary.removeAll { $0 == term }
                                 }
-                                .buttonStyle(.plain)
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background {
-                                Capsule()
-                                    .fill(justAdded == term ? Color.accentColor.opacity(0.15) : Color(nsColor: .quaternaryLabelColor))
-                            }
-                            .clipShape(Capsule())
                             .transition(.scale.combined(with: .opacity))
                         }
                     }
@@ -147,15 +139,18 @@ private struct QuickVocabularyView: View {
     }
 
     private func addTerm() {
-        let term = newTerm.trimmingCharacters(in: .whitespaces)
-        guard !term.isEmpty, !Settings.shared.customVocabulary.contains(term) else { return }
+        let terms = VocabularyInputParser.terms(
+            from: newTerm,
+            existingTerms: Settings.shared.customVocabulary
+        )
+        guard !terms.isEmpty else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-            Settings.shared.customVocabulary.append(term)
-            justAdded = term
+            Settings.shared.customVocabulary.append(contentsOf: terms)
+            justAdded = terms.last
         }
         newTerm = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            if justAdded == term {
+            if justAdded == terms.last {
                 withAnimation(.easeOut(duration: 0.3)) {
                     justAdded = nil
                 }

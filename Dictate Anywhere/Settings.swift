@@ -319,6 +319,12 @@ struct HotkeyBinding: Codable, Identifiable, Equatable {
     )
 }
 
+struct TranscriptHistoryEntry: Identifiable, Codable, Equatable {
+    let id: UUID
+    let text: String
+    let createdAt: Date
+}
+
 // MARK: - Conflict Detector
 
 enum ConflictDetector {
@@ -417,6 +423,7 @@ final class Settings {
         static let aiPostProcessingEnabled = "aiPostProcessingEnabled"
         static let aiPostProcessingPrompt = "aiPostProcessingPrompt"
         static let customVocabulary = "customVocabulary"
+        static let transcriptHistory = "transcriptHistory"
         static let transcriptPostProcessingMode = "transcriptPostProcessingMode"
         static let ollamaBaseURL = "ollamaBaseURL"
         static let ollamaModel = "ollamaModel"
@@ -521,6 +528,13 @@ final class Settings {
     var transcriptPostProcessingMode: TranscriptPostProcessingMode {
         didSet {
             UserDefaults.standard.set(transcriptPostProcessingMode.rawValue, forKey: Keys.transcriptPostProcessingMode)
+        }
+    }
+
+    var transcriptHistory: [TranscriptHistoryEntry] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(transcriptHistory) else { return }
+            UserDefaults.standard.set(data, forKey: Keys.transcriptHistory)
         }
     }
 
@@ -774,6 +788,18 @@ final class Settings {
         // Custom Vocabulary
         customVocabulary = defaults.object(forKey: Keys.customVocabulary) as? [String] ?? []
 
+        if let historyData = defaults.data(forKey: Keys.transcriptHistory),
+           let decodedHistory = try? JSONDecoder().decode([TranscriptHistoryEntry].self, from: historyData) {
+            let cappedHistory = Self.cappedTranscriptHistory(decodedHistory)
+            transcriptHistory = cappedHistory
+            if cappedHistory != decodedHistory,
+               let data = try? JSONEncoder().encode(cappedHistory) {
+                defaults.set(data, forKey: Keys.transcriptHistory)
+            }
+        } else {
+            transcriptHistory = []
+        }
+
         // Transcript Post Processing
         if let storedModeRaw = defaults.string(forKey: Keys.transcriptPostProcessingMode),
            let storedMode = TranscriptPostProcessingMode(rawValue: storedModeRaw) {
@@ -900,6 +926,31 @@ final class Settings {
     /// Removes a binding entirely
     func removeBinding(id: UUID) {
         hotkeyBindings.removeAll { $0.id == id }
+    }
+
+    func addTranscriptHistoryEntry(_ text: String) {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
+
+        transcriptHistory = Self.cappedTranscriptHistory(transcriptHistory + [TranscriptHistoryEntry(
+            id: UUID(),
+            text: trimmedText,
+            createdAt: Date()
+        )])
+    }
+
+    func removeTranscriptHistoryEntry(id: UUID) {
+        transcriptHistory.removeAll { $0.id == id }
+    }
+
+    func clearTranscriptHistory() {
+        transcriptHistory = []
+    }
+
+    private static func cappedTranscriptHistory(_ history: [TranscriptHistoryEntry]) -> [TranscriptHistoryEntry] {
+        let maxEntries = 50
+        guard history.count > maxEntries else { return history }
+        return Array(history.suffix(maxEntries))
     }
 
     // MARK: - Login Item

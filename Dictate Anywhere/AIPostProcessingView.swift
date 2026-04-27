@@ -763,21 +763,16 @@ struct AIPostProcessingView: View {
         Section {
             FlowLayout(spacing: 6) {
                 ForEach(settings.customVocabulary, id: \.self) { term in
-                    HStack(spacing: 4) {
-                        Text(term)
-                            .font(.caption)
-                        Button {
+                    VocabularyChip(
+                        term: term,
+                        font: .caption,
+                        horizontalPadding: 8,
+                        verticalPadding: 4
+                    ) {
+                        withAnimation(.easeOut(duration: 0.2)) {
                             settings.customVocabulary.removeAll { $0 == term }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .bold))
                         }
-                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.quaternary)
-                    .clipShape(Capsule())
                 }
             }
 
@@ -800,9 +795,12 @@ struct AIPostProcessingView: View {
     }
 
     private func addVocabularyTerm() {
-        let term = newVocabularyTerm.trimmingCharacters(in: .whitespaces)
-        guard !term.isEmpty, !appState.settings.customVocabulary.contains(term) else { return }
-        appState.settings.customVocabulary.append(term)
+        let terms = VocabularyInputParser.terms(
+            from: newVocabularyTerm,
+            existingTerms: appState.settings.customVocabulary
+        )
+        guard !terms.isEmpty else { return }
+        appState.settings.customVocabulary.append(contentsOf: terms)
         newVocabularyTerm = ""
     }
 

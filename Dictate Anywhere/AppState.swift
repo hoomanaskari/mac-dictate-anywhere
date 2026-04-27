@@ -525,6 +525,7 @@ final class AppState {
         currentTranscript = processedText
         lastTranscript = processedText
         Self.lastTranscriptForMenuBar = processedText
+        settings.addTranscriptHistoryEntry(processedText)
 
         // Insert text
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)

@@ -13,6 +13,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
     case shortcuts
     case textOverlay
     case aiPostProcessing
+    case history
     case about
 
     var id: String { rawValue }
@@ -24,6 +25,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .shortcuts: return "Shortcuts"
         case .textOverlay: return "Text & Overlay"
         case .aiPostProcessing: return "Transcript Processing"
+        case .history: return "History"
         case .about: return "About"
         }
     }
@@ -35,6 +37,7 @@ enum SidebarPage: String, CaseIterable, Identifiable {
         case .shortcuts: return "command.square.fill"
         case .textOverlay: return "text.badge.checkmark"
         case .aiPostProcessing: return "wand.and.stars"
+        case .history: return "clock.arrow.circlepath"
         case .about: return "info.circle"
         }
     }
@@ -113,6 +116,8 @@ struct MainWindow: View {
             TextOverlayView()
         case .aiPostProcessing:
             AIPostProcessingView()
+        case .history:
+            TranscriptHistoryView()
         case .about:
             AboutView()
         }
