@@ -48,7 +48,7 @@ struct ModelsView: View {
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Type") {
-                    Text("On-device speech-to-text")
+                    Text(selectedModel.usesTrueStreaming ? "On-device true streaming speech-to-text" : "On-device speech-to-text")
                 }
 
                 LabeledContent("Languages") {
@@ -63,6 +63,10 @@ struct ModelsView: View {
                     LabeledContent("Also Installed") {
                         Text(alternateModel.displayName)
                     }
+                }
+
+                if selectedModel.supportsEndOfUtterance {
+                    Toggle("Stop hands-free dictation after speech ends", isOn: $settings.autoStopAfterSpeechEndsEnabled)
                 }
 
                 if appState.parakeetEngine.isModelDownloaded {
@@ -115,7 +119,7 @@ struct ModelsView: View {
                         .foregroundStyle(.red)
                 }
             } header: {
-                Text("Parakeet (FluidAudio)")
+                Text("FluidAudio")
             } footer: {
                 Text(selectedModel.speechModelFooter)
             }
@@ -123,7 +127,7 @@ struct ModelsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Speech Model")
-        .alert("Delete \(selectedModel.displayName) Model?", isPresented: $showDeleteConfirm) {
+        .alert("Delete \(selectedModel.displayName)?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) {
                 Task {
                     try? await appState.parakeetEngine.deleteModel()
@@ -132,7 +136,7 @@ struct ModelsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will remove the \(selectedModel.displayName.lowercased()) Parakeet model (\(selectedModel.sizeSummary)). You can download it again later.")
+            Text("This will remove the \(selectedModel.displayName.lowercased()) speech model (\(selectedModel.sizeSummary)). You can download it again later.")
         }
     }
 

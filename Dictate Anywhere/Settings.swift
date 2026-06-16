@@ -61,7 +61,7 @@ enum AppAppearanceMode: String, CaseIterable {
     case menuBarOnly = "menuBarOnly"
     case dockAndMenuBar = "dockAndMenuBar"
 
-    var displayName: String {
+    nonisolated var displayName: String {
         switch self {
         case .menuBarOnly: return "Menu Bar Only"
         case .dockAndMenuBar: return "Dock and Menu Bar"
@@ -81,9 +81,9 @@ enum AppAppearanceMode: String, CaseIterable {
 enum TranscriptionEngineChoice: String, CaseIterable {
     case parakeet = "parakeet"
 
-    var displayName: String {
+    nonisolated var displayName: String {
         switch self {
-        case .parakeet: return "Parakeet (FluidAudio)"
+        case .parakeet: return "FluidAudio"
         }
     }
 }
@@ -92,16 +92,24 @@ enum ParakeetModelChoice: String, CaseIterable {
     case multilingual = "multilingual"
     case englishOnly = "englishOnly"
     case compactEnglish = "compactEnglish"
+    case parakeetEou320 = "parakeetEou320"
+    case nemotron560 = "nemotron560"
+    case nemotron1120 = "nemotron1120"
+    case nemotron2240 = "nemotron2240"
 
-    var displayName: String {
+    nonisolated var displayName: String {
         switch self {
         case .multilingual: return "Multilingual"
         case .englishOnly: return "English Only"
         case .compactEnglish: return "English Compact (110M)"
+        case .parakeetEou320: return "Parakeet EOU Streaming"
+        case .nemotron560: return "Nemotron Streaming (560 ms)"
+        case .nemotron1120: return "Nemotron Streaming (1120 ms)"
+        case .nemotron2240: return "Nemotron Streaming (2240 ms)"
         }
     }
 
-    var detail: String {
+    nonisolated var detail: String {
         switch self {
         case .multilingual:
             return "25 European languages with automatic language detection."
@@ -109,10 +117,18 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "English-only vocabulary tuned for stronger English accuracy."
         case .compactEnglish:
             return "Smaller English-only Parakeet model with faster downloads and lower memory use."
+        case .parakeetEou320:
+            return "True streaming English dictation with end-of-speech detection and lower preview latency."
+        case .nemotron560:
+            return "True streaming English dictation with the lowest Nemotron latency tier."
+        case .nemotron1120:
+            return "True streaming English dictation with a balanced Nemotron latency and accuracy tier."
+        case .nemotron2240:
+            return "True streaming English dictation with Nemotron's higher-throughput tier."
         }
     }
 
-    var modelDirectoryName: String {
+    nonisolated var modelDirectoryName: String {
         switch self {
         case .multilingual:
             return "parakeet-tdt-0.6b-v3-coreml"
@@ -120,32 +136,62 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "parakeet-tdt-0.6b-v2-coreml"
         case .compactEnglish:
             return "parakeet-tdt-ctc-110m"
+        case .parakeetEou320:
+            return "parakeet-eou-streaming/320ms"
+        case .nemotron560:
+            return "nemotron-streaming/560ms"
+        case .nemotron1120:
+            return "nemotron-streaming/1120ms"
+        case .nemotron2240:
+            return "nemotron-streaming/2240ms"
         }
     }
 
-    var isEnglishOnly: Bool {
+    nonisolated var isEnglishOnly: Bool {
         switch self {
         case .multilingual:
             return false
-        case .englishOnly, .compactEnglish:
+        case .englishOnly, .compactEnglish, .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240:
             return true
         }
     }
 
-    var languageSummary: String {
+    nonisolated var usesTrueStreaming: Bool {
+        switch self {
+        case .multilingual, .englishOnly, .compactEnglish:
+            return false
+        case .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240:
+            return true
+        }
+    }
+
+    nonisolated var supportsEndOfUtterance: Bool {
+        switch self {
+        case .parakeetEou320:
+            return true
+        case .multilingual, .englishOnly, .compactEnglish, .nemotron560, .nemotron1120, .nemotron2240:
+            return false
+        }
+    }
+
+    nonisolated var languageSummary: String {
         isEnglishOnly ? "English only" : "25 European languages"
     }
 
-    var sizeSummary: String {
+    nonisolated var sizeSummary: String {
         switch self {
         case .multilingual, .englishOnly:
             return "~500 MB"
         case .compactEnglish:
             return "~220 MB"
+        case .parakeetEou320:
+            return "~200 MB"
+        case .nemotron560, .nemotron1120, .nemotron2240:
+            return "~1 GB"
         }
     }
 
-    var languageSettingsFooter: String {
+    nonisolated var languageSettingsFooter: String {
         switch self {
         case .multilingual:
             return "The multilingual Parakeet model auto-detects among 25 supported European languages."
@@ -153,10 +199,12 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "The English-only Parakeet model is optimized for English dictation."
         case .compactEnglish:
             return "The compact 110M Parakeet model is English-only and optimized for faster startup with lower memory use."
+        case .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240:
+            return "The selected streaming model is English-only. Choose Multilingual if you dictate in other languages."
         }
     }
 
-    var speechModelFooter: String {
+    nonisolated var speechModelFooter: String {
         switch self {
         case .multilingual:
             return "Choose Multilingual for automatic language detection across 25 supported languages."
@@ -164,6 +212,14 @@ enum ParakeetModelChoice: String, CaseIterable {
             return "Choose English Only for stronger English accuracy when you never dictate in other languages."
         case .compactEnglish:
             return "Choose English Compact (110M) for a smaller, faster English-only model when download size and memory use matter most."
+        case .parakeetEou320:
+            return "Choose Parakeet EOU Streaming to test lower-latency true streaming and end-of-speech detection."
+        case .nemotron560:
+            return "Choose Nemotron 560 ms for the lowest Nemotron streaming latency."
+        case .nemotron1120:
+            return "Choose Nemotron 1120 ms for a balanced streaming option."
+        case .nemotron2240:
+            return "Choose Nemotron 2240 ms for the higher-throughput streaming option."
         }
     }
 }
@@ -411,6 +467,7 @@ final class Settings {
         static let fillerWordsToRemove = "fillerWordsToRemove"
         static let boostMicrophoneVolumeEnabled = "boostMicrophoneVolumeEnabled"
         static let muteSystemAudioDuringRecordingEnabled = "muteSystemAudioDuringRecordingEnabled"
+        static let autoStopAfterSpeechEndsEnabled = "autoStopAfterSpeechEndsEnabled"
         static let legacyAutoVolumeEnabled = "autoVolumeEnabled"
         static let soundEffectsEnabled = "soundEffectsEnabled"
         static let soundEffectsVolume = "soundEffectsVolume"
@@ -461,7 +518,7 @@ final class Settings {
         }
     }
 
-    /// Which Parakeet model variant to use for transcription.
+    /// Which FluidAudio model variant to use for transcription.
     var parakeetModelChoice: ParakeetModelChoice {
         didSet {
             UserDefaults.standard.set(parakeetModelChoice.rawValue, forKey: Keys.parakeetModelChoice)
@@ -669,6 +726,12 @@ final class Settings {
         }
     }
 
+    var autoStopAfterSpeechEndsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoStopAfterSpeechEndsEnabled, forKey: Keys.autoStopAfterSpeechEndsEnabled)
+        }
+    }
+
     // MARK: - Sound Effects
 
     var soundEffectsEnabled: Bool {
@@ -857,6 +920,7 @@ final class Settings {
             muteSystemAudioDuringRecordingEnabled = migratedValue
             defaults.set(migratedValue, forKey: Keys.muteSystemAudioDuringRecordingEnabled)
         }
+        autoStopAfterSpeechEndsEnabled = defaults.object(forKey: Keys.autoStopAfterSpeechEndsEnabled) as? Bool ?? false
 
         // Sound
         soundEffectsEnabled = defaults.object(forKey: Keys.soundEffectsEnabled) as? Bool ?? true
@@ -1088,13 +1152,9 @@ final class Settings {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let path = home.appendingPathComponent("Library/Application Support/FluidAudio/Models")
         guard FileManager.default.fileExists(atPath: path.path) else { return false }
-        if let contents = try? FileManager.default.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) {
-            let installedModelNames = Set(contents.map(\.lastPathComponent))
-            return ParakeetModelChoice.allCases.contains {
-                installedModelNames.contains($0.modelDirectoryName)
-            }
+        return ParakeetModelChoice.allCases.contains {
+            FileManager.default.fileExists(atPath: path.appendingPathComponent($0.modelDirectoryName).path)
         }
-        return false
     }
 
     nonisolated static func normalizedModifierFlags(_ modifiers: CGEventFlags) -> CGEventFlags {

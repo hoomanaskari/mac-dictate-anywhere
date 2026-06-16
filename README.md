@@ -25,7 +25,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 ## Features
 
 - **Global Hotkey** - Press and hold Fn key (or custom shortcut) to dictate from anywhere
-- **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet - your audio never leaves your Mac
+- **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet or Nemotron models
 - **25 Languages** - Support for English, German, French, Spanish, and 21 more European languages
 - **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
@@ -52,12 +52,12 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 
 ## Optional AI Transcript Cleanup
 
-Dictate Anywhere always transcribes audio locally with Parakeet. AI cleanup happens only after transcription, on the final text transcript. That means your raw audio stays on your Mac even when you enable Ollama or OpenRouter.
+Dictate Anywhere always transcribes audio locally with FluidAudio. AI cleanup happens only after transcription, on the final text transcript. That means your raw audio stays on your Mac even when you enable Ollama or OpenRouter.
 
 | Provider | Runs Where | Best For | Benefits |
 |----------|------------|----------|----------|
-| None | Nowhere | Fastest raw dictation | Uses the Parakeet transcript as-is |
-| FluidAudio Vocabulary | On-device | Lightweight terminology correction | Applies vocabulary rescoring without an LLM |
+| None | Nowhere | Fastest raw dictation | Uses the local FluidAudio transcript as-is |
+| FluidAudio Vocabulary | On-device | Lightweight terminology correction | Applies vocabulary rescoring to Parakeet TDT final transcripts without an LLM |
 | Apple Intelligence | On-device | Native macOS cleanup | On-device cleanup on supported Macs |
 | Ollama | Local or self-hosted server | Privacy-first LLM cleanup | Local model choice, optional reasoning controls, and in-app model management for local Ollama setups |
 | OpenRouter | Cloud | Broad hosted model access | Large model catalog, model search, secure key storage, and structured-output-aware selection |
@@ -231,13 +231,13 @@ When your local signing setup is ready, package the release with:
 
 ## How It Works
 
-1. **Activation** - Press and hold Fn key (or your custom shortcut)
-2. **Recording** - Speak naturally while the key is held
-3. **Processing** - Release the key to process your speech
+1. **Activation** - Press and hold Fn key, or tap a hands-free shortcut
+2. **Recording** - Speak naturally while dictation is active
+3. **Processing** - Release the key, tap again, or let Parakeet EOU auto-stop when enabled
 4. **Optional Cleanup** - The final transcript can be cleaned up with Apple Intelligence, Ollama, or OpenRouter
 5. **Insertion** - Text is automatically inserted at your cursor position
 
-The app uses FluidAudio's Parakeet model for speech recognition, which runs entirely on your Mac. The model is downloaded once (~600MB) and cached locally.
+The app uses FluidAudio speech models that run entirely on your Mac. Parakeet TDT remains the default path, and optional Parakeet EOU or Nemotron streaming models can be downloaded for lower-latency live previews.
 
 ## Privacy
 
@@ -264,6 +264,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- [FluidAudio](https://github.com/FluidInference/FluidAudio) - For the excellent Parakeet speech-to-text model
+- [FluidAudio](https://github.com/FluidInference/FluidAudio) - For local Parakeet and Nemotron speech-to-text models
 - [Ollama](https://ollama.com/) - For enabling optional local LLM-based transcript cleanup
 - [create-dmg](https://github.com/create-dmg/create-dmg) - For the DMG creation tool

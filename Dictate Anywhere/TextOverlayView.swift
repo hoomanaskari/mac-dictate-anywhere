@@ -2,7 +2,7 @@
 //  TextOverlayView.swift
 //  Dictate Anywhere
 //
-//  Filler word removal and overlay settings.
+//  Text preview overlay settings.
 //
 
 import SwiftUI
@@ -10,59 +10,10 @@ import SwiftUI
 struct TextOverlayView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var newFillerWord = ""
-
     var body: some View {
         @Bindable var settings = appState.settings
 
         Form {
-            // MARK: - Filler Words
-
-            Section {
-                Toggle("Remove filler words", isOn: $settings.isFillerWordRemovalEnabled)
-
-                if settings.isFillerWordRemovalEnabled {
-                    FlowLayout(spacing: 6) {
-                        ForEach(settings.fillerWordsToRemove, id: \.self) { word in
-                            HStack(spacing: 4) {
-                                Text(word)
-                                    .font(.caption)
-                                Button {
-                                    settings.fillerWordsToRemove.removeAll { $0 == word }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 8, weight: .bold))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.quaternary)
-                            .clipShape(Capsule())
-                        }
-                    }
-
-                    HStack {
-                        TextField("", text: $newFillerWord, prompt: Text("Add word..."))
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addFillerWord() }
-
-                        Button("Add") { addFillerWord() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(newFillerWord.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                    .labelsHidden()
-
-                    Button("Reset to Defaults") {
-                        settings.fillerWordsToRemove = Settings.defaultFillerWords
-                    }
-                    .controlSize(.small)
-                }
-            } header: {
-                Text("Filler Words")
-            }
-
             // MARK: - Overlay
 
             Section {
@@ -75,13 +26,6 @@ struct TextOverlayView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Text & Overlay")
-    }
-
-    private func addFillerWord() {
-        let word = newFillerWord.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !word.isEmpty, !appState.settings.fillerWordsToRemove.contains(word) else { return }
-        appState.settings.fillerWordsToRemove.append(word)
-        newFillerWord = ""
     }
 }
 

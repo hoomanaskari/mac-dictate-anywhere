@@ -78,6 +78,7 @@ final class AppState {
 
     /// Engine pinned for the active dictation session (start -> stop/cancel).
     private var sessionEngine: TranscriptionEngine?
+    private var sessionHotkeyMode: HotkeyMode?
     private var startupTask: Task<Void, Never>?
     private var hasStarted = false
 
@@ -102,12 +103,12 @@ final class AppState {
                 guard let self else { return }
                 switch binding.mode {
                 case .holdToRecord:
-                    await self.startDictation()
+                    await self.startDictation(mode: binding.mode)
                 case .handsFreeToggle:
                     if self.status == .recording {
                         await self.stopDictation()
                     } else {
-                        await self.startDictation()
+                        await self.startDictation(mode: binding.mode)
                     }
                 }
             }
@@ -185,14 +186,14 @@ final class AppState {
         if case .error = status { status = .idle }
 
         // Auto-default: if user hasn't explicitly chosen an engine and
-        // Parakeet model is downloaded, ensure Parakeet is selected.
+        // a speech model is downloaded, ensure FluidAudio is selected.
         await parakeetEngine.recheckAllModelsOnDisk()
         await parakeetEngine.handleSelectedModelChange()
-        let hasParakeetModel = parakeetEngine.checkAnyModelOnDisk()
-        if !settings.userHasChosenEngine, hasParakeetModel {
+        let hasSpeechModel = parakeetEngine.checkAnyModelOnDisk()
+        if !settings.userHasChosenEngine, hasSpeechModel {
             settings.engineChoice = .parakeet
         }
-        if hasParakeetModel {
+        if hasSpeechModel {
             settings.legacyAppleSpeechMigrationPending = false
         }
 
@@ -293,19 +294,30 @@ final class AppState {
 
     // MARK: - Dictation Flow
 
-    func startDictation() async {
+    func startDictation(mode: HotkeyMode? = nil) async {
         logger.info("startDictation: entry, status=\(String(describing: self.status), privacy: .public), isTransitioning=\(self.isTransitioning, privacy: .public), engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public)")
         if case .error = status {
             status = .idle
         }
         guard status == .idle, !isTransitioning else { return }
         let engine = activeEngine
-        guard engine.isReady else {
+        if parakeetEngine.isDownloading {
+            logger.warning("startDictation: selected model is still downloading")
+            status = .error("\(settings.parakeetModelChoice.displayName) is still downloading. Try again when it finishes.")
+            status = .idle
+            return
+        }
+
+        if !(await parakeetEngine.refreshSelectedModelReadiness()) {
+            await prepareActiveEngine()
+        }
+
+        guard await parakeetEngine.refreshSelectedModelReadiness(), engine.isReady else {
             logger.warning("startDictation: engine not ready, aborting")
             if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
                 showLegacyEngineDiscontinuedAlert()
             }
-            status = .error("Parakeet \(settings.parakeetModelChoice.displayName.lowercased()) model not ready. Download it from Speech Model settings.")
+            status = .error("\(settings.parakeetModelChoice.displayName) is not ready. Download it from Speech Model settings.")
             status = .idle
             return
         }
@@ -314,6 +326,8 @@ final class AppState {
         isTransitioning = true
         pendingHoldRelease = false
         sessionEngine = engine
+        sessionHotkeyMode = mode
+        configureEndOfUtteranceHandler(for: engine)
 
         status = .recording
         currentTranscript = ""
@@ -391,7 +405,9 @@ final class AppState {
             }
             isTransitioning = false
             pendingHoldRelease = false
+            clearEndOfUtteranceHandler(for: engine)
             sessionEngine = nil
+            sessionHotkeyMode = nil
             status = .idle
             return
         }
@@ -429,7 +445,9 @@ final class AppState {
 
         // Get final transcript
         let transcript = await engine.stopRecording()
+        clearEndOfUtteranceHandler(for: engine)
         sessionEngine = nil
+        sessionHotkeyMode = nil
 
         // Apply filler word removal
         let cleaned = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -457,9 +475,18 @@ final class AppState {
 
         // Transcript post-processing
         var processedText = finalText
+        logger.info(
+            "postProcessing: mode=\(self.settings.transcriptPostProcessingMode.rawValue, privacy: .public), speechModel=\(self.settings.parakeetModelChoice.rawValue, privacy: .public), inputChars=\(finalText.count, privacy: .public)"
+        )
         switch settings.transcriptPostProcessingMode {
-        case .none, .fluidAudioVocabulary:
+        case .none:
             break
+        case .fluidAudioVocabulary:
+            if settings.parakeetModelChoice.usesTrueStreaming {
+                logger.warning(
+                    "postProcessing: FluidAudio Vocabulary is not available for true streaming model \(self.settings.parakeetModelChoice.rawValue, privacy: .public)"
+                )
+            }
         case .appleIntelligence:
             if !settings.aiPostProcessingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if #available(macOS 26, *) {
@@ -471,10 +498,14 @@ final class AppState {
                                 vocabulary: settings.customVocabulary
                             )
                         } catch {
-                            // Silently fall back to original text on failure
+                            logger.error("postProcessing: Apple Intelligence failed: \(error.localizedDescription, privacy: .public)")
                         }
+                    } else {
+                        logger.warning("postProcessing: Apple Intelligence is not available")
                     }
                 }
+            } else {
+                logger.info("postProcessing: Apple Intelligence skipped because prompt is empty")
             }
         case .ollama:
             do {
@@ -487,7 +518,7 @@ final class AppState {
                     vocabulary: settings.customVocabulary
                 )
             } catch {
-                // Silently fall back to original text on failure
+                logger.error("postProcessing: Ollama failed: \(error.localizedDescription, privacy: .public)")
             }
         case .openRouter:
             do {
@@ -500,7 +531,7 @@ final class AppState {
                     apiKeyEnvironmentVariable: settings.openRouterAPIKeyEnvironmentVariable
                 )
             } catch {
-                // Silently fall back to original text on failure
+                logger.error("postProcessing: OpenRouter failed: \(error.localizedDescription, privacy: .public)")
             }
         case .openAICompatible:
             do {
@@ -513,7 +544,7 @@ final class AppState {
                     vocabulary: settings.customVocabulary
                 )
             } catch {
-                // Silently fall back to original text on failure
+                logger.error("postProcessing: OpenAI Compatible failed: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -521,6 +552,9 @@ final class AppState {
            settings.transcriptPostProcessingMode != .fluidAudioVocabulary {
             processedText = normalizePostProcessedTranscript(processedText)
         }
+        logger.info(
+            "postProcessing: completed changed=\(processedText != finalText, privacy: .public), outputChars=\(processedText.count, privacy: .public)"
+        )
 
         currentTranscript = processedText
         lastTranscript = processedText
@@ -561,7 +595,9 @@ final class AppState {
 
         let engine = sessionEngine ?? activeEngine
         await engine.cancel()
+        clearEndOfUtteranceHandler(for: engine)
         sessionEngine = nil
+        sessionHotkeyMode = nil
 
         volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
@@ -631,6 +667,24 @@ final class AppState {
         audioMonitor.reset()
     }
 
+    private func configureEndOfUtteranceHandler(for engine: TranscriptionEngine) {
+        guard let parakeet = engine as? ParakeetEngine else { return }
+        parakeet.endOfUtteranceHandler = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.settings.autoStopAfterSpeechEndsEnabled else { return }
+                guard self.settings.parakeetModelChoice.supportsEndOfUtterance else { return }
+                guard self.sessionHotkeyMode == .handsFreeToggle else { return }
+                guard self.status == .recording, !self.isTransitioning else { return }
+                await self.stopDictation()
+            }
+        }
+    }
+
+    private func clearEndOfUtteranceHandler(for engine: TranscriptionEngine) {
+        (engine as? ParakeetEngine)?.endOfUtteranceHandler = nil
+    }
+
     private func showLegacyEngineDiscontinuedAlert() {
         guard !isShowingMigrationAlert else { return }
         isShowingMigrationAlert = true
@@ -648,7 +702,7 @@ final class AppState {
         alert.messageText = "Apple Speech Has Been Discontinued"
         alert.informativeText = """
         Dictate Anywhere no longer supports Apple Speech due to inconsistent transcription quality. \
-        Download the Parakeet model to continue dictating.
+        Download a speech model to continue dictating.
         """
         alert.addButton(withTitle: "Open Speech Model")
         alert.addButton(withTitle: "Not Now")

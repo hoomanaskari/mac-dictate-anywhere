@@ -47,7 +47,7 @@ struct AboutView: View {
                     name: "FluidAudio",
                     url: "https://github.com/FluidInference/FluidAudio",
                     license: "MIT License",
-                    description: "On-device speech recognition powered by Parakeet models."
+                    description: "On-device speech recognition powered by FluidAudio models."
                 )
                 LibraryRow(
                     name: "Ollama",

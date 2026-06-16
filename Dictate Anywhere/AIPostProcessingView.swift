@@ -10,6 +10,7 @@ import FoundationModels
 
 struct AIPostProcessingView: View {
     @Environment(AppState.self) private var appState
+    @State private var newFillerWord = ""
     @State private var newVocabularyTerm = ""
     @State private var ollamaAvailability: OllamaPostProcessingService.Availability?
     @State private var ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
@@ -59,10 +60,12 @@ struct AIPostProcessingView: View {
                 Text("Choose how the final transcript is cleaned up before it is pasted.")
             }
 
+            localFillerWordCleanupContent(settings: settings)
+
             switch settings.transcriptPostProcessingMode {
             case .none:
                 Section {
-                    Text("The raw Parakeet transcript will be pasted as-is, after filler word removal if enabled.")
+                    Text("No AI cleanup will run. The raw FluidAudio transcript will be pasted after any local filler-word cleanup above.")
                         .foregroundStyle(.secondary)
                 }
             case .fluidAudioVocabulary:
@@ -124,11 +127,87 @@ struct AIPostProcessingView: View {
     }
 
     @ViewBuilder
+    private func localFillerWordCleanupContent(settings: Settings) -> some View {
+        @Bindable var settings = settings
+
+        Section {
+            Toggle("Remove selected filler words", isOn: $settings.isFillerWordRemovalEnabled)
+
+            if settings.isFillerWordRemovalEnabled {
+                FlowLayout(spacing: 6) {
+                    ForEach(settings.fillerWordsToRemove, id: \.self) { word in
+                        HStack(spacing: 4) {
+                            Text(word)
+                                .font(.caption)
+                            Button {
+                                settings.fillerWordsToRemove.removeAll { $0 == word }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.quaternary)
+                        .clipShape(Capsule())
+                    }
+                }
+
+                HStack {
+                    TextField("", text: $newFillerWord, prompt: Text("Add word..."))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addFillerWord() }
+
+                    Button("Add") { addFillerWord() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(newFillerWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .labelsHidden()
+
+                Button("Reset to Defaults") {
+                    settings.fillerWordsToRemove = Settings.defaultFillerWords
+                }
+                .controlSize(.small)
+            }
+        } header: {
+            Text("Local Filler Word Removal")
+        } footer: {
+            if settings.parakeetModelChoice.usesTrueStreaming {
+                Text("Runs locally on this Mac before any AI transcript processing. When enabled, it removes only the editable words listed here, does not use AI, and can help with streaming models that transcribe filler words more literally.")
+            } else {
+                Text("Runs locally on this Mac before any AI transcript processing. When enabled, it removes only the editable words listed here and does not use AI or send text to an AI service.")
+            }
+        }
+    }
+
+    private func addFillerWord() {
+        let word = newFillerWord.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !word.isEmpty, !appState.settings.fillerWordsToRemove.contains(word) else { return }
+        appState.settings.fillerWordsToRemove.append(word)
+        newFillerWord = ""
+    }
+
+    @ViewBuilder
     private func fluidAudioVocabularyContent(settings: Settings) -> some View {
-        vocabularySection(
-            settings: settings,
-            footer: "These terms are applied by FluidAudio's vocabulary rescoring on the final transcript only. Keep the list short and domain-specific for best precision."
-        )
+        if settings.parakeetModelChoice.usesTrueStreaming {
+            Section {
+                Label {
+                    Text("FluidAudio Vocabulary is only available with Parakeet TDT models.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                }
+            } footer: {
+                Text("Choose Multilingual, English Only, or English Compact to use FluidAudio vocabulary rescoring. For streaming models, use Apple Intelligence, Ollama, OpenRouter, or OpenAI Compatible cleanup.")
+            }
+        } else {
+            vocabularySection(
+                settings: settings,
+                footer: "These terms are applied by FluidAudio's vocabulary rescoring on Parakeet TDT final transcripts only. Keep the list short and domain-specific for best precision."
+            )
+        }
     }
 
     @available(macOS 26, *)

@@ -139,7 +139,7 @@ private final class AVCaptureDeviceCaptureController: NSObject, @unchecked Senda
 }
 
 private extension ParakeetModelChoice {
-    nonisolated var asrModelVersion: AsrModelVersion {
+    nonisolated var tdtModelVersion: AsrModelVersion? {
         switch self {
         case .multilingual:
             return .v3
@@ -147,6 +147,23 @@ private extension ParakeetModelChoice {
             return .v2
         case .compactEnglish:
             return .tdtCtc110m
+        case .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240:
+            return nil
+        }
+    }
+
+    nonisolated var streamingModelVariant: StreamingModelVariant? {
+        switch self {
+        case .multilingual, .englishOnly, .compactEnglish:
+            return nil
+        case .parakeetEou320:
+            return .parakeetEou320ms
+        case .nemotron560:
+            return .nemotron560ms
+        case .nemotron1120:
+            return .nemotron1120ms
+        case .nemotron2240:
+            return .nemotron2240ms
         }
     }
 
@@ -156,6 +173,12 @@ private extension ParakeetModelChoice {
             streamingThreshold: 160_000
         )
     }
+}
+
+nonisolated private func fluidAudioModelCacheRoot() -> URL {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        .appendingPathComponent("FluidAudio", isDirectory: true)
+        .appendingPathComponent("Models", isDirectory: true)
 }
 
 // MARK: - Protocol
@@ -367,6 +390,7 @@ final class ParakeetEngine: TranscriptionEngine {
     private(set) var isReady: Bool = false
     var currentTranscript: String = ""
     var audioSamples: [Float] = []
+    var endOfUtteranceHandler: (() -> Void)?
 
     // Model management
     var isModelDownloaded: Bool = false
@@ -379,6 +403,7 @@ final class ParakeetEngine: TranscriptionEngine {
     private let asrCoordinator = AsrManagerCoordinator()
     private var audioCaptureController: AudioCaptureController?
     private var sampleBuffer: [Float] = []
+    private var levelSampleBuffer: [Float] = []
     private var fullRecordingSamples: [Float] = []
     private var totalSampleCount: Int = 0
     private var committedTranscript: String = ""
@@ -478,28 +503,61 @@ final class ParakeetEngine: TranscriptionEngine {
         ParakeetModelChoice.allCases.contains { checkModelOnDisk(for: $0) }
     }
 
+    func refreshSelectedModelReadiness() async -> Bool {
+        let selectedModel = selectedModelChoice
+        let coordinatorReady = await asrCoordinator.isInitialized(for: selectedModel)
+        let ready = !isDownloading && coordinatorReady
+        await MainActor.run {
+            self.isReady = ready
+        }
+        return ready
+    }
+
     func handleSelectedModelChange() async {
         let selectedModel = selectedModelChoice
-        let isSelectedModelLoaded = loadedModels?.version == selectedModel.asrModelVersion
+        let isSelectedModelLoaded = await asrCoordinator.isInitialized(for: selectedModel)
         if !isSelectedModelLoaded {
+            await MainActor.run {
+                self.isReady = false
+            }
             await asrCoordinator.cleanup()
             loadedModels = nil
         }
 
         await recheckModelOnDisk(for: selectedModel)
 
-        let coordinatorReady = await asrCoordinator.isInitialized()
+        let coordinatorReady = await asrCoordinator.isInitialized(for: selectedModel)
         await MainActor.run {
-            self.isReady = coordinatorReady && isSelectedModelLoaded
+            self.isReady = coordinatorReady
         }
     }
 
     nonisolated private static func checkModelOnDiskSync(for modelChoice: ParakeetModelChoice) -> Bool {
-        let modelDirectory = AsrModels.defaultCacheDirectory(for: modelChoice.asrModelVersion)
-        if !FileManager.default.fileExists(atPath: modelDirectory.path) {
+        if let modelVersion = modelChoice.tdtModelVersion {
+            let modelDirectory = AsrModels.defaultCacheDirectory(for: modelVersion)
+            if !FileManager.default.fileExists(atPath: modelDirectory.path) {
+                return false
+            }
+            return AsrModels.modelsExist(at: modelDirectory, version: modelVersion)
+        }
+
+        guard let variant = modelChoice.streamingModelVariant else { return false }
+        let modelDirectory = fluidAudioModelCacheRoot().appendingPathComponent(variant.repo.folderName, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: modelDirectory.path) else { return false }
+
+        let requiredModels: Set<String>
+        switch modelChoice {
+        case .parakeetEou320:
+            requiredModels = ModelNames.ParakeetEOU.requiredModels
+        case .nemotron560, .nemotron1120, .nemotron2240:
+            requiredModels = ModelNames.NemotronStreaming.requiredModels
+        case .multilingual, .englishOnly, .compactEnglish:
             return false
         }
-        return AsrModels.modelsExist(at: modelDirectory, version: modelChoice.asrModelVersion)
+
+        return requiredModels.allSatisfy {
+            FileManager.default.fileExists(atPath: modelDirectory.appendingPathComponent($0).path)
+        }
     }
 
     func downloadModel() async throws {
@@ -509,6 +567,7 @@ final class ParakeetEngine: TranscriptionEngine {
         await MainActor.run {
             isDownloading = true
             downloadProgress = 0.0
+            isReady = false
         }
 
         let modelsExist = checkModelOnDisk(for: modelChoice)
@@ -524,12 +583,18 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         do {
-            let models = try await AsrModels.downloadAndLoad(version: modelChoice.asrModelVersion)
+            if modelChoice.usesTrueStreaming {
+                try await asrCoordinator.initializeStreaming(modelChoice: modelChoice)
+                loadedModels = nil
+            } else if let modelVersion = modelChoice.tdtModelVersion {
+                let models = try await AsrModels.downloadAndLoad(version: modelVersion)
+                let config = modelChoice.asrConfig
+                try await asrCoordinator.initialize(models: models, config: config)
+                self.loadedModels = models
+            } else {
+                throw TranscriptionError.engineNotReady
+            }
             progressTask.cancel()
-
-            let config = modelChoice.asrConfig
-            try await asrCoordinator.initialize(models: models, config: config)
-            self.loadedModels = models
 
             self.modelOnDiskCached[modelChoice] = true
             await MainActor.run {
@@ -553,13 +618,20 @@ final class ParakeetEngine: TranscriptionEngine {
 
     func deleteModel() async throws {
         let modelChoice = selectedModelChoice
-        let path = AsrModels.defaultCacheDirectory(for: modelChoice.asrModelVersion)
+        let path: URL
+        if let modelVersion = modelChoice.tdtModelVersion {
+            path = AsrModels.defaultCacheDirectory(for: modelVersion)
+        } else if let variant = modelChoice.streamingModelVariant {
+            path = fluidAudioModelCacheRoot().appendingPathComponent(variant.repo.folderName, isDirectory: true)
+        } else {
+            throw TranscriptionError.engineNotReady
+        }
 
         if FileManager.default.fileExists(atPath: path.path) {
             try FileManager.default.removeItem(at: path)
         }
 
-        if loadedModels?.version == modelChoice.asrModelVersion {
+        if await asrCoordinator.isInitialized(for: modelChoice) {
             await asrCoordinator.cleanup()
             loadedModels = nil
         }
@@ -576,13 +648,13 @@ final class ParakeetEngine: TranscriptionEngine {
     // MARK: - TranscriptionEngine
 
     func levelSamples(count: Int) -> [Float] {
-        sampleLock.withLock { Array(sampleBuffer.suffix(count)) }
+        sampleLock.withLock { Array(levelSampleBuffer.suffix(count)) }
     }
 
     func prepare() async throws {
         let modelChoice = selectedModelChoice
         logger.info("prepare: entry for \(modelChoice.displayName, privacy: .public)")
-        if await asrCoordinator.isInitialized(), loadedModels?.version == modelChoice.asrModelVersion {
+        if await asrCoordinator.isInitialized(for: modelChoice) {
             logger.info("prepare: coordinator already initialized for selected model, early return")
             await MainActor.run {
                 self.isReady = true
@@ -600,11 +672,36 @@ final class ParakeetEngine: TranscriptionEngine {
             return
         }
 
+        if modelChoice.usesTrueStreaming {
+            do {
+                try await asrCoordinator.initializeStreaming(modelChoice: modelChoice)
+            } catch {
+                await asrCoordinator.cleanup()
+                loadedModels = nil
+                await MainActor.run { self.isReady = false }
+                throw error
+            }
+
+            loadedModels = nil
+            modelOnDiskCached[modelChoice] = true
+
+            await MainActor.run {
+                self.isReady = true
+                self.isModelDownloaded = true
+            }
+            return
+        }
+
+        guard let modelVersion = modelChoice.tdtModelVersion else {
+            await MainActor.run { self.isReady = false }
+            throw TranscriptionError.engineNotReady
+        }
+
         let models: AsrModels
-        if let cachedModels = loadedModels, cachedModels.version == modelChoice.asrModelVersion {
+        if let cachedModels = loadedModels, cachedModels.version == modelVersion {
             models = cachedModels
         } else {
-            models = try await AsrModels.loadFromCache(version: modelChoice.asrModelVersion)
+            models = try await AsrModels.loadFromCache(version: modelVersion)
         }
 
         let config = modelChoice.asrConfig
@@ -628,10 +725,24 @@ final class ParakeetEngine: TranscriptionEngine {
 
     func startRecording(deviceID: AudioDeviceID?) async throws {
         logger.info("startRecording: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
-        guard await asrCoordinator.isInitialized() else {
+        let modelChoice = selectedModelChoice
+        if !(await asrCoordinator.isInitialized(for: modelChoice)) {
+            guard !isDownloading else {
+                logger.error("startRecording: selected model is still downloading")
+                throw TranscriptionError.engineNotReady
+            }
+            logger.warning("startRecording: coordinator not initialized, preparing selected model")
+            try await prepare()
+        }
+
+        guard await asrCoordinator.isInitialized(for: modelChoice) else {
             logger.error("startRecording: coordinator not initialized")
+            await MainActor.run {
+                self.isReady = false
+            }
             throw TranscriptionError.engineNotReady
         }
+        try await asrCoordinator.resetSession(for: modelChoice)
 
         // Ensure a previous engine is fully torn down before starting a new one.
         await teardownAudioEngineIfNeeded()
@@ -639,6 +750,7 @@ final class ParakeetEngine: TranscriptionEngine {
         // Clear state
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: true)
+            levelSampleBuffer.removeAll(keepingCapacity: true)
             fullRecordingSamples.removeAll(keepingCapacity: true)
             totalSampleCount = 0
         }
@@ -669,6 +781,11 @@ final class ParakeetEngine: TranscriptionEngine {
                                 }
                             }
                             self.sampleBuffer.append(contentsOf: samples)
+                            self.levelSampleBuffer.append(contentsOf: samples)
+                            let levelCap = self.sampleRate * 10
+                            if self.levelSampleBuffer.count > levelCap {
+                                self.levelSampleBuffer.removeFirst(self.levelSampleBuffer.count - levelCap)
+                            }
                             self.fullRecordingSamples.append(contentsOf: samples)
                             self.totalSampleCount += samples.count
                         }
@@ -692,7 +809,11 @@ final class ParakeetEngine: TranscriptionEngine {
         // Start transcription loop
         isTranscribing = true
         transcriptionTask = Task { [weak self] in
-            await self?.transcriptionLoop()
+            if modelChoice.usesTrueStreaming {
+                await self?.streamingTranscriptionLoop()
+            } else {
+                await self?.transcriptionLoop()
+            }
         }
     }
 
@@ -726,6 +847,7 @@ final class ParakeetEngine: TranscriptionEngine {
         committedTranscript = ""
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: false)
+            levelSampleBuffer.removeAll(keepingCapacity: false)
             fullRecordingSamples.removeAll(keepingCapacity: false)
             totalSampleCount = 0
         }
@@ -796,12 +918,59 @@ final class ParakeetEngine: TranscriptionEngine {
         logger.info("transcriptionLoop: exited, isTranscribing=\(self.isTranscribing, privacy: .public), cancelled=\(Task.isCancelled, privacy: .public)")
     }
 
+    private func streamingTranscriptionLoop() async {
+        logger.info("streamingTranscriptionLoop: entry")
+        guard await asrCoordinator.isInitialized(for: selectedModelChoice) else {
+            logger.error("streamingTranscriptionLoop: coordinator not initialized, exiting")
+            return
+        }
+
+        while isTranscribing && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(80))
+            guard isTranscribing else { break }
+
+            let pendingSamples = sampleLock.withLock { () -> [Float] in
+                let samples = sampleBuffer
+                sampleBuffer.removeAll(keepingCapacity: true)
+                return samples
+            }
+            guard !pendingSamples.isEmpty else {
+                if await asrCoordinator.consumeEndOfUtteranceSignal() {
+                    endOfUtteranceHandler?()
+                }
+                continue
+            }
+
+            do {
+                let buffer = try makePCMBuffer(from: pendingSamples)
+                try await asrCoordinator.appendStreamingAudio(buffer)
+                try await asrCoordinator.processStreamingAudio()
+                let text = await asrCoordinator.currentStreamingTranscript()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    await MainActor.run { self.currentTranscript = text }
+                }
+                if await asrCoordinator.consumeEndOfUtteranceSignal() {
+                    endOfUtteranceHandler?()
+                }
+            } catch {
+                logger.error("Streaming transcription failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        logger.info("streamingTranscriptionLoop: exited, isTranscribing=\(self.isTranscribing, privacy: .public), cancelled=\(Task.isCancelled, privacy: .public)")
+    }
+
     private func performFinalTranscription() async -> String {
         guard await asrCoordinator.isInitialized() else { return currentTranscript }
 
         // Capture the live transcript before re-transcription overwrites it.
         // The transcription loop already produced a complete result in currentTranscript.
         let liveText = currentTranscript
+        if selectedModelChoice.usesTrueStreaming {
+            return await finishStreamingTranscription(liveText: liveText)
+        }
+
         let settings = Settings.shared
         let recordedSamples = sampleLock.withLock { fullRecordingSamples }
 
@@ -849,12 +1018,39 @@ final class ParakeetEngine: TranscriptionEngine {
         return result.count >= liveText.count ? result : liveText
     }
 
+    private func finishStreamingTranscription(liveText: String) async -> String {
+        let pendingSamples = sampleLock.withLock { () -> [Float] in
+            let samples = sampleBuffer
+            sampleBuffer.removeAll(keepingCapacity: true)
+            return samples
+        }
+
+        do {
+            if !pendingSamples.isEmpty {
+                let buffer = try makePCMBuffer(from: pendingSamples)
+                try await asrCoordinator.appendStreamingAudio(buffer)
+                try await asrCoordinator.processStreamingAudio()
+            }
+
+            let finalText = try await asrCoordinator.finishStreaming()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let live = liveText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !finalText.isEmpty else { return live }
+            guard !live.isEmpty else { return finalText }
+            return finalText.count >= live.count ? finalText : live
+        } catch {
+            logger.error("Streaming final transcription failed: \(error.localizedDescription, privacy: .public)")
+            return liveText
+        }
+    }
+
     private func resetAfterStop(finalTranscript: String) async {
         isRecordingActive = false
         isTranscribing = false
         committedTranscript = ""
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: false)
+            levelSampleBuffer.removeAll(keepingCapacity: false)
             fullRecordingSamples.removeAll(keepingCapacity: false)
             totalSampleCount = 0
         }
@@ -1037,6 +1233,9 @@ final class ParakeetEngine: TranscriptionEngine {
 private actor AsrManagerCoordinator {
     private var manager: AsrManager?
     private var models: AsrModels?
+    private var streamingManager: (any StreamingAsrManager)?
+    private var streamingModelChoice: ParakeetModelChoice?
+    private var pendingEndOfUtterance = false
     private var ctcModels: CtcModels?
     private var ctcTokenizer: CtcTokenizer?
     private let logger = Logger(
@@ -1044,15 +1243,18 @@ private actor AsrManagerCoordinator {
         category: "AsrCoordinator"
     )
 
-    func isInitialized() -> Bool { manager != nil }
+    func isInitialized() -> Bool { manager != nil || streamingManager != nil }
+
+    func isInitialized(for modelChoice: ParakeetModelChoice) -> Bool {
+        if let modelVersion = modelChoice.tdtModelVersion {
+            return manager != nil && models?.version == modelVersion
+        }
+        return streamingManager != nil && streamingModelChoice == modelChoice
+    }
 
     func initialize(models: AsrModels, config: ASRConfig) async throws {
         logger.info("initialize: starting (existing manager=\(self.manager != nil, privacy: .public))")
-        if let manager {
-            await manager.cleanup()
-            self.manager = nil
-            self.models = nil
-        }
+        await cleanup()
         let m = AsrManager(config: config)
         try await m.loadModels(models)
         manager = m
@@ -1060,16 +1262,67 @@ private actor AsrManagerCoordinator {
         logger.info("initialize: completed successfully")
     }
 
+    func initializeStreaming(modelChoice: ParakeetModelChoice) async throws {
+        guard modelChoice.usesTrueStreaming else { throw TranscriptionError.engineNotReady }
+        if isInitialized(for: modelChoice) {
+            try await resetSession(for: modelChoice)
+            return
+        }
+
+        await cleanup()
+        pendingEndOfUtterance = false
+
+        switch modelChoice {
+        case .parakeetEou320:
+            let streaming = StreamingEouAsrManager(chunkSize: .ms320)
+            await streaming.setEouCallback { [weak self] _ in
+                Task { await self?.markEndOfUtteranceDetected() }
+            }
+            try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
+            streamingManager = streaming
+            streamingModelChoice = modelChoice
+        case .nemotron560:
+            let streaming = StreamingNemotronAsrManager(requestedChunkSize: .ms560)
+            try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
+            streamingManager = streaming
+            streamingModelChoice = modelChoice
+        case .nemotron1120:
+            let streaming = StreamingNemotronAsrManager(requestedChunkSize: .ms1120)
+            try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
+            streamingManager = streaming
+            streamingModelChoice = modelChoice
+        case .nemotron2240:
+            let streaming = StreamingNemotronAsrManager(requestedChunkSize: .ms2240)
+            try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
+            streamingManager = streaming
+            streamingModelChoice = modelChoice
+        case .multilingual, .englishOnly, .compactEnglish:
+            throw TranscriptionError.engineNotReady
+        }
+
+        logger.info("initializeStreaming: completed for \(modelChoice.displayName, privacy: .public)")
+    }
+
+    func resetSession(for modelChoice: ParakeetModelChoice) async throws {
+        guard modelChoice.usesTrueStreaming else { return }
+        guard let streamingManager, streamingModelChoice == modelChoice else {
+            throw TranscriptionError.engineNotReady
+        }
+        pendingEndOfUtterance = false
+        try await streamingManager.reset()
+    }
+
     func transcribe(_ samples: [Float]) async throws -> ASRResult {
         guard let manager else { throw TranscriptionError.engineNotReady }
         logger.info("transcribe: calling manager.transcribe with \(samples.count, privacy: .public) samples")
-        let result = try await manager.transcribe(samples)
+        var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(samples, decoderState: &decoderState)
         logger.info("transcribe: returned \(result.text.count, privacy: .public) chars")
         return result
     }
 
     func transcribeWithCustomVocabulary(_ samples: [Float], terms: [String]) async throws -> ASRResult {
-        guard let manager else { throw TranscriptionError.engineNotReady }
+        guard manager != nil else { throw TranscriptionError.engineNotReady }
         guard let models else { throw TranscriptionError.engineNotReady }
 
         let rawTerms = terms
@@ -1126,7 +1379,8 @@ private actor AsrManagerCoordinator {
                 vocabulary: vocabulary,
                 ctcModels: ctcModels
             )
-            try await streamingManager.start(models: models, source: .microphone)
+            try await streamingManager.loadModels(models)
+            try await streamingManager.startStreaming(source: .microphone)
 
             let streamChunkSize = 16_000
             var offset = 0
@@ -1155,17 +1409,54 @@ private actor AsrManagerCoordinator {
             logger.error(
                 "transcribeWithCustomVocabulary: FluidAudio vocabulary boosting failed: \(error.localizedDescription, privacy: .public)"
             )
-            return try await manager.transcribe(samples)
+            return try await transcribe(samples)
         }
     }
 
+    func appendStreamingAudio(_ buffer: AVAudioPCMBuffer) async throws {
+        guard let streamingManager else { throw TranscriptionError.engineNotReady }
+        try await streamingManager.appendAudio(buffer)
+    }
+
+    func processStreamingAudio() async throws {
+        guard let streamingManager else { throw TranscriptionError.engineNotReady }
+        try await streamingManager.processBufferedAudio()
+    }
+
+    func currentStreamingTranscript() async -> String {
+        guard let streamingManager else { return "" }
+        return await streamingManager.getPartialTranscript()
+    }
+
+    func finishStreaming() async throws -> String {
+        guard let streamingManager else { throw TranscriptionError.engineNotReady }
+        pendingEndOfUtterance = false
+        return try await streamingManager.finish()
+    }
+
+    private func markEndOfUtteranceDetected() {
+        pendingEndOfUtterance = true
+    }
+
+    func consumeEndOfUtteranceSignal() -> Bool {
+        let result = pendingEndOfUtterance
+        pendingEndOfUtterance = false
+        return result
+    }
+
     func cleanup() async {
-        logger.info("cleanup: releasing manager (was initialized=\(self.manager != nil, privacy: .public))")
+        logger.info("cleanup: releasing manager (was initialized=\(self.isInitialized(), privacy: .public))")
         if let manager {
             await manager.cleanup()
         }
+        if let streamingManager {
+            await streamingManager.cleanup()
+        }
         manager = nil
         models = nil
+        streamingManager = nil
+        streamingModelChoice = nil
+        pendingEndOfUtterance = false
         ctcModels = nil
         ctcTokenizer = nil
     }

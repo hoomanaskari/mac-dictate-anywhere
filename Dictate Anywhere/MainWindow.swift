@@ -82,7 +82,7 @@ struct MainWindow: View {
 
             if !appState.activeEngine.isReady && !appState.isPreparingEngine {
                 WarningBanner(
-                    message: "Parakeet model is required to start dictating. Download it now.",
+                    message: "A speech model is required to start dictating. Download one now.",
                     buttonTitle: "Set Up"
                 ) {
                     appState.selectedPage = .models
