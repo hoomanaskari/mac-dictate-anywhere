@@ -173,7 +173,15 @@ private struct AppKitMultilineTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? FocusAwareTextView else { return }
         if textView.string != text {
             textView.string = text
+            textView.clearUndoHistory()
         }
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        guard let textView = scrollView.documentView as? FocusAwareTextView else { return }
+        textView.delegate = nil
+        textView.onFocusChange = nil
+        textView.clearUndoHistory()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -193,7 +201,12 @@ private struct AppKitMultilineTextView: NSViewRepresentable {
 }
 
 private final class FocusAwareTextView: NSTextView {
+    private let localUndoManager = UndoManager()
     var onFocusChange: ((Bool) -> Void)?
+
+    override var undoManager: UndoManager? {
+        localUndoManager
+    }
 
     override func becomeFirstResponder() -> Bool {
         let didBecomeFirstResponder = super.becomeFirstResponder()
@@ -209,6 +222,14 @@ private final class FocusAwareTextView: NSTextView {
             onFocusChange?(false)
         }
         return didResignFirstResponder
+    }
+
+    func clearUndoHistory() {
+        localUndoManager.removeAllActions()
+    }
+
+    deinit {
+        clearUndoHistory()
     }
 }
 
