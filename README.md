@@ -6,19 +6,14 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 [![Swift](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<!-- Add a screenshot or demo GIF here -->
-<!-- ![Dictate Anywhere Demo](screenshots/demo.gif) -->
-<!-- Screenshots -->
 <table>
   <tr>
-    <img width="400" alt="Screenshot 2026-02-21 at 23 47 42" src="https://github.com/user-attachments/assets/f23182cb-3af3-48da-804f-2a91fbe1f731" />
-<img width="400" alt="Screenshot 2026-02-21 at 23 47 51" src="https://github.com/user-attachments/assets/b28898dc-88b3-4b31-ab3c-35e6f49fb74d" />
+    <td><img width="400" alt="Dictate Anywhere speech model settings" src="screenshots/speech-model.png" /></td>
+    <td><img width="400" alt="Dictate Anywhere general settings" src="screenshots/general.png" /></td>
   </tr>
-</table>
-<table>
   <tr>
-<img width="400" alt="Screenshot 2026-02-21 at 23 47 56" src="https://github.com/user-attachments/assets/c30d9349-cfcf-46a2-8a2a-f1b8b834cc17" />
-<img width="400" alt="Screenshot 2026-02-21 at 23 48 01" src="https://github.com/user-attachments/assets/a05fe872-08b1-49d5-ad00-8a75997f45da" />
+    <td><img width="400" alt="Dictate Anywhere text and overlay settings" src="screenshots/text-and-overlay.png" /></td>
+    <td><img width="400" alt="Dictate Anywhere transcript cleanup settings" src="screenshots/transcript-cleanup.png" /></td>
   </tr>
 </table>
 
