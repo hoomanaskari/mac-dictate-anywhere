@@ -128,6 +128,7 @@ private struct HotkeyBindingRow: View {
                     Text(shortcutCaption)
                         .font(DS.Fonts.ui(12.5))
                         .foregroundStyle(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)

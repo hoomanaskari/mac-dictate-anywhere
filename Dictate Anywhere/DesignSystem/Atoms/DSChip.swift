@@ -59,6 +59,8 @@ struct DSKeycap: View {
         Text(text)
             .font(DS.Fonts.ui(12.5, .semibold))
             .foregroundStyle(DS.Colors.ink)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
             .background(DS.Colors.bgInset, in: RoundedRectangle(cornerRadius: DS.Radius.small))

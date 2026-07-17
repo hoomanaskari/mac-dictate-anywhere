@@ -49,5 +49,6 @@ struct DSKeycapGroup: View {
                 DSKeycap(text: token)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

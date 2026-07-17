@@ -67,6 +67,8 @@ struct ShortcutRecorderView: View {
                 }
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     private func startRecording() {

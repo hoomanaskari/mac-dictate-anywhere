@@ -6,6 +6,8 @@ struct DSPrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(DS.Fonts.ui(13, .semibold))
             .foregroundStyle(.white)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.vertical, 7)
             .padding(.horizontal, 14)
             .background(DS.Colors.accent, in: RoundedRectangle(cornerRadius: DS.Radius.control))
@@ -24,6 +26,8 @@ struct DSSecondaryButtonStyle: ButtonStyle {
         configuration.label
             .font(DS.Fonts.ui(13, .medium))
             .foregroundStyle(tint)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.vertical, 7)
             .padding(.horizontal, 14)
             .background(DS.Colors.bgCard, in: RoundedRectangle(cornerRadius: DS.Radius.control))
