@@ -69,3 +69,4 @@ scripts/release-macos.sh
 *.xcconfig
 !*.shared.xcconfig
 .superset/config.json
+design.pen
