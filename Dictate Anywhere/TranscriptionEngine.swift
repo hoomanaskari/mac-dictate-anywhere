@@ -17,7 +17,7 @@ private let audioLogger = Logger(
     category: "AudioPipeline"
 )
 
-private protocol AudioCaptureController: AnyObject, Sendable {
+protocol AudioCaptureController: AnyObject, Sendable {
     func stop()
 }
 
@@ -295,7 +295,7 @@ private func makeRecordingEngine(
     return engine
 }
 
-nonisolated private func makePCMBuffer(from samples: [Float], sampleRate: Double = 16_000) throws -> AVAudioPCMBuffer {
+nonisolated func makePCMBuffer(from samples: [Float], sampleRate: Double = 16_000) throws -> AVAudioPCMBuffer {
     guard !samples.isEmpty else {
         throw TranscriptionError.audioFormatError
     }
@@ -345,7 +345,7 @@ private func captureDevice(for deviceID: AudioDeviceID) -> AVCaptureDevice? {
     ).devices.first { $0.uniqueID == uid }
 }
 
-private func makeAudioCaptureController(
+func makeAudioCaptureController(
     deviceID: AudioDeviceID?,
     onSamples: @escaping ([Float]) -> Void
 ) throws -> AudioCaptureController {
@@ -370,6 +370,9 @@ enum TranscriptionError: LocalizedError {
     case audioFormatError
     case deviceSelectionFailed
     case engineNotReady
+    case appleSpeechUnavailable
+    case appleSpeechLanguageUnsupported
+    case speechRecognitionPermissionDenied
 
     var errorDescription: String? {
         switch self {
@@ -377,6 +380,9 @@ enum TranscriptionError: LocalizedError {
         case .audioFormatError: return "Failed to create audio format."
         case .deviceSelectionFailed: return "Failed to select the specified microphone."
         case .engineNotReady: return "Transcription engine is not ready."
+        case .appleSpeechUnavailable: return "Apple Speech requires macOS 26 or later and a supported Mac."
+        case .appleSpeechLanguageUnsupported: return "The selected language is not supported by Apple Speech on this Mac."
+        case .speechRecognitionPermissionDenied: return "Speech Recognition permission is required to use Apple Speech."
         }
     }
 }

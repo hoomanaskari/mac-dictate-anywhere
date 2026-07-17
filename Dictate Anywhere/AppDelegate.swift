@@ -32,7 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMainWindow()
         setupNotificationObservers()
         applyAppearanceMode()
+        #if DEBUG
+        let screenshotMode = ProcessInfo.processInfo.arguments.contains("--screenshot-mode")
+            || ProcessInfo.processInfo.environment["DICTATE_ANYWHERE_SCREENSHOT_MODE"] == "1"
+        if !screenshotMode {
+            appState.start()
+        }
+        #else
         appState.start()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -92,7 +92,9 @@ struct MainWindow: View {
 
                 if !appState.activeEngine.isReady && !appState.isPreparingEngine {
                     WarningBanner(
-                        message: "A speech model is required to start dictating. Download one now.",
+                        message: appState.settings.engineChoice == .appleSpeech
+                            ? "Apple Speech needs to finish its on-device setup before you can dictate."
+                            : "A speech model is required to start dictating. Download one now.",
                         buttonTitle: "Set Up"
                     ) {
                         appState.selectedPage = .models

@@ -80,10 +80,21 @@ enum AppAppearanceMode: String, CaseIterable {
 
 enum TranscriptionEngineChoice: String, CaseIterable {
     case parakeet = "parakeet"
+    case appleSpeech = "appleSpeech"
 
     nonisolated var displayName: String {
         switch self {
         case .parakeet: return "FluidAudio"
+        case .appleSpeech: return "Apple Speech"
+        }
+    }
+
+    nonisolated var detail: String {
+        switch self {
+        case .parakeet:
+            return "Downloadable on-device speech models powered by FluidAudio."
+        case .appleSpeech:
+            return "Apple's latest on-device speech-to-text model, managed by macOS."
         }
     }
 }
@@ -463,6 +474,7 @@ final class Settings {
         static let engineChoice = "engineChoice"
         static let parakeetModelChoice = "parakeetModelChoice"
         static let selectedLanguage = "selectedLanguage"
+        static let appleSpeechLanguage = "appleSpeechLanguage"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
         static let fillerWordsToRemove = "fillerWordsToRemove"
         static let boostMicrophoneVolumeEnabled = "boostMicrophoneVolumeEnabled"
@@ -551,6 +563,14 @@ final class Settings {
     var selectedLanguage: SupportedLanguage {
         didSet {
             UserDefaults.standard.set(selectedLanguage.rawValue, forKey: Keys.selectedLanguage)
+        }
+    }
+
+    /// Language used by Apple's SpeechTranscriber. Kept separate so switching
+    /// engines does not overwrite the user's FluidAudio language preference.
+    var appleSpeechLanguage: SupportedLanguage {
+        didSet {
+            UserDefaults.standard.set(appleSpeechLanguage.rawValue, forKey: Keys.appleSpeechLanguage)
         }
     }
 
@@ -817,15 +837,17 @@ final class Settings {
         let hasChosenEngine = defaults.object(forKey: Keys.userHasChosenEngine) as? Bool ?? false
         userHasChosenEngine = hasChosenEngine
         let storedEngineRaw = defaults.string(forKey: Keys.engineChoice)
-        let hadDiscontinuedAppleSpeech = storedEngineRaw == "appleSpeech"
+        let hadDiscontinuedAppleSpeech = storedEngineRaw == "appleSpeech" && !AppleSpeechEngine.isSupported
         let previouslyPendingMigration = defaults.object(forKey: Keys.legacyAppleSpeechMigrationPending) as? Bool ?? false
         let persistedParakeetModelChoice = ParakeetModelChoice(
             rawValue: defaults.string(forKey: Keys.parakeetModelChoice) ?? ""
         ) ?? .multilingual
-        engineChoice = .parakeet
-        if storedEngineRaw != TranscriptionEngineChoice.parakeet.rawValue {
+        var persistedEngineChoice = TranscriptionEngineChoice(rawValue: storedEngineRaw ?? "") ?? .parakeet
+        if persistedEngineChoice == .appleSpeech, !AppleSpeechEngine.isSupported {
+            persistedEngineChoice = .parakeet
             defaults.set(TranscriptionEngineChoice.parakeet.rawValue, forKey: Keys.engineChoice)
         }
+        engineChoice = persistedEngineChoice
         parakeetModelChoice = persistedParakeetModelChoice
         if hadDiscontinuedAppleSpeech {
             userHasChosenEngine = false
@@ -835,11 +857,15 @@ final class Settings {
         if !hasChosenEngine, parakeetExistsOnDisk {
             engineChoice = .parakeet
         }
-        legacyAppleSpeechMigrationPending = (hadDiscontinuedAppleSpeech || previouslyPendingMigration) && !parakeetExistsOnDisk
+        legacyAppleSpeechMigrationPending = !AppleSpeechEngine.isSupported
+            && (hadDiscontinuedAppleSpeech || previouslyPendingMigration)
+            && !parakeetExistsOnDisk
 
         // Language
         let langCode = defaults.string(forKey: Keys.selectedLanguage) ?? "en"
         selectedLanguage = SupportedLanguage(rawValue: langCode) ?? .english
+        let appleLangCode = defaults.string(forKey: Keys.appleSpeechLanguage) ?? "en"
+        appleSpeechLanguage = SupportedLanguage(rawValue: appleLangCode) ?? .english
         if persistedParakeetModelChoice.isEnglishOnly {
             selectedLanguage = .english
         }

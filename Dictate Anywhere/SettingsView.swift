@@ -38,20 +38,40 @@ struct SettingsView: View {
             }
 
             DSSection(overline: "Language") {
-                DSDetailRow(
-                    label: "Transcription language",
-                    caption: parakeetModelChoice.languageSettingsFooter
-                ) {
-                    if parakeetModelChoice.isEnglishOnly {
-                        Text("English")
-                            .font(DS.Fonts.ui(13.5))
-                            .foregroundStyle(DS.Colors.textSecondary)
-                    } else {
+                if settings.engineChoice == .appleSpeech {
+                    DSDetailRow(
+                        label: "Transcription language",
+                        caption: "Apple Speech downloads and uses the matching on-device language model."
+                    ) {
                         DSDropdown(
-                            selection: $settings.selectedLanguage,
-                            options: Array(SupportedLanguage.allCases),
+                            selection: Binding(
+                                get: { settings.appleSpeechLanguage },
+                                set: { language in
+                                    Task { await appState.handleAppleSpeechLanguageChange(language) }
+                                }
+                            ),
+                            options: appState.appleSpeechSupportedLanguages.isEmpty
+                                ? [settings.appleSpeechLanguage]
+                                : appState.appleSpeechSupportedLanguages,
                             title: \.displayWithFlag
                         )
+                    }
+                } else {
+                    DSDetailRow(
+                        label: "Transcription language",
+                        caption: parakeetModelChoice.languageSettingsFooter
+                    ) {
+                        if parakeetModelChoice.isEnglishOnly {
+                            Text("English")
+                                .font(DS.Fonts.ui(13.5))
+                                .foregroundStyle(DS.Colors.textSecondary)
+                        } else {
+                            DSDropdown(
+                                selection: $settings.selectedLanguage,
+                                options: Array(SupportedLanguage.allCases),
+                                title: \.displayWithFlag
+                            )
+                        }
                     }
                 }
             }

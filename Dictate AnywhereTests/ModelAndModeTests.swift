@@ -44,6 +44,16 @@ final class ModelAndModeTests: XCTestCase {
 
     func testEngineDisplayName() {
         XCTAssertEqual(TranscriptionEngineChoice.parakeet.displayName, "FluidAudio")
+        XCTAssertEqual(TranscriptionEngineChoice.appleSpeech.displayName, "Apple Speech")
+    }
+
+    func testEngineChoicesHaveMetadataAndStableRawValues() {
+        XCTAssertEqual(TranscriptionEngineChoice.allCases, [.parakeet, .appleSpeech])
+        for choice in TranscriptionEngineChoice.allCases {
+            XCTAssertFalse(choice.displayName.isEmpty)
+            XCTAssertFalse(choice.detail.isEmpty)
+            XCTAssertEqual(TranscriptionEngineChoice(rawValue: choice.rawValue), choice)
+        }
     }
 
     // MARK: - TranscriptPostProcessingMode

@@ -44,6 +44,7 @@ final class AppState {
     var ollamaDeletingModel: String?
     var ollamaModelActionError: String?
     var ollamaModelActionsRevision = 0
+    var enginePreparationError: String?
 
     /// Static accessor for AppDelegate menu bar (avoids circular dependency)
     nonisolated(unsafe) static var lastTranscriptForMenuBar = ""
@@ -59,6 +60,8 @@ final class AppState {
     let overlay = OverlayWindow()
     let audioDeviceManager = AudioDeviceManager()
     let parakeetEngine = ParakeetEngine()
+    let appleSpeechEngine = AppleSpeechEngine()
+    var appleSpeechSupportedLanguages: [SupportedLanguage] = []
     private var isShowingMigrationAlert = false
 
     /// Whether the app is transitioning between states (simple guard)
@@ -85,7 +88,16 @@ final class AppState {
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
-        parakeetEngine
+        switch settings.engineChoice {
+        case .parakeet:
+            return parakeetEngine
+        case .appleSpeech:
+            return AppleSpeechEngine.isSupported ? appleSpeechEngine : parakeetEngine
+        }
+    }
+
+    var availableEngineChoices: [TranscriptionEngineChoice] {
+        TranscriptionEngineChoice.allCases
     }
 
     // MARK: - Initialization
@@ -185,15 +197,25 @@ final class AppState {
         if case .processing = status { return }
         if case .error = status { status = .idle }
 
-        // Auto-default: if user hasn't explicitly chosen an engine and
-        // a speech model is downloaded, ensure FluidAudio is selected.
-        await parakeetEngine.recheckAllModelsOnDisk()
-        await parakeetEngine.handleSelectedModelChange()
-        let hasSpeechModel = parakeetEngine.checkAnyModelOnDisk()
-        if !settings.userHasChosenEngine, hasSpeechModel {
-            settings.engineChoice = .parakeet
-        }
-        if hasSpeechModel {
+        switch settings.engineChoice {
+        case .parakeet:
+            // Auto-default: if the user hasn't explicitly chosen an engine and
+            // a speech model is downloaded, ensure FluidAudio is selected.
+            await parakeetEngine.recheckAllModelsOnDisk()
+            await parakeetEngine.handleSelectedModelChange()
+            let hasSpeechModel = parakeetEngine.checkAnyModelOnDisk()
+            if !settings.userHasChosenEngine, hasSpeechModel {
+                settings.engineChoice = .parakeet
+            }
+            if hasSpeechModel {
+                settings.legacyAppleSpeechMigrationPending = false
+            }
+        case .appleSpeech:
+            await refreshAppleSpeechLanguages()
+            if !appleSpeechSupportedLanguages.contains(settings.appleSpeechLanguage),
+               let fallback = appleSpeechSupportedLanguages.first {
+                settings.appleSpeechLanguage = fallback
+            }
             settings.legacyAppleSpeechMigrationPending = false
         }
 
@@ -202,6 +224,7 @@ final class AppState {
         if !ready {
             // Set synchronously so the UI sees it before any await yields
             isPreparingEngine = true
+            enginePreparationError = nil
             do {
                 try await activeEngine.prepare()
             } catch {
@@ -211,6 +234,7 @@ final class AppState {
                     try await activeEngine.prepare()
                 } catch {
                     logger.error("prepareActiveEngine: prepare() failed on retry: \(error.localizedDescription, privacy: .public)")
+                    enginePreparationError = error.localizedDescription
                 }
             }
             logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
@@ -224,6 +248,32 @@ final class AppState {
         settings.userHasChosenEngine = userInitiated
         await parakeetEngine.handleSelectedModelChange()
         await prepareActiveEngine()
+    }
+
+    func handleEngineSelectionChange(_ choice: TranscriptionEngineChoice) async {
+        guard status == .idle else { return }
+        guard availableEngineChoices.contains(choice) else { return }
+        guard choice != .appleSpeech || AppleSpeechEngine.isSupported else { return }
+
+        if choice != .appleSpeech {
+            await appleSpeechEngine.invalidatePreparedSession()
+        }
+        enginePreparationError = nil
+        settings.engineChoice = choice
+        settings.userHasChosenEngine = true
+        await prepareActiveEngine()
+    }
+
+    func handleAppleSpeechLanguageChange(_ language: SupportedLanguage) async {
+        guard status == .idle, settings.engineChoice == .appleSpeech else { return }
+        guard appleSpeechSupportedLanguages.contains(language) else { return }
+        settings.appleSpeechLanguage = language
+        await appleSpeechEngine.invalidatePreparedSession()
+        await prepareActiveEngine()
+    }
+
+    private func refreshAppleSpeechLanguages() async {
+        appleSpeechSupportedLanguages = await AppleSpeechEngine.supportedLanguages()
     }
 
     // MARK: - Ollama Model Management
@@ -301,25 +351,38 @@ final class AppState {
         }
         guard status == .idle, !isTransitioning else { return }
         let engine = activeEngine
-        if parakeetEngine.isDownloading {
-            logger.warning("startDictation: selected model is still downloading")
-            status = .error("\(settings.parakeetModelChoice.displayName) is still downloading. Try again when it finishes.")
-            status = .idle
-            return
-        }
-
-        if !(await parakeetEngine.refreshSelectedModelReadiness()) {
-            await prepareActiveEngine()
-        }
-
-        guard await parakeetEngine.refreshSelectedModelReadiness(), engine.isReady else {
-            logger.warning("startDictation: engine not ready, aborting")
-            if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
-                showLegacyEngineDiscontinuedAlert()
+        switch settings.engineChoice {
+        case .parakeet:
+            if parakeetEngine.isDownloading {
+                logger.warning("startDictation: selected model is still downloading")
+                status = .error("\(settings.parakeetModelChoice.displayName) is still downloading. Try again when it finishes.")
+                status = .idle
+                return
             }
-            status = .error("\(settings.parakeetModelChoice.displayName) is not ready. Download it from Speech Model settings.")
-            status = .idle
-            return
+
+            if !(await parakeetEngine.refreshSelectedModelReadiness()) {
+                await prepareActiveEngine()
+            }
+
+            guard await parakeetEngine.refreshSelectedModelReadiness(), engine.isReady else {
+                logger.warning("startDictation: FluidAudio engine not ready, aborting")
+                if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
+                    showLegacyAppleSpeechUnavailableAlert()
+                }
+                status = .error("\(settings.parakeetModelChoice.displayName) is not ready. Download it from Speech Model settings.")
+                status = .idle
+                return
+            }
+        case .appleSpeech:
+            if !engine.isReady {
+                await prepareActiveEngine()
+            }
+            guard engine.isReady else {
+                logger.warning("startDictation: Apple Speech engine not ready, aborting")
+                status = .error("Apple Speech is not ready. Open Speech Model settings to finish setup.")
+                status = .idle
+                return
+            }
         }
         captureInsertionTargetApp()
 
@@ -685,7 +748,7 @@ final class AppState {
         (engine as? ParakeetEngine)?.endOfUtteranceHandler = nil
     }
 
-    private func showLegacyEngineDiscontinuedAlert() {
+    private func showLegacyAppleSpeechUnavailableAlert() {
         guard !isShowingMigrationAlert else { return }
         isShowingMigrationAlert = true
         defer { isShowingMigrationAlert = false }
@@ -699,11 +762,19 @@ final class AppState {
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Apple Speech Has Been Discontinued"
-        alert.informativeText = """
-        Dictate Anywhere no longer supports Apple Speech due to inconsistent transcription quality. \
-        Download a speech model to continue dictating.
-        """
+        if AppleSpeechEngine.isOperatingSystemSupported {
+            alert.messageText = "Apple Speech Isn’t Available on This Mac"
+            alert.informativeText = """
+            Dictate Anywhere has switched to FluidAudio. Download a FluidAudio speech model to \
+            continue dictating.
+            """
+        } else {
+            alert.messageText = "Apple Speech Requires macOS 26"
+            alert.informativeText = """
+            \(AppleSpeechEngine.operatingSystemDisplayName) does not support Apple Speech. Dictate \
+            Anywhere has switched to FluidAudio. Download a FluidAudio speech model to continue dictating.
+            """
+        }
         alert.addButton(withTitle: "Open Speech Model")
         alert.addButton(withTitle: "Not Now")
 
