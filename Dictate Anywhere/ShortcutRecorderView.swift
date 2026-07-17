@@ -33,41 +33,37 @@ struct ShortcutRecorderView: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             if isRecording {
-                Text("Press any key combo...")
-                    .font(.system(.body, design: .rounded, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                Text("Press any key combo…")
+                    .font(DS.Fonts.ui(13, .medium))
+                    .foregroundStyle(DS.Colors.accent)
             } else if displayName.isEmpty {
-                Text("Not Set")
-                    .font(.system(.body, design: .rounded, weight: .medium))
-                    .foregroundStyle(.secondary)
+                Text("Not set")
+                    .font(DS.Fonts.ui(13, .medium))
+                    .foregroundStyle(DS.Colors.textSecondary)
             } else {
-                Text(displayName)
-                    .font(.system(.body, design: .rounded, weight: .medium))
+                DSKeycapGroup(displayName: displayName)
             }
 
-            Spacer()
-
-            if isRecording {
-                Button("Cancel") {
-                    stopRecording()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            } else {
-                Button(displayName.isEmpty ? "Record Shortcut" : "Change") {
-                    startRecording()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-
-                if !displayName.isEmpty {
-                    Button("Clear", role: .destructive) {
-                        onClear()
+            HStack(spacing: 8) {
+                if isRecording {
+                    Button("Cancel") {
+                        stopRecording()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.dsSecondary)
+                } else {
+                    Button(displayName.isEmpty ? "Record Shortcut" : "Change") {
+                        startRecording()
+                    }
+                    .buttonStyle(.dsPrimary)
+
+                    if !displayName.isEmpty {
+                        Button("Clear") {
+                            onClear()
+                        }
+                        .buttonStyle(.dsSecondary)
+                    }
                 }
             }
         }

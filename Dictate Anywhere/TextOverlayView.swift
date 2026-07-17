@@ -2,7 +2,7 @@
 //  TextOverlayView.swift
 //  Dictate Anywhere
 //
-//  Text preview overlay settings.
+//  "Text & Overlay" page: overlay preview settings.
 //
 
 import SwiftUI
@@ -13,19 +13,43 @@ struct TextOverlayView: View {
     var body: some View {
         @Bindable var settings = appState.settings
 
-        Form {
-            // MARK: - Overlay
+        DSPage {
+            DSSectionHeader(
+                title: "Text & Overlay",
+                subtitle: "The floating overlay follows you while you dictate."
+            )
 
-            Section {
-                Toggle("Show text preview in overlay", isOn: $settings.showTextPreview)
-            } header: {
-                Text("Overlay")
-            } footer: {
-                Text("When enabled, the floating overlay shows live transcription text. When disabled, only the waveform is shown.")
+            DSSection(overline: "Overlay") {
+                VStack(spacing: 14) {
+                    DSWaveformPill()
+                    Text(settings.showTextPreview
+                         ? "Waveform with live text — how your overlay looks right now"
+                         : "Waveform only — how your overlay looks right now")
+                        .font(DS.Fonts.ui(12))
+                        .foregroundStyle(DS.Colors.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 36)
+                .padding(.horizontal, 24)
+                .background(DS.Colors.overlayPreviewFill)
+                .clipShape(
+                    .rect(
+                        topLeadingRadius: DS.Radius.card,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: DS.Radius.card
+                    )
+                )
+
+                DSStackedRow(
+                    label: "Show text preview in overlay",
+                    caption: "When enabled, live transcription text appears next to the waveform.",
+                    isOn: $settings.showTextPreview
+                )
             }
+
+            DSHint(text: "Keep text preview off for a calmer, distraction-free overlay.")
         }
-        .formStyle(.grouped)
-        .navigationTitle("Text & Overlay")
     }
 }
 

@@ -16,7 +16,9 @@ struct DictateAnywhereApp: App {
             MainWindow()
                 .environment(appDelegate.appState)
         }
-        .defaultSize(width: MainWindowSizing.minimumWidth, height: MainWindowSizing.minimumHeight)
+        .defaultSize(width: MainWindowSizing.defaultWidth, height: MainWindowSizing.defaultHeight)
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open Dictate Anywhere", action: appDelegate.showMainWindow)

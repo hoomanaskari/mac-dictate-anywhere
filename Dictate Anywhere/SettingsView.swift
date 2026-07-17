@@ -2,7 +2,7 @@
 //  SettingsView.swift
 //  Dictate Anywhere
 //
-//  General app settings: launch, language, audio.
+//  "General" page: launch, language, audio.
 //
 
 import SwiftUI
@@ -13,81 +13,102 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var settings = appState.settings
 
-        Form {
-            let parakeetModelChoice = settings.parakeetModelChoice
+        let parakeetModelChoice = settings.parakeetModelChoice
 
-            // MARK: - General
+        DSPage {
+            DSSectionHeader(
+                title: "General",
+                subtitle: "How Dictate Anywhere starts, sounds, and listens."
+            )
 
-            Section {
-                Toggle("Launch at Login", isOn: $settings.launchAtLogin)
-
-                Picker("App Appears In", selection: $settings.appAppearanceMode) {
-                    ForEach(AppAppearanceMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
+            DSSection(overline: "Startup") {
+                DSInfoRow(label: "Launch at login") {
+                    Toggle("", isOn: $settings.launchAtLogin)
+                        .labelsHidden()
+                        .toggleStyle(.dsSwitch)
                 }
-            } header: {
-                Text("General")
+                DSDivider()
+                DSInfoRow(label: "App appears in") {
+                    DSDropdown(
+                        selection: $settings.appAppearanceMode,
+                        options: AppAppearanceMode.allCases,
+                        title: \.displayName
+                    )
+                }
             }
 
-            // MARK: - Language
-
-            Section {
-                if parakeetModelChoice.isEnglishOnly {
-                    LabeledContent("Transcription Language") {
+            DSSection(overline: "Language") {
+                DSDetailRow(
+                    label: "Transcription language",
+                    caption: parakeetModelChoice.languageSettingsFooter
+                ) {
+                    if parakeetModelChoice.isEnglishOnly {
                         Text("English")
+                            .font(DS.Fonts.ui(13.5))
+                            .foregroundStyle(DS.Colors.textSecondary)
+                    } else {
+                        DSDropdown(
+                            selection: $settings.selectedLanguage,
+                            options: Array(SupportedLanguage.allCases),
+                            title: \.displayWithFlag
+                        )
                     }
-                } else {
-                    Picker("Transcription Language", selection: $settings.selectedLanguage) {
-                        ForEach(SupportedLanguage.allCases) { lang in
-                            Text(lang.displayWithFlag).tag(lang)
+                }
+            }
+
+            DSSection(overline: "Audio") {
+                DSInfoRow(label: "Microphone") {
+                    DSDropdown(
+                        selection: Binding<String?>(
+                            get: { settings.selectedMicrophoneUID },
+                            set: { settings.selectedMicrophoneUID = $0 }
+                        ),
+                        options: [nil] + appState.audioDeviceManager.availableInputDevices.map { $0.uid },
+                        title: { uid in
+                            guard let uid else { return "System Default" }
+                            return appState.audioDeviceManager.availableInputDevices
+                                .first { $0.uid == uid }?.name ?? uid
                         }
-                    }
-                    .pickerStyle(.menu)
+                    )
                 }
-            } header: {
-                Text("Language")
-            } footer: {
-                Text(parakeetModelChoice.languageSettingsFooter)
-            }
-
-            // MARK: - Audio
-
-            Section {
-                Picker("Microphone", selection: Binding<String?>(
-                    get: { settings.selectedMicrophoneUID },
-                    set: { settings.selectedMicrophoneUID = $0 }
-                )) {
-                    Text("System Default").tag(nil as String?)
-                    ForEach(appState.audioDeviceManager.availableInputDevices, id: \.uid) { device in
-                        Text(device.name).tag(device.uid as String?)
-                    }
+                DSDivider()
+                DSInfoRow(label: "Boost microphone volume during recording") {
+                    Toggle("", isOn: $settings.boostMicrophoneVolumeEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.dsSwitch)
                 }
-                .pickerStyle(.menu)
-
-                Toggle("Boost microphone volume during recording", isOn: $settings.boostMicrophoneVolumeEnabled)
-                Toggle("Mute system audio during recording", isOn: $settings.muteSystemAudioDuringRecordingEnabled)
-
-                Toggle("Sound Effects", isOn: $settings.soundEffectsEnabled)
-
+                DSDivider()
+                DSInfoRow(label: "Mute system audio during recording") {
+                    Toggle("", isOn: $settings.muteSystemAudioDuringRecordingEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.dsSwitch)
+                }
+                DSDivider()
+                DSInfoRow(label: "Sound effects") {
+                    Toggle("", isOn: $settings.soundEffectsEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.dsSwitch)
+                }
                 if settings.soundEffectsEnabled {
-                    HStack {
+                    DSDivider()
+                    HStack(spacing: 12) {
                         Image(systemName: "speaker.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Slider(value: $settings.soundEffectsVolume, in: 0...1)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.Colors.textSecondary)
+                        DSSlider(value: Binding(
+                            get: { Double(settings.soundEffectsVolume) },
+                            set: { settings.soundEffectsVolume = Float($0) }
+                        ))
                         Image(systemName: "speaker.wave.3.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.Colors.textSecondary)
                     }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, DS.Spacing.rowHorizontal)
                 }
-            } header: {
-                Text("Audio")
-            } footer: {
-                Text("Raises low mic input and mutes system audio during dictation.")
             }
+
+            DSHint(text: "Boosting raises low mic input, and muting keeps system audio out of your dictation.")
         }
-        .formStyle(.grouped)
-        .navigationTitle("Settings")
     }
 }

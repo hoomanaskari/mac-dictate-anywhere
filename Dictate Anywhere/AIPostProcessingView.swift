@@ -2,7 +2,7 @@
 //  AIPostProcessingView.swift
 //  Dictate Anywhere
 //
-//  AI post-processing settings page.
+//  "Transcript Cleanup" page: AI post-processing settings.
 //
 
 import SwiftUI
@@ -48,42 +48,43 @@ struct AIPostProcessingView: View {
     var body: some View {
         @Bindable var settings = appState.settings
 
-        Form {
-            Section {
-                Picker("Transcript Processing", selection: $settings.transcriptPostProcessingMode) {
-                    ForEach(TranscriptPostProcessingMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
+        DSPage {
+            DSSectionHeader(
+                title: "Transcript Cleanup",
+                subtitle: "Choose how your transcript is polished before it's pasted."
+            )
+
+            DSSection(overline: "AI Processing") {
+                DSDetailRow(
+                    label: "Transcript processing",
+                    caption: "Choose how the final transcript is cleaned up before it is pasted."
+                ) {
+                    DSDropdown(
+                        selection: $settings.transcriptPostProcessingMode,
+                        options: TranscriptPostProcessingMode.allCases,
+                        title: \.displayName
+                    )
                 }
-                .pickerStyle(.menu)
-            } footer: {
-                Text("Choose how the final transcript is cleaned up before it is pasted.")
             }
 
             localFillerWordCleanupContent(settings: settings)
 
             switch settings.transcriptPostProcessingMode {
             case .none:
-                Section {
-                    Text("No AI cleanup will run. The raw FluidAudio transcript will be pasted after any local filler-word cleanup above.")
-                        .foregroundStyle(.secondary)
-                }
+                DSPanel(
+                    text: "No AI cleanup will run. The raw FluidAudio transcript is pasted after the local filler-word cleanup above.",
+                    icon: "sparkles"
+                )
             case .fluidAudioVocabulary:
                 fluidAudioVocabularyContent(settings: settings)
             case .appleIntelligence:
                 if #available(macOS 26, *) {
                     appleIntelligenceContent(settings: settings)
                 } else {
-                    Section {
-                        Label {
-                            Text("Requires macOS 26 or later")
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(.secondary)
-                        }
-                    } footer: {
-                        Text("Apple Intelligence transcript processing requires macOS 26 or later.")
-                    }
+                    DSPanel(
+                        text: "Apple Intelligence transcript processing requires macOS 26 or later.",
+                        icon: "exclamationmark.triangle"
+                    )
                 }
             case .ollama:
                 ollamaContent(settings: settings)
@@ -93,8 +94,6 @@ struct AIPostProcessingView: View {
                 openAICompatibleContent(settings: settings)
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle("Transcript Processing")
         .task(id: providerTaskID(settings: settings)) {
             guard shouldAutoRefreshProviderAvailability else { return }
             ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
@@ -126,58 +125,97 @@ struct AIPostProcessingView: View {
         }
     }
 
+    // MARK: - Shared row helpers
+
+    /// Labeled single-line field row inside a card.
+    @ViewBuilder
+    private func fieldRow<Field: View>(
+        label: String,
+        @ViewBuilder field: () -> Field
+    ) -> some View {
+        HStack(alignment: .center, spacing: 24) {
+            Text(label)
+                .font(DS.Fonts.ui(13.5, .medium))
+                .foregroundStyle(DS.Colors.ink)
+            Spacer(minLength: 0)
+            field()
+                .frame(width: 320)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, DS.Spacing.rowHorizontal)
+    }
+
+    /// Secondary caption line inside a card.
+    @ViewBuilder
+    private func cardCaption(_ text: String) -> some View {
+        Text(text)
+            .font(DS.Fonts.ui(12.5))
+            .lineSpacing(12.5 * 0.5 - 3)
+            .foregroundStyle(DS.Colors.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 12)
+            .padding(.horizontal, DS.Spacing.rowHorizontal)
+    }
+
+    @ViewBuilder
+    private func cardPadded<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 12)
+        .padding(.horizontal, DS.Spacing.rowHorizontal)
+    }
+
+    // MARK: - Local filler word removal
+
     @ViewBuilder
     private func localFillerWordCleanupContent(settings: Settings) -> some View {
         @Bindable var settings = settings
 
-        Section {
-            Toggle("Remove selected filler words", isOn: $settings.isFillerWordRemovalEnabled)
+        DSSection(overline: "Local Filler Word Removal") {
+            DSStackedRow(
+                label: "Remove selected filler words",
+                caption: settings.parakeetModelChoice.usesTrueStreaming
+                    ? "Runs locally on this Mac before any AI processing — no AI involved. Helpful for streaming models that transcribe filler words literally."
+                    : "Runs locally on this Mac before any AI processing — no AI involved. It removes only the editable words listed here.",
+                isOn: $settings.isFillerWordRemovalEnabled
+            )
 
             if settings.isFillerWordRemovalEnabled {
-                FlowLayout(spacing: 6) {
-                    ForEach(settings.fillerWordsToRemove, id: \.self) { word in
-                        HStack(spacing: 4) {
-                            Text(word)
-                                .font(.caption)
-                            Button {
-                                settings.fillerWordsToRemove.removeAll { $0 == word }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 8, weight: .bold))
+                DSDivider()
+                cardPadded {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Words:")
+                            .font(DS.Fonts.ui(12.5, .medium))
+                            .foregroundStyle(DS.Colors.textSecondary)
+                        FlowLayout(spacing: 6) {
+                            ForEach(settings.fillerWordsToRemove, id: \.self) { word in
+                                DSChip(text: word) {
+                                    settings.fillerWordsToRemove.removeAll { $0 == word }
+                                }
                             }
-                            .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.quaternary)
-                        .clipShape(Capsule())
+                    }
+
+                    HStack(spacing: 8) {
+                        DSTextField(placeholder: "Add word…", text: $newFillerWord)
+                            .frame(width: 220)
+                            .onSubmit { addFillerWord() }
+
+                        Button("Add") { addFillerWord() }
+                            .buttonStyle(.dsSecondary)
+                            .disabled(newFillerWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Spacer(minLength: 0)
+
+                        Button("Reset to Defaults") {
+                            settings.fillerWordsToRemove = Settings.defaultFillerWords
+                        }
+                        .buttonStyle(.dsSecondary)
                     }
                 }
-
-                HStack {
-                    TextField("", text: $newFillerWord, prompt: Text("Add word..."))
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addFillerWord() }
-
-                    Button("Add") { addFillerWord() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(newFillerWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .labelsHidden()
-
-                Button("Reset to Defaults") {
-                    settings.fillerWordsToRemove = Settings.defaultFillerWords
-                }
-                .controlSize(.small)
-            }
-        } header: {
-            Text("Local Filler Word Removal")
-        } footer: {
-            if settings.parakeetModelChoice.usesTrueStreaming {
-                Text("Runs locally on this Mac before any AI transcript processing. When enabled, it removes only the editable words listed here, does not use AI, and can help with streaming models that transcribe filler words more literally.")
-            } else {
-                Text("Runs locally on this Mac before any AI transcript processing. When enabled, it removes only the editable words listed here and does not use AI or send text to an AI service.")
             }
         }
     }
@@ -189,19 +227,15 @@ struct AIPostProcessingView: View {
         newFillerWord = ""
     }
 
+    // MARK: - FluidAudio vocabulary
+
     @ViewBuilder
     private func fluidAudioVocabularyContent(settings: Settings) -> some View {
         if settings.parakeetModelChoice.usesTrueStreaming {
-            Section {
-                Label {
-                    Text("FluidAudio Vocabulary is only available with Parakeet TDT models.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
-                }
-            } footer: {
-                Text("Choose Multilingual, English Only, or English Compact to use FluidAudio vocabulary rescoring. For streaming models, use Apple Intelligence, Ollama, OpenRouter, or OpenAI Compatible cleanup.")
-            }
+            DSPanel(
+                text: "FluidAudio Vocabulary is only available with Parakeet TDT models. Choose Multilingual, English Only, or English Compact to use vocabulary rescoring. For streaming models, use Apple Intelligence, Ollama, OpenRouter, or OpenAI Compatible cleanup.",
+                icon: "exclamationmark.triangle"
+            )
         } else {
             vocabularySection(
                 settings: settings,
@@ -209,6 +243,8 @@ struct AIPostProcessingView: View {
             )
         }
     }
+
+    // MARK: - Apple Intelligence
 
     @available(macOS 26, *)
     @ViewBuilder
@@ -218,16 +254,16 @@ struct AIPostProcessingView: View {
         case .available:
             @Bindable var settings = settings
 
-            Section {
-                SettingsMultilineTextArea(
-                    text: $settings.aiPostProcessingPrompt,
-                    placeholder: "Enter your prompt, e.g. \"Break into sentences, fix grammar, and remove filler words.\""
-                )
-                .labelsHidden()
-            } header: {
-                Text("Prompt")
-            } footer: {
-                Text("This prompt tells Apple Intelligence how to transform your transcribed text. The transcript is appended after your prompt.")
+            DSSection(overline: "Prompt") {
+                cardPadded {
+                    SettingsMultilineTextArea(
+                        text: $settings.aiPostProcessingPrompt,
+                        placeholder: "Enter your prompt, e.g. \"Break into sentences, fix grammar, and remove filler words.\""
+                    )
+                    .labelsHidden()
+                }
+                DSDivider()
+                cardCaption("This prompt tells Apple Intelligence how to transform your transcribed text. The transcript is appended after your prompt.")
             }
 
             vocabularySection(
@@ -236,63 +272,58 @@ struct AIPostProcessingView: View {
             )
 
         case .unavailable(.deviceNotEligible):
-            Section {
-                Label {
-                    Text("Your Mac doesn't support Apple Intelligence")
-                } icon: {
-                    Image(systemName: "xmark.circle")
-                        .foregroundStyle(.red)
-                }
-            } footer: {
-                Text("AI Post Processing requires a Mac that supports Apple Intelligence.")
-            }
+            DSPanel(
+                text: "Your Mac doesn't support Apple Intelligence. AI Post Processing requires a Mac that supports Apple Intelligence.",
+                icon: "xmark.circle"
+            )
 
         case .unavailable(.appleIntelligenceNotEnabled):
-            Section {
-                Label {
-                    Text("Apple Intelligence is not enabled")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
-                Button("Open Apple Intelligence Settings") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.AppleIntelligence") {
-                        NSWorkspace.shared.open(url)
+            DSSection(overline: "Apple Intelligence") {
+                cardPadded {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(DS.Colors.accentDeep)
+                        Text("Apple Intelligence is not enabled")
+                            .font(DS.Fonts.ui(13.5, .medium))
+                            .foregroundStyle(DS.Colors.ink)
                     }
+                    Button("Open Apple Intelligence Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.AppleIntelligence") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.dsPrimary)
                 }
-            } footer: {
-                Text("Enable Apple Intelligence in System Settings to use AI Post Processing.")
+                DSDivider()
+                cardCaption("Enable Apple Intelligence in System Settings to use AI Post Processing.")
             }
 
         case .unavailable(.modelNotReady):
-            Section {
-                Label {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Apple Intelligence model is downloading...")
+            DSSection(overline: "Apple Intelligence") {
+                cardPadded {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.circle")
+                            .foregroundStyle(DS.Colors.accent)
+                        Text("Apple Intelligence model is downloading…")
+                            .font(DS.Fonts.ui(13.5, .medium))
+                            .foregroundStyle(DS.Colors.ink)
                         ProgressView()
                             .controlSize(.small)
                     }
-                } icon: {
-                    Image(systemName: "arrow.down.circle")
-                        .foregroundStyle(.blue)
                 }
-            } footer: {
-                Text("The on-device model is being prepared. This may take a few minutes.")
+                DSDivider()
+                cardCaption("The on-device model is being prepared. This may take a few minutes.")
             }
 
         case .unavailable(_):
-            Section {
-                Label {
-                    Text("Apple Intelligence is currently unavailable")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
-                }
-            } footer: {
-                Text("Try again later.")
-            }
+            DSPanel(
+                text: "Apple Intelligence is currently unavailable. Try again later.",
+                icon: "exclamationmark.triangle"
+            )
         }
     }
+
+    // MARK: - Ollama
 
     @ViewBuilder
     private func ollamaContent(settings: Settings) -> some View {
@@ -300,43 +331,46 @@ struct AIPostProcessingView: View {
             ollamaInstallCard(settings: settings)
         }
 
-        Section {
-            TextField(
-                "Server URL",
-                text: Binding(
-                    get: { settings.ollamaBaseURL },
-                    set: { settings.ollamaBaseURL = $0 }
-                ),
-                prompt: Text(OllamaPostProcessingService.defaultBaseURL)
-            )
-
-            TextField(
-                "Model",
-                text: Binding(
-                    get: { settings.ollamaModel },
-                    set: { settings.ollamaModel = $0 }
-                ),
-                prompt: Text("gemma4:e4b")
-            )
-
-            HStack(alignment: .top, spacing: 12) {
-                ollamaStatusView(settings: settings)
-                Spacer(minLength: 12)
-                Button(isCheckingOllama ? "Checking..." : "Refresh Models") {
-                    Task {
-                        await refreshOllamaAvailability(settings: settings, debounce: false)
-                    }
-                }
-                .disabled(isCheckingOllama)
+        DSSection(overline: "Ollama") {
+            fieldRow(label: "Server URL") {
+                DSTextField(
+                    placeholder: OllamaPostProcessingService.defaultBaseURL,
+                    text: Binding(
+                        get: { settings.ollamaBaseURL },
+                        set: { settings.ollamaBaseURL = $0 }
+                    )
+                )
             }
+            DSDivider()
+            fieldRow(label: "Model") {
+                DSTextField(
+                    placeholder: "gemma4:e4b",
+                    text: Binding(
+                        get: { settings.ollamaModel },
+                        set: { settings.ollamaModel = $0 }
+                    )
+                )
+            }
+            DSDivider()
+            cardPadded {
+                HStack(alignment: .top, spacing: 12) {
+                    ollamaStatusView(settings: settings)
+                    Spacer(minLength: 12)
+                    Button(isCheckingOllama ? "Checking…" : "Refresh Models") {
+                        Task {
+                            await refreshOllamaAvailability(settings: settings, debounce: false)
+                        }
+                    }
+                    .buttonStyle(.dsSecondary)
+                    .disabled(isCheckingOllama)
+                }
 
-            if let availability = ollamaAvailability, !availability.installedModels.isEmpty {
-                let installedModels = availability.installedModels
+                if let availability = ollamaAvailability, !availability.installedModels.isEmpty {
+                    let installedModels = availability.installedModels
 
-                VStack(alignment: .leading, spacing: 8) {
                     Text("Installed Models")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DS.Fonts.ui(12, .semibold))
+                        .foregroundStyle(DS.Colors.textSecondary)
 
                     FlowLayout(spacing: 6) {
                         ForEach(installedModels, id: \.self) { (model: String) in
@@ -345,78 +379,60 @@ struct AIPostProcessingView: View {
                             let canDelete = ollamaCanDeleteModels
                             let isBusy = appState.ollamaDownloadState != nil || appState.ollamaDeletingModel != nil
 
-                            HStack(spacing: 6) {
-                                Button {
-                                    settings.ollamaModel = model
-                                } label: {
-                                    Text(model)
-                                        .font(.caption)
-                                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(isDeleting)
-
-                                if canDelete {
-                                    Button {
-                                        ollamaPendingDeletionModel = model
-                                    } label: {
-                                        Image(systemName: "xmark")
-                                            .font(.system(size: 8, weight: .bold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(isBusy)
-                                }
+                            Button {
+                                guard !isDeleting else { return }
+                                settings.ollamaModel = model
+                            } label: {
+                                DSChip(
+                                    text: model,
+                                    isSelected: isSelected,
+                                    onRemove: canDelete && !isBusy ? { ollamaPendingDeletionModel = model } : nil
+                                )
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12))
-                            .clipShape(Capsule())
+                            .buttonStyle(.plain)
+                            .disabled(isDeleting)
                         }
                     }
                 }
             }
-        } header: {
-            Text("Ollama")
-        } footer: {
-            Text("Runs transcript cleanup through your local Ollama server. Use the server base URL and an installed model name. Larger models are noticeably better at following cleanup instructions and vocabulary normalization.")
+            DSDivider()
+            cardCaption("Runs transcript cleanup through your local Ollama server. Use the server base URL and an installed model name. Larger models are noticeably better at following cleanup instructions and vocabulary normalization.")
         }
 
         ollamaSuggestedModelsSection(settings: settings)
 
         if let capability = ollamaAvailability?.selectedModelReasoningCapability,
            capability.supportsReasoning {
-            Section {
-                Picker(
-                    "Reasoning",
-                    selection: Binding(
-                        get: { settings.ollamaReasoningSetting.sanitized(for: capability) },
-                        set: { settings.ollamaReasoningSetting = $0.sanitized(for: capability) }
-                    )
+            DSSection(overline: "Reasoning") {
+                DSDetailRow(
+                    label: "Reasoning",
+                    caption: ollamaReasoningFooter(for: capability)
                 ) {
-                    ForEach(OllamaReasoningSetting.options(for: capability), id: \.self) { option in
-                        Text(option.displayName).tag(option)
-                    }
+                    DSDropdown(
+                        selection: Binding(
+                            get: { settings.ollamaReasoningSetting.sanitized(for: capability) },
+                            set: { settings.ollamaReasoningSetting = $0.sanitized(for: capability) }
+                        ),
+                        options: OllamaReasoningSetting.options(for: capability),
+                        title: \.displayName
+                    )
                 }
-                .pickerStyle(.menu)
-            } footer: {
-                Text(ollamaReasoningFooter(for: capability))
             }
         }
 
-        Section {
-            SettingsMultilineTextArea(
-                text: Binding(
-                    get: { settings.ollamaPostProcessingPrompt },
-                    set: { settings.ollamaPostProcessingPrompt = $0 }
-                ),
-                placeholder: "Optional: add style or cleanup instructions for Ollama."
-            )
-            .labelsHidden()
-        } header: {
-            Text("Prompt")
-        } footer: {
-            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for Ollama.")
+        DSSection(overline: "Prompt") {
+            cardPadded {
+                SettingsMultilineTextArea(
+                    text: Binding(
+                        get: { settings.ollamaPostProcessingPrompt },
+                        set: { settings.ollamaPostProcessingPrompt = $0 }
+                    ),
+                    placeholder: "Optional: add style or cleanup instructions for Ollama."
+                )
+                .labelsHidden()
+            }
+            DSDivider()
+            cardCaption("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for Ollama.")
         }
 
         vocabularySection(
@@ -425,87 +441,92 @@ struct AIPostProcessingView: View {
         )
     }
 
+    // MARK: - OpenRouter
+
     @ViewBuilder
     private func openRouterContent(settings: Settings) -> some View {
-        Section {
-            SecureField(
-                "API Key",
-                text: Binding(
-                    get: { settings.openRouterAPIKey },
-                    set: { settings.openRouterAPIKey = $0 }
-                ),
-                prompt: Text("Paste OpenRouter API key")
-            )
+        DSSection(overline: "OpenRouter") {
+            fieldRow(label: "API Key") {
+                DSTextField(
+                    placeholder: "Paste OpenRouter API key",
+                    text: Binding(
+                        get: { settings.openRouterAPIKey },
+                        set: { settings.openRouterAPIKey = $0 }
+                    ),
+                    isSecure: true
+                )
+            }
+            DSDivider()
+            fieldRow(label: "API Key Environment Variable (Optional)") {
+                DSTextField(
+                    placeholder: OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable,
+                    text: Binding(
+                        get: { settings.openRouterAPIKeyEnvironmentVariable },
+                        set: { settings.openRouterAPIKeyEnvironmentVariable = $0 }
+                    )
+                )
+            }
+            DSDivider()
+            fieldRow(label: "Model") {
+                DSTextField(
+                    placeholder: "openai/gpt-5-mini",
+                    text: Binding(
+                        get: { settings.openRouterModel },
+                        set: { settings.openRouterModel = $0 }
+                    )
+                )
+            }
+            DSDivider()
+            cardPadded {
+                HStack(alignment: .top, spacing: 12) {
+                    openRouterStatusView(settings: settings)
+                    Spacer(minLength: 12)
 
-            TextField(
-                "API Key Environment Variable (Optional)",
-                text: Binding(
-                    get: { settings.openRouterAPIKeyEnvironmentVariable },
-                    set: { settings.openRouterAPIKeyEnvironmentVariable = $0 }
-                ),
-                prompt: Text(OpenRouterPostProcessingService.defaultAPIKeyEnvironmentVariable)
-            )
-
-            TextField(
-                "Model",
-                text: Binding(
-                    get: { settings.openRouterModel },
-                    set: { settings.openRouterModel = $0 }
-                ),
-                prompt: Text("openai/gpt-5-mini")
-            )
-
-            HStack(alignment: .top, spacing: 12) {
-                openRouterStatusView(settings: settings)
-                Spacer(minLength: 12)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    Button(isCheckingOpenRouter ? "Checking..." : "Refresh Models") {
-                        Task {
-                            await refreshOpenRouterAvailability(settings: settings, debounce: false)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Button(isCheckingOpenRouter ? "Checking…" : "Refresh Models") {
+                            Task {
+                                await refreshOpenRouterAvailability(settings: settings, debounce: false)
+                            }
                         }
-                    }
-                    .disabled(isCheckingOpenRouter)
+                        .buttonStyle(.dsSecondary)
+                        .disabled(isCheckingOpenRouter)
 
-                    Button("Browse Models") {
-                        guard let url = URL(string: "https://openrouter.ai/models") else { return }
-                        NSWorkspace.shared.open(url)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    if !settings.openRouterAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button("Clear Stored Key", role: .destructive) {
-                            settings.openRouterAPIKey = ""
+                        Button("Browse Models") {
+                            guard let url = URL(string: "https://openrouter.ai/models") else { return }
+                            NSWorkspace.shared.open(url)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.dsSecondary)
+
+                        if !settings.openRouterAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Clear Stored Key") {
+                                settings.openRouterAPIKey = ""
+                            }
+                            .buttonStyle(.dsDestructive)
+                        }
                     }
                 }
             }
-        } header: {
-            Text("OpenRouter")
-        } footer: {
-            Text("Runs transcript cleanup through OpenRouter's cloud API. Paste a key directly to store it in Keychain, or leave the API key field blank and use the optional environment variable setting instead.")
+            DSDivider()
+            cardCaption("Runs transcript cleanup through OpenRouter's cloud API. Paste a key directly to store it in Keychain, or leave the API key field blank and use the optional environment variable setting instead.")
         }
 
         if let availability = openRouterAvailability {
             openRouterModelSearchSection(settings: settings, availability: availability)
         }
 
-        Section {
-            SettingsMultilineTextArea(
-                text: Binding(
-                    get: { settings.openRouterPostProcessingPrompt },
-                    set: { settings.openRouterPostProcessingPrompt = $0 }
-                ),
-                placeholder: "Optional: add style or cleanup instructions for OpenRouter."
-            )
-            .labelsHidden()
-        } header: {
-            Text("Prompt")
-        } footer: {
-            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for OpenRouter.")
+        DSSection(overline: "Prompt") {
+            cardPadded {
+                SettingsMultilineTextArea(
+                    text: Binding(
+                        get: { settings.openRouterPostProcessingPrompt },
+                        set: { settings.openRouterPostProcessingPrompt = $0 }
+                    ),
+                    placeholder: "Optional: add style or cleanup instructions for OpenRouter."
+                )
+                .labelsHidden()
+            }
+            DSDivider()
+            cardCaption("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for OpenRouter.")
         }
 
         vocabularySection(
@@ -514,63 +535,69 @@ struct AIPostProcessingView: View {
         )
     }
 
+    // MARK: - OpenAI Compatible
+
     @ViewBuilder
     private func openAICompatibleContent(settings: Settings) -> some View {
-        Section {
-            TextField(
-                "Server URL",
-                text: Binding(
-                    get: { settings.openAICompatibleBaseURL },
-                    set: { settings.openAICompatibleBaseURL = $0 }
-                ),
-                prompt: Text(OpenAICompatiblePostProcessingService.defaultBaseURL)
-            )
+        DSSection(overline: "OpenAI Compatible") {
+            fieldRow(label: "Server URL") {
+                DSTextField(
+                    placeholder: OpenAICompatiblePostProcessingService.defaultBaseURL,
+                    text: Binding(
+                        get: { settings.openAICompatibleBaseURL },
+                        set: { settings.openAICompatibleBaseURL = $0 }
+                    )
+                )
+            }
+            DSDivider()
+            fieldRow(label: "API Key (Optional)") {
+                DSTextField(
+                    placeholder: "Leave blank for local servers without auth",
+                    text: Binding(
+                        get: { settings.openAICompatibleAPIKey },
+                        set: { settings.openAICompatibleAPIKey = $0 }
+                    ),
+                    isSecure: true
+                )
+            }
+            DSDivider()
+            fieldRow(label: "Model") {
+                DSTextField(
+                    placeholder: "local-model",
+                    text: Binding(
+                        get: { settings.openAICompatibleModel },
+                        set: { settings.openAICompatibleModel = $0 }
+                    )
+                )
+            }
+            DSDivider()
+            cardPadded {
+                HStack(alignment: .top, spacing: 12) {
+                    openAICompatibleStatusView(settings: settings)
+                    Spacer(minLength: 12)
 
-            SecureField(
-                "API Key (Optional)",
-                text: Binding(
-                    get: { settings.openAICompatibleAPIKey },
-                    set: { settings.openAICompatibleAPIKey = $0 }
-                ),
-                prompt: Text("Leave blank for local servers without auth")
-            )
-
-            TextField(
-                "Model",
-                text: Binding(
-                    get: { settings.openAICompatibleModel },
-                    set: { settings.openAICompatibleModel = $0 }
-                ),
-                prompt: Text("local-model")
-            )
-
-            HStack(alignment: .top, spacing: 12) {
-                openAICompatibleStatusView(settings: settings)
-                Spacer(minLength: 12)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    Button(isCheckingOpenAICompatible ? "Checking..." : "Refresh Models") {
-                        Task {
-                            await refreshOpenAICompatibleAvailability(settings: settings, debounce: false)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Button(isCheckingOpenAICompatible ? "Checking…" : "Refresh Models") {
+                            Task {
+                                await refreshOpenAICompatibleAvailability(settings: settings, debounce: false)
+                            }
                         }
-                    }
-                    .disabled(isCheckingOpenAICompatible)
+                        .buttonStyle(.dsSecondary)
+                        .disabled(isCheckingOpenAICompatible)
 
-                    if !settings.openAICompatibleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button("Clear Stored Key", role: .destructive) {
-                            settings.openAICompatibleAPIKey = ""
+                        if !settings.openAICompatibleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button("Clear Stored Key") {
+                                settings.openAICompatibleAPIKey = ""
+                            }
+                            .buttonStyle(.dsDestructive)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                     }
                 }
-            }
 
-            if let availability = openAICompatibleAvailability, !availability.models.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                if let availability = openAICompatibleAvailability, !availability.models.isEmpty {
                     Text("Available Models")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DS.Fonts.ui(12, .semibold))
+                        .foregroundStyle(DS.Colors.textSecondary)
 
                     FlowLayout(spacing: 6) {
                         ForEach(availability.models, id: \.self) { model in
@@ -578,38 +605,30 @@ struct AIPostProcessingView: View {
                             Button {
                                 settings.openAICompatibleModel = model
                             } label: {
-                                Text(model)
-                                    .font(.caption)
-                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                DSChip(text: model, isSelected: isSelected)
                             }
                             .buttonStyle(.plain)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12))
-                            .clipShape(Capsule())
                         }
                     }
                 }
             }
-        } header: {
-            Text("OpenAI Compatible")
-        } footer: {
-            Text("Runs transcript cleanup through a local or self-hosted OpenAI-compatible chat completions server, such as LM Studio, llama.cpp, vLLM, or LocalAI. Use the base URL and model name reported by that server.")
+            DSDivider()
+            cardCaption("Runs transcript cleanup through a local or self-hosted OpenAI-compatible chat completions server, such as LM Studio, llama.cpp, vLLM, or LocalAI. Use the base URL and model name reported by that server.")
         }
 
-        Section {
-            SettingsMultilineTextArea(
-                text: Binding(
-                    get: { settings.openAICompatiblePostProcessingPrompt },
-                    set: { settings.openAICompatiblePostProcessingPrompt = $0 }
-                ),
-                placeholder: "Optional: add style or cleanup instructions for this server."
-            )
-            .labelsHidden()
-        } header: {
-            Text("Prompt")
-        } footer: {
-            Text("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for this server.")
+        DSSection(overline: "Prompt") {
+            cardPadded {
+                SettingsMultilineTextArea(
+                    text: Binding(
+                        get: { settings.openAICompatiblePostProcessingPrompt },
+                        set: { settings.openAICompatiblePostProcessingPrompt = $0 }
+                    ),
+                    placeholder: "Optional: add style or cleanup instructions for this server."
+                )
+                .labelsHidden()
+            }
+            DSDivider()
+            cardCaption("Pre-filled with the recommended cleanup prompt. Customize it if you want different safe cleanup behavior for this server.")
         }
 
         vocabularySection(
@@ -618,31 +637,34 @@ struct AIPostProcessingView: View {
         )
     }
 
+    // MARK: - Ollama install card
+
     @ViewBuilder
     private func ollamaInstallCard(settings: Settings) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 14) {
+        DSCard {
+            cardPadded {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "shippingbox.circle.fill")
                         .font(.system(size: 30))
-                        .foregroundStyle(.tint)
+                        .foregroundStyle(DS.Colors.accent)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Install Ollama for local transcript cleanup")
-                            .font(.headline)
+                            .font(DS.Fonts.ui(14, .semibold))
+                            .foregroundStyle(DS.Colors.ink)
 
                         Text("Ollama lets Dictate Anywhere clean up transcripts with a local language model on your Mac. It can improve punctuation, grammar, formatting, and term normalization without relying on a hosted API.")
-                            .foregroundStyle(.secondary)
+                            .font(DS.Fonts.ui(12.5))
+                            .foregroundStyle(DS.Colors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Run post-processing on your machine", systemImage: "lock.shield")
-                    Label("Use local models for stronger cleanup and normalization", systemImage: "sparkles.rectangle.stack")
-                    Label("Download recommended models directly from this app once installed", systemImage: "arrow.down.circle")
+                    ollamaInstallBullet("Run post-processing on your machine", systemImage: "lock.shield")
+                    ollamaInstallBullet("Use local models for stronger cleanup and normalization", systemImage: "sparkles.rectangle.stack")
+                    ollamaInstallBullet("Download recommended models directly from this app once installed", systemImage: "arrow.down.circle")
                 }
-                .font(.subheadline)
 
                 HStack(alignment: .center, spacing: 12) {
                     Button {
@@ -651,36 +673,52 @@ struct AIPostProcessingView: View {
                     } label: {
                         Label("Download Ollama", systemImage: "arrow.down.circle.fill")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(.dsPrimary)
 
                     Text("You can still connect to a remote Ollama server by entering its URL below.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DS.Fonts.ui(12))
+                        .foregroundStyle(DS.Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.vertical, 6)
-        } footer: {
-            Text("Ollama is optional. Install it if you want fully local AI transcript cleanup and in-app model downloads.")
         }
     }
 
     @ViewBuilder
+    private func ollamaInstallBullet(_ text: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.Colors.accent)
+                .frame(width: 16)
+            Text(text)
+                .font(DS.Fonts.ui(13))
+                .foregroundStyle(DS.Colors.ink)
+        }
+    }
+
+    // MARK: - Ollama suggested models
+
+    @ViewBuilder
     private func ollamaSuggestedModelsSection(settings: Settings) -> some View {
-        Section {
-            ForEach(OllamaPostProcessingService.suggestedModels) { suggestion in
+        DSSection(overline: "Suggested Models") {
+            ForEach(Array(OllamaPostProcessingService.suggestedModels.enumerated()), id: \.element.id) { index, suggestion in
+                if index > 0 {
+                    DSDivider()
+                }
                 ollamaSuggestedModelRow(suggestion, settings: settings)
             }
 
             if let error = appState.ollamaModelActionError {
+                DSDivider()
                 Text(error)
-                    .foregroundStyle(.red)
+                    .font(DS.Fonts.ui(12.5))
+                    .foregroundStyle(DS.Colors.destructive)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, DS.Spacing.rowHorizontal)
             }
-        } header: {
-            Text("Suggested Models")
-        } footer: {
-            Text(ollamaSuggestedModelsFooter(settings: settings))
+            DSDivider()
+            cardCaption(ollamaSuggestedModelsFooter(settings: settings))
         }
     }
 
@@ -709,9 +747,10 @@ struct AIPostProcessingView: View {
         let downloadSizeLabel = installedMetadata.flatMap(ollamaDownloadSizeBadgeText) ?? suggestion.downloadSizeLabel
         let parameterSizeLabel = installedMetadata.flatMap(ollamaParameterSizeBadgeText) ?? suggestion.parameterSizeLabel
 
-        VStack(alignment: .leading, spacing: 10) {
+        cardPadded {
             Text(suggestion.name)
-                .font(.body.weight(.medium))
+                .font(DS.Fonts.ui(13.5, .medium))
+                .foregroundStyle(DS.Colors.ink)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -719,47 +758,48 @@ struct AIPostProcessingView: View {
             FlowLayout(spacing: 6) {
                 ollamaBadge(
                     text: suggestion.badge,
-                    foreground: .accentColor,
-                    background: Color.accentColor.opacity(0.14)
+                    foreground: DS.Colors.accent,
+                    background: DS.Colors.accentSoft
                 )
 
                 if isInstalled {
                     ollamaBadge(
                         text: "Installed",
-                        foreground: .green,
-                        background: Color.green.opacity(0.14)
+                        foreground: DS.Colors.successText,
+                        background: DS.Colors.successSoft
                     )
                 }
 
                 if isSelected {
                     ollamaBadge(
                         text: "Selected",
-                        foreground: .primary,
-                        background: Color.secondary.opacity(0.14)
+                        foreground: DS.Colors.ink,
+                        background: DS.Colors.bgInset
                     )
                 }
 
                 if let downloadSizeLabel {
                     ollamaBadge(
                         text: downloadSizeLabel,
-                        foreground: .secondary,
-                        background: Color.secondary.opacity(0.12)
+                        foreground: DS.Colors.textSecondary,
+                        background: DS.Colors.bgInset
                     )
                 }
 
                 if let parameterSizeLabel {
                     ollamaBadge(
                         text: parameterSizeLabel,
-                        foreground: .secondary,
-                        background: Color.secondary.opacity(0.12)
+                        foreground: DS.Colors.textSecondary,
+                        background: DS.Colors.bgInset
                     )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(suggestion.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(DS.Fonts.ui(12.5))
+                .foregroundStyle(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Spacer(minLength: 0)
@@ -770,32 +810,28 @@ struct AIPostProcessingView: View {
                             Button("Selected") {
                                 settings.ollamaModel = resolvedInstalledModel ?? suggestion.name
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.dsSecondary)
                             .disabled(true)
                         } else {
                             Button("Use") {
                                 settings.ollamaModel = resolvedInstalledModel ?? suggestion.name
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+                            .buttonStyle(.dsPrimary)
                             .disabled(isDownloading || isDeleting)
                         }
 
                         if canDelete {
-                            Button(isDeleting ? "Deleting..." : "Delete", role: .destructive) {
+                            Button(isDeleting ? "Deleting…" : "Delete") {
                                 ollamaPendingDeletionModel = resolvedInstalledModel ?? suggestion.name
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.dsDestructive)
                             .disabled(isDeleting || isDownloading || isAnotherDownloadRunning || isAnotherDeleteRunning)
                         }
                     }
                 } else if canDownload {
                     if isDownloading {
-                        Button("Downloading...") {}
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                        Button("Downloading…") {}
+                            .buttonStyle(.dsSecondary)
                             .disabled(true)
                     } else {
                         Button("Download") {
@@ -803,16 +839,14 @@ struct AIPostProcessingView: View {
                                 await appState.startOllamaModelDownload(suggestion.name)
                             }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(.dsPrimary)
                         .disabled(isAnotherDownloadRunning || isAnotherDeleteRunning || isCheckingOllama)
                     }
                 } else {
                     Button("Use Name") {
                         settings.ollamaModel = suggestion.name
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.dsSecondary)
                     .disabled(isAnotherDownloadRunning || isAnotherDeleteRunning)
                 }
             }
@@ -822,54 +856,53 @@ struct AIPostProcessingView: View {
                     if let fractionCompleted = downloadState.fractionCompleted {
                         ProgressView(value: fractionCompleted)
                             .progressViewStyle(.linear)
+                            .tint(DS.Colors.accent)
                     } else {
                         ProgressView()
                             .progressViewStyle(.linear)
+                            .tint(DS.Colors.accent)
                     }
 
                     Text(ollamaDownloadCaption(downloadState))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(DS.Fonts.ui(12))
+                        .foregroundStyle(DS.Colors.textSecondary)
                 }
             }
         }
     }
 
+    // MARK: - Vocabulary
+
     @ViewBuilder
     private func vocabularySection(settings: Settings, footer: String) -> some View {
         @Bindable var settings = settings
 
-        Section {
-            FlowLayout(spacing: 6) {
-                ForEach(settings.customVocabulary, id: \.self) { term in
-                    VocabularyChip(
-                        term: term,
-                        font: .caption,
-                        horizontalPadding: 8,
-                        verticalPadding: 4
-                    ) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            settings.customVocabulary.removeAll { $0 == term }
+        DSSection(overline: "Custom Vocabulary") {
+            cardPadded {
+                if !settings.customVocabulary.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(settings.customVocabulary, id: \.self) { term in
+                            DSChip(text: term) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    settings.customVocabulary.removeAll { $0 == term }
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            HStack {
-                TextField("", text: $newVocabularyTerm, prompt: Text("Add word or phrase..."))
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { addVocabularyTerm() }
+                HStack(spacing: 8) {
+                    DSTextField(placeholder: "Add word or phrase…", text: $newVocabularyTerm)
+                        .frame(width: 260)
+                        .onSubmit { addVocabularyTerm() }
 
-                Button("Add") { addVocabularyTerm() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(newVocabularyTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Add") { addVocabularyTerm() }
+                        .buttonStyle(.dsSecondary)
+                        .disabled(newVocabularyTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
-            .labelsHidden()
-        } header: {
-            Text("Custom Vocabulary")
-        } footer: {
-            Text(footer)
+            DSDivider()
+            cardCaption(footer)
         }
     }
 
@@ -882,6 +915,8 @@ struct AIPostProcessingView: View {
         appState.settings.customVocabulary.append(contentsOf: terms)
         newVocabularyTerm = ""
     }
+
+    // MARK: - OpenRouter helpers
 
     private func currentOpenRouterModel(settings: Settings) -> String {
         settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -954,29 +989,28 @@ struct AIPostProcessingView: View {
             availability: availability
         )
 
-        return Section {
+        return DSSection(overline: "Model Search") {
             if matchingModels.isEmpty {
-                Text(openRouterModelSearchEmptyState(settings: settings))
-                    .foregroundStyle(.secondary)
+                cardCaption(openRouterModelSearchEmptyState(settings: settings))
             } else {
-                OpenRouterModelMatchesView(
-                    models: matchingModels,
-                    selectedModel: currentOpenRouterModel(settings: settings)
-                ) { modelID in
-                    settings.openRouterModel = modelID
+                cardPadded {
+                    OpenRouterModelMatchesView(
+                        models: matchingModels,
+                        selectedModel: currentOpenRouterModel(settings: settings)
+                    ) { modelID in
+                        settings.openRouterModel = modelID
+                    }
                 }
             }
-        } header: {
-            Text("Model Search")
-        } footer: {
-            Text(openRouterModelSearchFooter(availability: availability))
+            DSDivider()
+            cardCaption(openRouterModelSearchFooter(availability: availability))
         }
     }
 
     @ViewBuilder
     private func ollamaBadge(text: String, foreground: Color, background: Color) -> some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(DS.Fonts.ui(11, .semibold))
             .fixedSize(horizontal: true, vertical: true)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -1044,67 +1078,73 @@ struct AIPostProcessingView: View {
         return state.status
     }
 
+    // MARK: - Status views
+
+    @ViewBuilder
+    private func statusLabel(_ text: String, systemImage: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(tint)
+                .padding(.top, 1)
+            Text(text)
+                .font(DS.Fonts.ui(12.5))
+                .foregroundStyle(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder
     private func ollamaStatusView(settings: Settings) -> some View {
         if isCheckingOllama {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking Ollama...")
-                    .foregroundStyle(.secondary)
+                Text("Checking Ollama…")
+                    .font(DS.Fonts.ui(12.5))
+                    .foregroundStyle(DS.Colors.textSecondary)
             }
         } else if !ollamaCLIAvailability.isAvailable &&
                     OllamaPostProcessingService.isLocalServer(baseURL: settings.ollamaBaseURL) {
-            Label {
-                Text("Ollama is not installed on this Mac yet. Install it to run transcript cleanup locally, or enter a remote Ollama server URL.")
-            } icon: {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(.blue)
-            }
+            statusLabel(
+                "Ollama is not installed on this Mac yet. Install it to run transcript cleanup locally, or enter a remote Ollama server URL.",
+                systemImage: "info.circle",
+                tint: DS.Colors.accent
+            )
         } else if let message = ollamaStatusMessage {
-            Label {
-                Text(message)
-            } icon: {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.red)
-            }
+            statusLabel(message, systemImage: "xmark.circle", tint: DS.Colors.destructive)
         } else if let availability = ollamaAvailability {
             if availability.installedModels.isEmpty {
-                Label {
-                    Text("Connected, but no Ollama models are installed yet.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                statusLabel(
+                    "Connected, but no Ollama models are installed yet.",
+                    systemImage: "exclamationmark.triangle",
+                    tint: DS.Colors.accentDeep
+                )
             } else if availability.selectedModel.isEmpty {
-                Label {
-                    Text("Connected. Choose an installed model below or enter one manually.")
-                } icon: {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                }
+                statusLabel(
+                    "Connected. Choose an installed model below or enter one manually.",
+                    systemImage: "checkmark.circle",
+                    tint: DS.Colors.success
+                )
             } else if availability.selectedModelIsInstalled {
-                Label {
-                    Text("Connected. \(availability.resolvedSelectedModel ?? availability.selectedModel) is available.")
-                } icon: {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                }
+                statusLabel(
+                    "Connected. \(availability.resolvedSelectedModel ?? availability.selectedModel) is available.",
+                    systemImage: "checkmark.circle",
+                    tint: DS.Colors.success
+                )
             } else {
-                Label {
-                    Text("Connected, but \(availability.selectedModel) is not installed on this Ollama server.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                statusLabel(
+                    "Connected, but \(availability.selectedModel) is not installed on this Ollama server.",
+                    systemImage: "exclamationmark.triangle",
+                    tint: DS.Colors.accentDeep
+                )
             }
         } else {
-            Label {
-                Text("Enter your Ollama server URL to check connectivity.")
-            } icon: {
-                Image(systemName: "bolt.horizontal.circle")
-                    .foregroundStyle(.secondary)
-            }
+            statusLabel(
+                "Enter your Ollama server URL to check connectivity.",
+                systemImage: "bolt.horizontal.circle",
+                tint: DS.Colors.textSecondary
+            )
         }
     }
 
@@ -1124,57 +1164,46 @@ struct AIPostProcessingView: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking OpenRouter...")
-                    .foregroundStyle(.secondary)
+                Text("Checking OpenRouter…")
+                    .font(DS.Fonts.ui(12.5))
+                    .foregroundStyle(DS.Colors.textSecondary)
             }
         } else if let message = openRouterStatusMessage {
-            Label {
-                Text(message)
-            } icon: {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.red)
-            }
+            statusLabel(message, systemImage: "xmark.circle", tint: DS.Colors.destructive)
         } else if case .missing = apiKeyStatus.source {
-            Label {
-                Text("No OpenRouter API key is configured yet. Paste one above or set \(apiKeyStatus.environmentVariableName) in the app environment.")
-            } icon: {
-                Image(systemName: "key.slash")
-                    .foregroundStyle(.orange)
-            }
+            statusLabel(
+                "No OpenRouter API key is configured yet. Paste one above or set \(apiKeyStatus.environmentVariableName) in the app environment.",
+                systemImage: "key.slash",
+                tint: DS.Colors.accentDeep
+            )
         } else if let resolvedModel {
-            Label {
-                Text(
-                    openRouterAvailableModelStatusMessage(
-                        selectedModel: selectedModel,
-                        resolvedModel: resolvedModel,
-                        apiKeyStatus: apiKeyStatus
-                    )
-                )
-            } icon: {
-                Image(systemName: resolvedModel.supportsStructuredOutputs ? "checkmark.circle" : "exclamationmark.triangle")
-                    .foregroundStyle(resolvedModel.supportsStructuredOutputs ? .green : .orange)
-            }
+            statusLabel(
+                openRouterAvailableModelStatusMessage(
+                    selectedModel: selectedModel,
+                    resolvedModel: resolvedModel,
+                    apiKeyStatus: apiKeyStatus
+                ),
+                systemImage: resolvedModel.supportsStructuredOutputs ? "checkmark.circle" : "exclamationmark.triangle",
+                tint: resolvedModel.supportsStructuredOutputs ? DS.Colors.success : DS.Colors.accentDeep
+            )
         } else if !selectedModel.isEmpty {
-            Label {
-                Text("\(openRouterCredentialSourceMessage(apiKeyStatus)) \(selectedModel) was not found in the latest OpenRouter model refresh.")
-            } icon: {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            }
+            statusLabel(
+                "\(openRouterCredentialSourceMessage(apiKeyStatus)) \(selectedModel) was not found in the latest OpenRouter model refresh.",
+                systemImage: "exclamationmark.triangle",
+                tint: DS.Colors.accentDeep
+            )
         } else if openRouterAvailability != nil {
-            Label {
-                Text("\(openRouterCredentialSourceMessage(apiKeyStatus)) Enter a model id above or search the fetched catalog below.")
-            } icon: {
-                Image(systemName: "checkmark.circle")
-                    .foregroundStyle(.green)
-            }
+            statusLabel(
+                "\(openRouterCredentialSourceMessage(apiKeyStatus)) Enter a model id above or search the fetched catalog below.",
+                systemImage: "checkmark.circle",
+                tint: DS.Colors.success
+            )
         } else {
-            Label {
-                Text("Refresh models to validate your OpenRouter setup and search the available catalog.")
-            } icon: {
-                Image(systemName: "network")
-                    .foregroundStyle(.secondary)
-            }
+            statusLabel(
+                "Refresh models to validate your OpenRouter setup and search the available catalog.",
+                systemImage: "network",
+                tint: DS.Colors.textSecondary
+            )
         }
     }
 
@@ -1230,55 +1259,48 @@ struct AIPostProcessingView: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking server...")
-                    .foregroundStyle(.secondary)
+                Text("Checking server…")
+                    .font(DS.Fonts.ui(12.5))
+                    .foregroundStyle(DS.Colors.textSecondary)
             }
         } else if let message = openAICompatibleStatusMessage {
-            Label {
-                Text(message)
-            } icon: {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.red)
-            }
+            statusLabel(message, systemImage: "xmark.circle", tint: DS.Colors.destructive)
         } else if let availability = openAICompatibleAvailability {
             if availability.models.isEmpty {
-                Label {
-                    Text("Connected, but the server did not report any models.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                statusLabel(
+                    "Connected, but the server did not report any models.",
+                    systemImage: "exclamationmark.triangle",
+                    tint: DS.Colors.accentDeep
+                )
             } else if selectedModel.isEmpty {
-                Label {
-                    Text("Connected. Choose a model below or enter one manually.")
-                } icon: {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                }
+                statusLabel(
+                    "Connected. Choose a model below or enter one manually.",
+                    systemImage: "checkmark.circle",
+                    tint: DS.Colors.success
+                )
             } else if availability.selectedModelIsAvailable {
-                Label {
-                    Text("Connected. \(selectedModel) is available.")
-                } icon: {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                }
+                statusLabel(
+                    "Connected. \(selectedModel) is available.",
+                    systemImage: "checkmark.circle",
+                    tint: DS.Colors.success
+                )
             } else {
-                Label {
-                    Text("Connected, but \(selectedModel) was not listed by this server.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                }
+                statusLabel(
+                    "Connected, but \(selectedModel) was not listed by this server.",
+                    systemImage: "exclamationmark.triangle",
+                    tint: DS.Colors.accentDeep
+                )
             }
         } else {
-            Label {
-                Text("Enter a server URL and refresh models to check connectivity.")
-            } icon: {
-                Image(systemName: "network")
-                    .foregroundStyle(.secondary)
-            }
+            statusLabel(
+                "Enter a server URL and refresh models to check connectivity.",
+                systemImage: "network",
+                tint: DS.Colors.textSecondary
+            )
         }
     }
+
+    // MARK: - Availability refresh
 
     private func providerTaskID(settings: Settings) -> String {
         [
@@ -1503,19 +1525,20 @@ private struct OpenRouterModelMatchesView: View {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.id)
-                            .foregroundStyle(.primary)
+                            .font(DS.Fonts.ui(13))
+                            .foregroundStyle(DS.Colors.ink)
                             .multilineTextAlignment(.leading)
 
                         if !model.supportsStructuredOutputs {
                             Text("Prompt-only fallback")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(DS.Fonts.ui(12))
+                                .foregroundStyle(DS.Colors.textSecondary)
                         }
 
                         if model.supportsAudioInput {
                             Text("Audio input available")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(DS.Fonts.ui(12))
+                                .foregroundStyle(DS.Colors.textSecondary)
                         }
                     }
 
@@ -1523,10 +1546,11 @@ private struct OpenRouterModelMatchesView: View {
 
                     if isSelected {
                         Text("Selected")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .font(DS.Fonts.ui(12, .semibold))
+                            .foregroundStyle(DS.Colors.accent)
                     }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }

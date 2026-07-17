@@ -11,9 +11,20 @@
 		E2SPARKLE001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E2SPARKLE002 /* Sparkle */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		E2TEST00000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E2A66B502F18203C00DABF41 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E2A66B572F18203C00DABF41;
+			remoteInfo = "Dictate Anywhere";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
-		E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Dictate Anywhere.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.shared.xcconfig; sourceTree = "<group>"; };
+		E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Dictate Anywhere Dev.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.shared.xcconfig; sourceTree = "<group>"; };
+		E2TEST000002 /* Dictate AnywhereTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Dictate AnywhereTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -35,6 +46,11 @@
 			path = "Dictate Anywhere";
 			sourceTree = "<group>";
 		};
+		E2TEST000009 /* Dictate AnywhereTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Dictate AnywhereTests";
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +63,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E2TEST000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -54,7 +77,8 @@
 			isa = PBXGroup;
 			children = (
 				E2A66B5A2F18203C00DABF41 /* Dictate Anywhere */,
-				E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */,
+				E2TEST000009 /* Dictate AnywhereTests */,
+				E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */,
 				E2A66B592F18203C00DABF41 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -62,7 +86,8 @@
 		E2A66B592F18203C00DABF41 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */,
+				E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */,
+				E2TEST000002 /* Dictate AnywhereTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -91,8 +116,31 @@
 				E2SPARKLE002 /* Sparkle */,
 			);
 			productName = "Dictate Anywhere";
-			productReference = E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */;
+			productReference = E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */;
 			productType = "com.apple.product-type.application";
+		};
+		E2TEST000001 /* Dictate AnywhereTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E2TEST000003 /* Build configuration list for PBXNativeTarget "Dictate AnywhereTests" */;
+			buildPhases = (
+				E2TEST000006 /* Sources */,
+				E2TEST000007 /* Frameworks */,
+				E2TEST000008 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E2TEST00000A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E2TEST000009 /* Dictate AnywhereTests */,
+			);
+			name = "Dictate AnywhereTests";
+			packageProductDependencies = (
+			);
+			productName = "Dictate AnywhereTests";
+			productReference = E2TEST000002 /* Dictate AnywhereTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -106,6 +154,10 @@
 				TargetAttributes = {
 					E2A66B572F18203C00DABF41 = {
 						CreatedOnToolsVersion = 26.2;
+					};
+					E2TEST000001 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = E2A66B572F18203C00DABF41;
 					};
 				};
 			};
@@ -128,12 +180,20 @@
 			projectRoot = "";
 			targets = (
 				E2A66B572F18203C00DABF41 /* Dictate Anywhere */,
+				E2TEST000001 /* Dictate AnywhereTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E2A66B562F18203C00DABF41 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E2TEST000008 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -150,7 +210,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E2TEST000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E2TEST00000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E2A66B572F18203C00DABF41 /* Dictate Anywhere */;
+			targetProxy = E2TEST00000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		E2A66B612F18203D00DABF41 /* Debug */ = {
@@ -277,7 +352,7 @@
 		};
 		E2A66B642F18203D00DABF41 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -317,7 +392,7 @@
 		};
 		E2A66B652F18203D00DABF41 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Signing.shared.xcconfig */;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -356,6 +431,50 @@
 			};
 			name = Release;
 		};
+		E2TEST000004 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 27;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 2.3.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dictate Anywhere Dev.app/Contents/MacOS/Dictate Anywhere Dev";
+			};
+			name = Debug;
+		};
+		E2TEST000005 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 27;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 2.3.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere.tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dictate Anywhere.app/Contents/MacOS/Dictate Anywhere";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -373,6 +492,15 @@
 			buildConfigurations = (
 				E2A66B642F18203D00DABF41 /* Debug */,
 				E2A66B652F18203D00DABF41 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E2TEST000003 /* Build configuration list for PBXNativeTarget "Dictate AnywhereTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2TEST000004 /* Debug */,
+				E2TEST000005 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

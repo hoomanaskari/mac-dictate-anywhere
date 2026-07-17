@@ -16,7 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Lifecycle
 
+    /// True when the app is acting as a unit-test host. Skips single-instance
+    /// enforcement and service startup so the test runner can attach.
+    static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !Self.isRunningTests else { return }
         guard enforceSingleInstance() else { return }
         NSApp.disableRelaunchOnLogin()
         FluidAudioDebugLogFilter.installIfNeeded()
@@ -119,7 +127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let window = NSApp.windows.first(where: { $0.contentView != nil && !($0.contentView is NSVisualEffectView && $0.level == .floating) }) else { return }
         mainWindow = window
         window.styleMask.insert(.resizable)
-        window.isMovableByWindowBackground = true
+        // Background dragging must stay off: it swallows drags aimed at
+        // in-window controls (DSSlider, the textarea resize grip). The
+        // sidebar hosts an explicit WindowDragArea instead.
+        window.isMovableByWindowBackground = false
         window.contentMinSize = NSSize(width: MainWindowSizing.minimumWidth, height: MainWindowSizing.minimumHeight)
         window.contentMaxSize = NSSize(width: MainWindowSizing.maximumWidth, height: MainWindowSizing.maximumHeight)
         window.center()

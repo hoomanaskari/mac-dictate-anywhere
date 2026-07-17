@@ -2,7 +2,7 @@
 //  TranscriptHistoryView.swift
 //  Dictate Anywhere
 //
-//  Local transcript history.
+//  "History" page: local transcript history.
 //
 
 import AppKit
@@ -11,50 +11,87 @@ import SwiftUI
 struct TranscriptHistoryView: View {
     @Environment(AppState.self) private var appState
 
-    fileprivate static let dateFormatter: DateFormatter = {
+    @State private var searchText = ""
+    @State private var showClearAllConfirm = false
+
+    /// Matches the design's "Jul 15, 2026 · 5:54 PM" stamp.
+    static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.dateFormat = "MMM d, yyyy · h:mm a"
         return formatter
     }()
 
+    static func filteredEntries(
+        _ entries: [TranscriptHistoryEntry],
+        searchText: String
+    ) -> [TranscriptHistoryEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return entries }
+        return entries.filter { $0.text.localizedCaseInsensitiveContains(query) }
+    }
+
     var body: some View {
         @Bindable var settings = appState.settings
-        let entries = Array(settings.transcriptHistory.reversed())
+        let entries = Self.filteredEntries(
+            Array(settings.transcriptHistory.reversed()),
+            searchText: searchText
+        )
 
-        Group {
+        DSPage(spacing: 20) {
+            DSSectionHeader(
+                title: "History",
+                subtitle: "Everything you've dictated, stored privately on this Mac."
+            )
+
+            HStack(spacing: 10) {
+                DSSearchField(placeholder: "Search your dictations", text: $searchText)
+                Button("Clear All…") {
+                    showClearAllConfirm = true
+                }
+                .buttonStyle(.dsDestructive)
+                .disabled(settings.transcriptHistory.isEmpty)
+            }
+
             if entries.isEmpty {
-                ContentUnavailableView(
-                    "No Transcripts",
-                    systemImage: "clock.arrow.circlepath",
-                    description: Text("Completed dictations will appear here.")
-                )
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(entries) { entry in
-                            TranscriptHistoryRow(
-                                entry: entry,
-                                onCopy: { copyToPasteboard(entry.text) },
-                                onDelete: { settings.removeTranscriptHistoryEntry(id: entry.id) }
-                            )
-
-                            Divider()
-                        }
+                DSCard {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 26))
+                            .foregroundStyle(DS.Colors.textSecondary)
+                        Text(searchText.isEmpty ? "No Transcripts" : "No Matches")
+                            .font(DS.Fonts.ui(14, .semibold))
+                            .foregroundStyle(DS.Colors.ink)
+                        Text(searchText.isEmpty
+                             ? "Completed dictations will appear here."
+                             : "No dictations match “\(searchText)”.")
+                            .font(DS.Fonts.ui(12.5))
+                            .foregroundStyle(DS.Colors.textSecondary)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 44)
+                }
+            } else {
+                DSCard {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 {
+                            DSDivider()
+                        }
+                        TranscriptHistoryRow(
+                            entry: entry,
+                            onCopy: { copyToPasteboard(entry.text) },
+                            onDelete: { settings.removeTranscriptHistoryEntry(id: entry.id) }
+                        )
+                    }
                 }
             }
         }
-        .navigationTitle("History")
-        .toolbar {
-            Button(role: .destructive) {
+        .alert("Clear all transcripts?", isPresented: $showClearAllConfirm) {
+            Button("Clear All", role: .destructive) {
                 settings.clearTranscriptHistory()
-            } label: {
-                Label("Clear All", systemImage: "trash")
             }
-            .disabled(settings.transcriptHistory.isEmpty)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently remove every transcript stored on this Mac.")
         }
     }
 
@@ -70,33 +107,28 @@ private struct TranscriptHistoryRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(TranscriptHistoryView.dateFormatter.string(from: entry.createdAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button(action: onCopy) {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-                .controlSize(.small)
-
-                Button(role: .destructive, action: onDelete) {
-                    Label("Delete", systemImage: "trash")
-                        .labelStyle(.iconOnly)
-                }
-                .controlSize(.small)
-                .help("Delete transcript")
+                    .font(DS.Fonts.ui(11.5, .semibold))
+                    .tracking(0.2)
+                    .foregroundStyle(DS.Colors.textSecondary)
+                Text(entry.text)
+                    .font(DS.Fonts.ui(13.5))
+                    .lineSpacing(13.5 * 0.55 - 4)
+                    .foregroundStyle(DS.Colors.ink)
+                    .textSelection(.enabled)
+                    .lineLimit(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text(entry.text)
-                .font(.body)
-                .textSelection(.enabled)
-                .lineLimit(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                DSInsetButton(title: "Copy", systemImage: "doc.on.doc", action: onCopy)
+                DSIconButton(systemImage: "trash", accessibilityLabel: "Delete transcript", action: onDelete)
+                    .help("Delete transcript")
+            }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
+        .padding(.horizontal, DS.Spacing.rowHorizontal)
     }
 }
