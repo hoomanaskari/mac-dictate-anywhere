@@ -51,11 +51,16 @@ enum CJKText {
         return isCJK(first)
     }
 
-    /// True when the last non-closing-punctuation scalar is a Han ideograph.
+    /// True when the last non-trailing-punctuation scalar is a Han ideograph.
+    ///
+    /// Skips CJK terminal punctuation (。！？，、；：) and closing
+    /// brackets/quotes, not just closers — a chunk transcript ending in "…好。"
+    /// is still CJK content for spacing purposes (ASR's ITN commonly closes a
+    /// truncated chunk with a fullwidth period even mid-utterance).
     static func endsWithCJK(_ text: String) -> Bool {
         let asciiClosers: Set<UInt32> = [34, 39, 41, 93, 125, 0x2019, 0x201D]
         for scalar in text.unicodeScalars.reversed() {
-            if asciiClosers.contains(scalar.value) || cjkClosingPunctuation.contains(scalar.value) {
+            if asciiClosers.contains(scalar.value) || cjkAttachedLeadingPunctuation.contains(scalar.value) {
                 continue
             }
             return isCJK(scalar)
