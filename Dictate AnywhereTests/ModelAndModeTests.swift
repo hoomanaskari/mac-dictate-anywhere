@@ -100,6 +100,23 @@ final class ModelAndModeTests: XCTestCase {
         XCTAssertEqual(SupportedLanguage.english.rawValue, "en")
     }
 
+    func testChineseLanguageExists() {
+        XCTAssertTrue(SupportedLanguage.allCases.contains(.chinese))
+        XCTAssertEqual(SupportedLanguage.chinese.rawValue, "zh")
+        XCTAssertEqual(SupportedLanguage.chinese.displayName, "Chinese (Simplified)")
+        XCTAssertEqual(SupportedLanguage.chinese.nativeName, "简体中文")
+    }
+
+    func testNemotronLanguageCodes() {
+        XCTAssertEqual(SupportedLanguage.chinese.nemotronLanguageCode, "zh-CN")
+        XCTAssertEqual(SupportedLanguage.english.nemotronLanguageCode, "en-US")
+        XCTAssertEqual(SupportedLanguage.german.nemotronLanguageCode, "de")
+    }
+
+    func testAppleSpeechLocaleForChineseIsSimplified() {
+        XCTAssertEqual(AppleSpeechEngine.locale(for: .chinese).identifier, "zh-CN")
+    }
+
     // MARK: - Sidebar pages (design conformance)
 
     func testSidebarPageOrderAndTitlesMatchDesign() {

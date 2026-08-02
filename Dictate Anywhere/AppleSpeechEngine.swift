@@ -264,7 +264,10 @@ final class AppleSpeechEngine: TranscriptionEngine {
         }
     }
 
-    fileprivate static func locale(for language: SupportedLanguage) -> Locale {
+    static func locale(for language: SupportedLanguage) -> Locale {
+        // SpeechTranscriber distinguishes zh-CN/zh-TW/zh-HK; our single
+        // Chinese case is Simplified, so pin the region explicitly.
+        if language == .chinese { return Locale(identifier: "zh-CN") }
         let current = Locale.current
         if current.language.languageCode?.identifier == language.rawValue {
             return current

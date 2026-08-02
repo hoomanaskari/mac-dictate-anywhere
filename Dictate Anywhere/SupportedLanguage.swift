@@ -2,7 +2,7 @@
 //  SupportedLanguage.swift
 //  Dictate Anywhere
 //
-//  Defines the 25 European languages supported by FluidAudio's multilingual Parakeet model.
+//  Languages selectable for transcription across the FluidAudio and Apple Speech engines.
 //
 
 import Foundation
@@ -44,6 +44,9 @@ enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
     case finnish = "fi"
     case greek = "el"
 
+    // East Asian languages
+    case chinese = "zh"
+
     var id: String { rawValue }
 
     /// The English display name for this language.
@@ -74,6 +77,7 @@ enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
         case .hungarian: return "Hungarian"
         case .finnish: return "Finnish"
         case .greek: return "Greek"
+        case .chinese: return "Chinese (Simplified)"
         }
     }
 
@@ -105,6 +109,7 @@ enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
         case .hungarian: return "Magyar"
         case .finnish: return "Suomi"
         case .greek: return "\u{0395}\u{03BB}\u{03BB}\u{03B7}\u{03BD}\u{03B9}\u{03BA}\u{03AC}"
+        case .chinese: return "简体中文"
         }
     }
 
@@ -136,11 +141,23 @@ enum SupportedLanguage: String, CaseIterable, Identifiable, Codable {
         case .hungarian: return "\u{1F1ED}\u{1F1FA}"
         case .finnish: return "\u{1F1EB}\u{1F1EE}"
         case .greek: return "\u{1F1EC}\u{1F1F7}"
+        case .chinese: return "\u{1F1E8}\u{1F1F3}"
         }
     }
 
     /// Combined display for UI: flag + display name
     var displayWithFlag: String {
         "\(flag) \(displayName)"
+    }
+
+    /// Language hint code for FluidAudio's Nemotron multilingual streaming
+    /// model. Unknown codes fall back to the model's auto prompt, so only
+    /// the languages with verified tag formats get region-qualified codes.
+    var nemotronLanguageCode: String {
+        switch self {
+        case .chinese: return "zh-CN"
+        case .english: return "en-US"
+        default: return rawValue
+        }
     }
 }
