@@ -918,7 +918,7 @@ final class ParakeetEngine: TranscriptionEngine {
                     let result = try await asrCoordinator.transcribe(pendingSamples)
                     logger.info("transcriptionLoop: transcribe returned \(result.text.count, privacy: .public) chars")
                     let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let merged = mergeTranscripts(base: committedTranscript, addition: text)
+                    let merged = Self.mergeTranscripts(base: committedTranscript, addition: text)
                     if !merged.isEmpty {
                         await MainActor.run { self.currentTranscript = merged }
                     }
@@ -1022,7 +1022,7 @@ final class ParakeetEngine: TranscriptionEngine {
         do {
             let result = try await asrCoordinator.transcribe(samples)
             let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            finalTranscript = mergeTranscripts(base: finalTranscript, addition: text)
+            finalTranscript = Self.mergeTranscripts(base: finalTranscript, addition: text)
         } catch {
             // Fall through to length comparison below
         }
@@ -1152,7 +1152,7 @@ final class ParakeetEngine: TranscriptionEngine {
                     }
                 }
                 if !text.isEmpty {
-                    committedTranscript = mergeTranscripts(base: committedTranscript, addition: text)
+                    committedTranscript = Self.mergeTranscripts(base: committedTranscript, addition: text)
                     await MainActor.run { self.currentTranscript = committedTranscript }
                 }
             } catch {
@@ -1162,7 +1162,7 @@ final class ParakeetEngine: TranscriptionEngine {
         }
     }
 
-    private func mergeTranscripts(base: String, addition: String) -> String {
+    nonisolated static func mergeTranscripts(base: String, addition: String) -> String {
         let lhs = base.trimmingCharacters(in: .whitespacesAndNewlines)
         let rhs = addition.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1172,22 +1172,33 @@ final class ParakeetEngine: TranscriptionEngine {
         if lhs.hasSuffix(rhs) { return lhs }
         if rhs.hasPrefix(lhs) { return rhs }
 
+        // 8 Han characters span ~3x the audio of 8 Latin characters, so use a
+        // shorter overlap floor at CJK boundaries.
+        let minOverlap = CJKText.endsWithCJK(lhs) || CJKText.startsWithCJK(rhs) ? 3 : 8
         let maxOverlap = min(120, min(lhs.count, rhs.count))
-        if maxOverlap > 0 {
-            for overlap in stride(from: maxOverlap, through: 8, by: -1) {
+        if maxOverlap >= minOverlap {
+            for overlap in stride(from: maxOverlap, through: minOverlap, by: -1) {
                 let leftSlice = lhs.suffix(overlap)
                 let rightSlice = rhs.prefix(overlap)
                 if leftSlice == rightSlice {
                     let tail = String(rhs.dropFirst(overlap)).trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !tail.isEmpty else { return lhs }
-                    let separator = lhs.hasSuffix(" ") || tail.hasPrefix(",") || tail.hasPrefix(".") ? "" : " "
-                    return lhs + separator + tail
+                    return lhs + mergeSeparator(lhs: lhs, rhs: tail) + tail
                 }
             }
         }
 
-        let separator = lhs.hasSuffix(" ") || rhs.hasPrefix(",") || rhs.hasPrefix(".") ? "" : " "
-        return lhs + separator + rhs
+        return lhs + mergeSeparator(lhs: lhs, rhs: rhs) + rhs
+    }
+
+    private nonisolated static func mergeSeparator(lhs: String, rhs: String) -> String {
+        if lhs.hasSuffix(" ") { return "" }
+        if rhs.hasPrefix(",") || rhs.hasPrefix(".") { return "" }
+        if let first = rhs.unicodeScalars.first,
+           CJKText.cjkAttachedLeadingPunctuation.contains(first.value) { return "" }
+        // No space between Han characters across a chunk boundary.
+        if CJKText.endsWithCJK(lhs) && CJKText.startsWithCJK(rhs) { return "" }
+        return " "
     }
 
     // MARK: - Audio Engine Lifecycle
