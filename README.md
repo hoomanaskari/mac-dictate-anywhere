@@ -26,8 +26,8 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 ## Features
 
 - **Global Hotkey** - Press and hold Fn key (or custom shortcut) to dictate from anywhere
-- **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet or Nemotron models
-- **25 Languages** - Support for English, German, French, Spanish, and 21 more European languages
+- **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet, Nemotron, or SenseVoice models
+- **26 Languages** - English, German, French, Spanish and 21 more European languages, plus Mandarin Chinese (Simplified) via the SenseVoice and Nemotron multilingual models
 - **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
 - **Filler Word Removal** - Automatically removes "um", "uh", and other filler words
@@ -150,16 +150,16 @@ Getting started with OpenRouter:
 
 ## Supported Languages
 
-| Germanic | Romance | Slavic | Other |
-|----------|---------|--------|-------|
-| English | Spanish | Polish | Hungarian |
-| German | French | Czech | Finnish |
-| Dutch | Italian | Slovak | Greek |
-| Swedish | Portuguese | Slovenian | Latvian |
-| Danish | Romanian | Croatian | Lithuanian |
-| Norwegian | | Bulgarian | Estonian |
-| | | Ukrainian | |
-| | | Russian | |
+| Germanic | Romance | Slavic | Other | Sino-Tibetan |
+|----------|---------|--------|-------|--------------|
+| English | Spanish | Polish | Hungarian | Mandarin Chinese (Simplified) |
+| German | French | Czech | Finnish | |
+| Dutch | Italian | Slovak | Greek | |
+| Swedish | Portuguese | Slovenian | Latvian | |
+| Danish | Romanian | Croatian | Lithuanian | |
+| Norwegian | | Bulgarian | Estonian | |
+| | | Ukrainian | | |
+| | | Russian | | |
 
 ## Building from Source
 
