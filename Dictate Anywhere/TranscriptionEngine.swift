@@ -557,6 +557,15 @@ final class ParakeetEngine: TranscriptionEngine {
             return SenseVoiceModels.modelsExist(at: dir, precision: .int8)
         }
 
+        if modelChoice == .nemotronMultilingual {
+            // Mirror FluidAudio's own cache check: the variant is present when
+            // its metadata.json exists.
+            let metadataPath = fluidAudioModelCacheRoot()
+                .appendingPathComponent(modelChoice.modelDirectoryName, isDirectory: true)
+                .appendingPathComponent("metadata.json")
+            return FileManager.default.fileExists(atPath: metadataPath.path)
+        }
+
         guard let variant = modelChoice.streamingModelVariant else { return false }
         let modelDirectory = fluidAudioModelCacheRoot().appendingPathComponent(variant.repo.folderName, isDirectory: true)
         guard FileManager.default.fileExists(atPath: modelDirectory.path) else { return false }
@@ -567,9 +576,9 @@ final class ParakeetEngine: TranscriptionEngine {
             requiredModels = ModelNames.ParakeetEOU.requiredModels
         case .nemotron560, .nemotron1120, .nemotron2240:
             requiredModels = ModelNames.NemotronStreaming.requiredModels
-        case .multilingual, .englishOnly, .compactEnglish, .nemotronMultilingual:
+        case .multilingual, .englishOnly, .compactEnglish:
             return false
-        case .senseVoice:
+        case .senseVoice, .nemotronMultilingual:
             // Handled above; unreachable here.
             return false
         }
@@ -783,6 +792,10 @@ final class ParakeetEngine: TranscriptionEngine {
             throw TranscriptionError.engineNotReady
         }
         try await asrCoordinator.resetSession(for: modelChoice)
+
+        if modelChoice == .nemotronMultilingual {
+            await asrCoordinator.setStreamingLanguage(Settings.shared.selectedLanguage.nemotronLanguageCode)
+        }
 
         // Ensure a previous engine is fully torn down before starting a new one.
         await teardownAudioEngineIfNeeded()
@@ -1292,6 +1305,7 @@ private actor AsrManagerCoordinator {
     private var streamingManager: (any StreamingAsrManager)?
     private var streamingModelChoice: ParakeetModelChoice?
     private var senseVoiceManager: SenseVoiceManager?
+    private var multilingualManager: StreamingNemotronMultilingualAsrManager?
     private var pendingEndOfUtterance = false
     private var ctcModels: CtcModels?
     private var ctcTokenizer: CtcTokenizer?
@@ -1301,13 +1315,15 @@ private actor AsrManagerCoordinator {
     )
 
     func isInitialized() -> Bool {
-        manager != nil || streamingManager != nil || senseVoiceManager != nil
+        manager != nil || streamingManager != nil || senseVoiceManager != nil || multilingualManager != nil
     }
 
     func isInitialized(for modelChoice: ParakeetModelChoice) -> Bool {
         switch modelChoice {
         case .senseVoice:
             return senseVoiceManager != nil
+        case .nemotronMultilingual:
+            return multilingualManager != nil
         default:
             if let modelVersion = modelChoice.tdtModelVersion {
                 return manager != nil && models?.version == modelVersion
@@ -1374,10 +1390,21 @@ private actor AsrManagerCoordinator {
             try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
             streamingManager = streaming
             streamingModelChoice = modelChoice
-        case .multilingual, .englishOnly, .compactEnglish, .senseVoice, .nemotronMultilingual:
+        case .nemotronMultilingual:
+            let streaming = StreamingNemotronMultilingualAsrManager(configuration: nil)
+            // Full-vocab variant ("auto" → multilingual/) at the 1120 ms tier:
+            // one download covers every language; punctuation degrades at 560 ms.
+            let variantDir = try await StreamingNemotronMultilingualAsrManager.downloadVariant(
+                languageCode: "auto",
+                chunkMs: 1120,
+                to: nil,
+                progressHandler: nil
+            )
+            try await streaming.loadModels(from: variantDir)
+            multilingualManager = streaming
+            streamingModelChoice = modelChoice
+        case .multilingual, .englishOnly, .compactEnglish, .senseVoice:
             // .senseVoice never reaches this switch (usesTrueStreaming is false, guarded above).
-            // .nemotronMultilingual streaming is not yet implemented here; Task 11 adds its
-            // dedicated StreamingNemotronMultilingualAsrManager path.
             throw TranscriptionError.engineNotReady
         }
 
@@ -1386,6 +1413,14 @@ private actor AsrManagerCoordinator {
 
     func resetSession(for modelChoice: ParakeetModelChoice) async throws {
         guard modelChoice.usesTrueStreaming else { return }
+        if modelChoice == .nemotronMultilingual {
+            guard let multilingualManager, streamingModelChoice == modelChoice else {
+                throw TranscriptionError.engineNotReady
+            }
+            pendingEndOfUtterance = false
+            await multilingualManager.reset()
+            return
+        }
         guard let streamingManager, streamingModelChoice == modelChoice else {
             throw TranscriptionError.engineNotReady
         }
@@ -1505,24 +1540,44 @@ private actor AsrManagerCoordinator {
     }
 
     func appendStreamingAudio(_ buffer: AVAudioPCMBuffer) async throws {
+        if let multilingualManager {
+            try await multilingualManager.appendAudio(buffer)
+            return
+        }
         guard let streamingManager else { throw TranscriptionError.engineNotReady }
         try await streamingManager.appendAudio(buffer)
     }
 
     func processStreamingAudio() async throws {
+        if let multilingualManager {
+            // process(samples: []) drains any complete chunks already appended.
+            _ = try await multilingualManager.process(samples: [])
+            return
+        }
         guard let streamingManager else { throw TranscriptionError.engineNotReady }
         try await streamingManager.processBufferedAudio()
     }
 
     func currentStreamingTranscript() async -> String {
+        if let multilingualManager {
+            return await multilingualManager.getPartialTranscript()
+        }
         guard let streamingManager else { return "" }
         return await streamingManager.getPartialTranscript()
     }
 
     func finishStreaming() async throws -> String {
+        if let multilingualManager {
+            pendingEndOfUtterance = false
+            return try await multilingualManager.finish()
+        }
         guard let streamingManager else { throw TranscriptionError.engineNotReady }
         pendingEndOfUtterance = false
         return try await streamingManager.finish()
+    }
+
+    func setStreamingLanguage(_ code: String?) async {
+        await multilingualManager?.setLanguage(code)
     }
 
     private func markEndOfUtteranceDetected() {
@@ -1543,11 +1598,15 @@ private actor AsrManagerCoordinator {
         if let streamingManager {
             await streamingManager.cleanup()
         }
+        if let multilingualManager {
+            await multilingualManager.cleanup()
+        }
         manager = nil
         models = nil
         streamingManager = nil
         streamingModelChoice = nil
         senseVoiceManager = nil
+        multilingualManager = nil
         pendingEndOfUtterance = false
         ctcModels = nil
         ctcTokenizer = nil
