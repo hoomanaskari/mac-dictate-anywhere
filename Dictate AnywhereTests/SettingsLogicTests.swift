@@ -12,6 +12,7 @@ final class SettingsLogicTests: XCTestCase {
     private var savedMode: TranscriptPostProcessingMode = .none
     private var savedEngineChoice: TranscriptionEngineChoice = .parakeet
     private var savedParakeetModelChoice: ParakeetModelChoice = .multilingual
+    private var savedSelectedLanguage: SupportedLanguage = .english
 
     override func setUp() {
         super.setUp()
@@ -23,6 +24,7 @@ final class SettingsLogicTests: XCTestCase {
         savedMode = settings.transcriptPostProcessingMode
         savedEngineChoice = settings.engineChoice
         savedParakeetModelChoice = settings.parakeetModelChoice
+        savedSelectedLanguage = settings.selectedLanguage
     }
 
     override func tearDown() {
@@ -31,9 +33,14 @@ final class SettingsLogicTests: XCTestCase {
         settings.fillerWordsToRemove = savedFillerWords
         settings.transcriptHistory = savedHistory
         settings.hotkeyBindings = savedBindings
-        settings.transcriptPostProcessingMode = savedMode
+        // Restore engine/model choice before post-processing mode: both
+        // carry didSet coercions that can rewrite `transcriptPostProcessingMode`
+        // (and `selectedLanguage`), so mode must be restored last to avoid
+        // being clobbered by a coercion firing during this teardown.
         settings.engineChoice = savedEngineChoice
         settings.parakeetModelChoice = savedParakeetModelChoice
+        settings.selectedLanguage = savedSelectedLanguage
+        settings.transcriptPostProcessingMode = savedMode
         super.tearDown()
     }
 
