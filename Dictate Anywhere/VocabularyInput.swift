@@ -12,7 +12,9 @@ enum VocabularyInputParser {
         var seen = Set(existingTerms)
         var parsedTerms: [String] = []
 
-        for rawTerm in input.split(whereSeparator: { $0 == "," || $0.isNewline }) {
+        for rawTerm in input.split(whereSeparator: {
+            $0 == "," || $0 == "\u{FF0C}" || $0 == "\u{3001}" || $0.isNewline
+        }) {
             let term = rawTerm.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !term.isEmpty, !seen.contains(term) else { continue }
             seen.insert(term)
