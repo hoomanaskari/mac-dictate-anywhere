@@ -551,6 +551,12 @@ final class ParakeetEngine: TranscriptionEngine {
             return AsrModels.modelsExist(at: modelDirectory, version: modelVersion)
         }
 
+        if modelChoice == .senseVoice {
+            let dir = fluidAudioModelCacheRoot()
+                .appendingPathComponent(modelChoice.modelDirectoryName, isDirectory: true)
+            return SenseVoiceModels.modelsExist(at: dir, precision: .int8)
+        }
+
         guard let variant = modelChoice.streamingModelVariant else { return false }
         let modelDirectory = fluidAudioModelCacheRoot().appendingPathComponent(variant.repo.folderName, isDirectory: true)
         guard FileManager.default.fileExists(atPath: modelDirectory.path) else { return false }
@@ -561,7 +567,10 @@ final class ParakeetEngine: TranscriptionEngine {
             requiredModels = ModelNames.ParakeetEOU.requiredModels
         case .nemotron560, .nemotron1120, .nemotron2240:
             requiredModels = ModelNames.NemotronStreaming.requiredModels
-        case .multilingual, .englishOnly, .compactEnglish, .senseVoice, .nemotronMultilingual:
+        case .multilingual, .englishOnly, .compactEnglish, .nemotronMultilingual:
+            return false
+        case .senseVoice:
+            // Handled above; unreachable here.
             return false
         }
 
@@ -593,7 +602,10 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         do {
-            if modelChoice.usesTrueStreaming {
+            if modelChoice == .senseVoice {
+                try await asrCoordinator.initializeSenseVoice()
+                loadedModels = nil
+            } else if modelChoice.usesTrueStreaming {
                 try await asrCoordinator.initializeStreaming(modelChoice: modelChoice)
                 loadedModels = nil
             } else if let modelVersion = modelChoice.tdtModelVersion {
@@ -634,7 +646,7 @@ final class ParakeetEngine: TranscriptionEngine {
         } else if let variant = modelChoice.streamingModelVariant {
             path = fluidAudioModelCacheRoot().appendingPathComponent(variant.repo.folderName, isDirectory: true)
         } else {
-            throw TranscriptionError.engineNotReady
+            path = fluidAudioModelCacheRoot().appendingPathComponent(modelChoice.modelDirectoryName, isDirectory: true)
         }
 
         if FileManager.default.fileExists(atPath: path.path) {
@@ -678,6 +690,24 @@ final class ParakeetEngine: TranscriptionEngine {
             await MainActor.run {
                 self.isReady = false
                 self.isModelDownloaded = false
+            }
+            return
+        }
+
+        if modelChoice == .senseVoice {
+            do {
+                try await asrCoordinator.initializeSenseVoice()
+            } catch {
+                await asrCoordinator.cleanup()
+                loadedModels = nil
+                await MainActor.run { self.isReady = false }
+                throw error
+            }
+            loadedModels = nil
+            modelOnDiskCached[modelChoice] = true
+            await MainActor.run {
+                self.isReady = true
+                self.isModelDownloaded = true
             }
             return
         }
@@ -1261,6 +1291,7 @@ private actor AsrManagerCoordinator {
     private var models: AsrModels?
     private var streamingManager: (any StreamingAsrManager)?
     private var streamingModelChoice: ParakeetModelChoice?
+    private var senseVoiceManager: SenseVoiceManager?
     private var pendingEndOfUtterance = false
     private var ctcModels: CtcModels?
     private var ctcTokenizer: CtcTokenizer?
@@ -1269,13 +1300,34 @@ private actor AsrManagerCoordinator {
         category: "AsrCoordinator"
     )
 
-    func isInitialized() -> Bool { manager != nil || streamingManager != nil }
+    func isInitialized() -> Bool {
+        manager != nil || streamingManager != nil || senseVoiceManager != nil
+    }
 
     func isInitialized(for modelChoice: ParakeetModelChoice) -> Bool {
-        if let modelVersion = modelChoice.tdtModelVersion {
-            return manager != nil && models?.version == modelVersion
+        switch modelChoice {
+        case .senseVoice:
+            return senseVoiceManager != nil
+        default:
+            if let modelVersion = modelChoice.tdtModelVersion {
+                return manager != nil && models?.version == modelVersion
+            }
+            return streamingManager != nil && streamingModelChoice == modelChoice
         }
-        return streamingManager != nil && streamingModelChoice == modelChoice
+    }
+
+    func initializeSenseVoice() async throws {
+        await cleanup()
+        // int8: ~225 MB, ANE-targeted, accuracy-neutral per FluidAudio docs.
+        let svModels = try await SenseVoiceModels.downloadAndLoad(precision: .int8)
+        // textNorm 14 = withitn: punctuated, inverse-text-normalized output.
+        // The library default (15) strips punctuation — unusable for dictation.
+        senseVoiceManager = SenseVoiceManager(
+            models: svModels,
+            language: SenseVoiceConfig.defaultLanguage,  // 0 = auto-detect (zh/en code-switch)
+            textNorm: 14
+        )
+        logger.info("initializeSenseVoice: completed")
     }
 
     func initialize(models: AsrModels, config: ASRConfig) async throws {
@@ -1342,6 +1394,16 @@ private actor AsrManagerCoordinator {
     }
 
     func transcribe(_ samples: [Float]) async throws -> ASRResult {
+        if let senseVoiceManager {
+            let startedAt = Date()
+            let text = try await senseVoiceManager.transcribe(audio: samples)
+            return ASRResult(
+                text: text,
+                confidence: 0.0,
+                duration: Double(samples.count) / 16_000.0,
+                processingTime: Date().timeIntervalSince(startedAt)
+            )
+        }
         guard let manager else { throw TranscriptionError.engineNotReady }
         logger.info("transcribe: calling manager.transcribe with \(samples.count, privacy: .public) samples")
         var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
@@ -1485,6 +1547,7 @@ private actor AsrManagerCoordinator {
         models = nil
         streamingManager = nil
         streamingModelChoice = nil
+        senseVoiceManager = nil
         pendingEndOfUtterance = false
         ctcModels = nil
         ctcTokenizer = nil
