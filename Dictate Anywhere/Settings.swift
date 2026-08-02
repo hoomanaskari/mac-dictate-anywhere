@@ -238,7 +238,7 @@ enum ParakeetModelChoice: String, CaseIterable {
         case .senseVoice:
             return "SenseVoice auto-detects Chinese (Simplified) and English, including mixed-language dictation. Output uses Simplified characters."
         case .nemotronMultilingual:
-            return "The multilingual Nemotron model streams transcription for the selected language, including Chinese (Simplified)."
+            return "The multilingual Nemotron model streams transcription with a language hint for the selected language when available, including Chinese (Simplified); other languages fall back to automatic detection."
         }
     }
 
@@ -606,6 +606,11 @@ final class Settings {
     var engineChoice: TranscriptionEngineChoice {
         didSet {
             UserDefaults.standard.set(engineChoice.rawValue, forKey: Keys.engineChoice)
+            if engineChoice == .parakeet,
+               !parakeetModelChoice.supportsFluidAudioVocabulary,
+               transcriptPostProcessingMode == .fluidAudioVocabulary {
+                transcriptPostProcessingMode = .none
+            }
         }
     }
 

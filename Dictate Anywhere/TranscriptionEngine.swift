@@ -182,6 +182,28 @@ nonisolated private func fluidAudioModelCacheRoot() -> URL {
         .appendingPathComponent("Models", isDirectory: true)
 }
 
+/// Removes now-empty parent directories left behind after deleting a model
+/// variant nested under the FluidAudio cache root (e.g. deleting
+/// "nemotron-multilingual/multilingual/1120ms" should also remove the
+/// now-empty "nemotron-multilingual/multilingual" and "nemotron-multilingual"
+/// directories). Stops as soon as a directory is non-empty, missing, or is
+/// the cache root itself — the cache root is never removed.
+nonisolated private func removeEmptyParentDirectories(from directory: URL) {
+    let fileManager = FileManager.default
+    let cacheRootComponents = fluidAudioModelCacheRoot().standardizedFileURL.pathComponents
+    var current = directory.standardizedFileURL
+
+    while current.pathComponents.count > cacheRootComponents.count,
+          Array(current.pathComponents.prefix(cacheRootComponents.count)) == cacheRootComponents {
+        guard let contents = try? fileManager.contentsOfDirectory(atPath: current.path),
+              contents.isEmpty else {
+            break
+        }
+        try? fileManager.removeItem(at: current)
+        current = current.deletingLastPathComponent()
+    }
+}
+
 // MARK: - Protocol
 
 protocol TranscriptionEngine: AnyObject {
@@ -660,6 +682,7 @@ final class ParakeetEngine: TranscriptionEngine {
 
         if FileManager.default.fileExists(atPath: path.path) {
             try FileManager.default.removeItem(at: path)
+            removeEmptyParentDirectories(from: path.deletingLastPathComponent())
         }
 
         if await asrCoordinator.isInitialized(for: modelChoice) {

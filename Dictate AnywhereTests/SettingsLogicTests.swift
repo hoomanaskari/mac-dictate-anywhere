@@ -10,6 +10,8 @@ final class SettingsLogicTests: XCTestCase {
     private var savedHistory: [TranscriptHistoryEntry] = []
     private var savedBindings: [HotkeyBinding] = []
     private var savedMode: TranscriptPostProcessingMode = .none
+    private var savedEngineChoice: TranscriptionEngineChoice = .parakeet
+    private var savedParakeetModelChoice: ParakeetModelChoice = .multilingual
 
     override func setUp() {
         super.setUp()
@@ -19,6 +21,8 @@ final class SettingsLogicTests: XCTestCase {
         savedHistory = settings.transcriptHistory
         savedBindings = settings.hotkeyBindings
         savedMode = settings.transcriptPostProcessingMode
+        savedEngineChoice = settings.engineChoice
+        savedParakeetModelChoice = settings.parakeetModelChoice
     }
 
     override func tearDown() {
@@ -28,6 +32,8 @@ final class SettingsLogicTests: XCTestCase {
         settings.transcriptHistory = savedHistory
         settings.hotkeyBindings = savedBindings
         settings.transcriptPostProcessingMode = savedMode
+        settings.engineChoice = savedEngineChoice
+        settings.parakeetModelChoice = savedParakeetModelChoice
         super.tearDown()
     }
 
@@ -175,5 +181,33 @@ final class SettingsLogicTests: XCTestCase {
 
         settings.transcriptPostProcessingMode = .fluidAudioVocabulary
         XCTAssertTrue(settings.fluidAudioVocabularyEnabled)
+    }
+
+    /// Switching engines away from Parakeet while a vocabulary-incapable
+    /// Parakeet model is persisted must not leave a stale
+    /// `.fluidAudioVocabulary` post-processing mode selected once the user
+    /// switches back to Parakeet.
+    func testEngineChoiceCoercesStaleVocabularyMode() {
+        let settings = Settings.shared
+
+        // Start on a Parakeet model that supports FluidAudio vocabulary.
+        settings.parakeetModelChoice = .multilingual
+        XCTAssertTrue(settings.parakeetModelChoice.supportsFluidAudioVocabulary)
+
+        // Vocabulary mode is legitimate on Apple Speech, independent of the
+        // persisted Parakeet model choice.
+        settings.engineChoice = .appleSpeech
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+
+        // Changing the persisted Parakeet model choice while the active
+        // engine is Apple Speech must not coerce the mode away.
+        settings.parakeetModelChoice = .senseVoice
+        XCTAssertFalse(settings.parakeetModelChoice.supportsFluidAudioVocabulary)
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .fluidAudioVocabulary)
+
+        // Switching the engine to Parakeet with a stale, vocab-incapable
+        // model selected must coerce the mode back to `.none`.
+        settings.engineChoice = .parakeet
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .none)
     }
 }
