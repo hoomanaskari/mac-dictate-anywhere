@@ -25,6 +25,13 @@ final class MergeTranscriptsTests: XCTestCase {
                        "今天天气很好，我们去公园吧")
     }
 
+    // CJK: no space injected after fullwidth terminal punctuation with no overlap match
+    // (regression test for the endsWithCJK terminal-punctuation fix — see CJKText.swift)
+    func testCJKMergeNoSpaceAfterTerminalPunctuation() {
+        XCTAssertEqual(ParakeetEngine.mergeTranscripts(base: "今天天气很好。", addition: "我们去公园吧"),
+                       "今天天气很好。我们去公园吧")
+    }
+
     // CJK: short overlaps (< 8 chars) are detected
     func testCJKShortOverlapDetected() {
         XCTAssertEqual(ParakeetEngine.mergeTranscripts(base: "我们明天去公园", addition: "去公园散步"),

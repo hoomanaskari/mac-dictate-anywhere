@@ -23,6 +23,12 @@ final class CJKTextTests: XCTestCase {
         XCTAssertFalse(CJKText.endsWithCJK(""))
     }
 
+    func testEndsWithCJKSkipsTerminalPunctuation() {
+        XCTAssertTrue(CJKText.endsWithCJK("你好。"))       // skips 。 (fullwidth period)
+        XCTAssertTrue(CJKText.endsWithCJK("你好。」"))     // skips closer, then terminal punctuation
+        XCTAssertFalse(CJKText.endsWithCJK("hello."))      // ASCII period is not CJK content
+    }
+
     func testPunctuationSets() {
         XCTAssertTrue(CJKText.cjkTerminalPunctuation.contains(0x3002))  // 。
         XCTAssertTrue(CJKText.cjkTerminalPunctuation.contains(0xFF01))  // ！
