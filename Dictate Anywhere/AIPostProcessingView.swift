@@ -61,9 +61,18 @@ struct AIPostProcessingView: View {
                 ) {
                     DSDropdown(
                         selection: $settings.transcriptPostProcessingMode,
-                        options: TranscriptPostProcessingMode.allCases,
+                        options: TranscriptPostProcessingMode.allCases.filter { mode in
+                            mode != .fluidAudioVocabulary
+                                || settings.engineChoice != .parakeet
+                                || settings.parakeetModelChoice.supportsFluidAudioVocabulary
+                        },
                         title: \.displayName
                     )
+                }
+                if settings.engineChoice == .parakeet,
+                   !settings.parakeetModelChoice.supportsFluidAudioVocabulary {
+                    DSDivider()
+                    DSHint(text: "FluidAudio Vocabulary is unavailable for the selected speech model — its terminology rescoring supports English text only.")
                 }
             }
 

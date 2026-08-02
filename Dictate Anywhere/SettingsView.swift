@@ -61,14 +61,15 @@ struct SettingsView: View {
                         label: "Transcription language",
                         caption: parakeetModelChoice.languageSettingsFooter
                     ) {
-                        if parakeetModelChoice.isEnglishOnly {
-                            Text("English")
+                        if let fixedLabel = parakeetModelChoice.fixedLanguageLabel {
+                            Text(fixedLabel)
                                 .font(DS.Fonts.ui(13.5))
                                 .foregroundStyle(DS.Colors.textSecondary)
                         } else {
                             DSDropdown(
                                 selection: $settings.selectedLanguage,
-                                options: Array(SupportedLanguage.allCases),
+                                options: parakeetModelChoice.selectableLanguages
+                                    ?? Array(SupportedLanguage.allCases),
                                 title: \.displayWithFlag
                             )
                         }

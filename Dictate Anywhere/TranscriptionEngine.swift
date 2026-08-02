@@ -147,14 +147,15 @@ private extension ParakeetModelChoice {
             return .v2
         case .compactEnglish:
             return .tdtCtc110m
-        case .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240:
+        case .parakeetEou320, .nemotron560, .nemotron1120, .nemotron2240,
+             .senseVoice, .nemotronMultilingual:
             return nil
         }
     }
 
     nonisolated var streamingModelVariant: StreamingModelVariant? {
         switch self {
-        case .multilingual, .englishOnly, .compactEnglish:
+        case .multilingual, .englishOnly, .compactEnglish, .senseVoice, .nemotronMultilingual:
             return nil
         case .parakeetEou320:
             return .parakeetEou320ms
@@ -560,7 +561,7 @@ final class ParakeetEngine: TranscriptionEngine {
             requiredModels = ModelNames.ParakeetEOU.requiredModels
         case .nemotron560, .nemotron1120, .nemotron2240:
             requiredModels = ModelNames.NemotronStreaming.requiredModels
-        case .multilingual, .englishOnly, .compactEnglish:
+        case .multilingual, .englishOnly, .compactEnglish, .senseVoice, .nemotronMultilingual:
             return false
         }
 
@@ -1321,7 +1322,10 @@ private actor AsrManagerCoordinator {
             try await streaming.loadModels(to: fluidAudioModelCacheRoot(), configuration: nil, progressHandler: nil)
             streamingManager = streaming
             streamingModelChoice = modelChoice
-        case .multilingual, .englishOnly, .compactEnglish:
+        case .multilingual, .englishOnly, .compactEnglish, .senseVoice, .nemotronMultilingual:
+            // .senseVoice never reaches this switch (usesTrueStreaming is false, guarded above).
+            // .nemotronMultilingual streaming is not yet implemented here; Task 11 adds its
+            // dedicated StreamingNemotronMultilingualAsrManager path.
             throw TranscriptionError.engineNotReady
         }
 

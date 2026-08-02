@@ -143,4 +143,42 @@ final class ModelAndModeTests: XCTestCase {
         XCTAssertLessThanOrEqual(MainWindowSizing.minimumWidth, MainWindowSizing.defaultWidth)
         XCTAssertLessThanOrEqual(MainWindowSizing.minimumHeight, MainWindowSizing.defaultHeight)
     }
+
+    // MARK: - Mandarin model cases (Task 9)
+
+    func testMandarinModelCasesExist() {
+        XCTAssertEqual(ParakeetModelChoice(rawValue: "senseVoice"), .senseVoice)
+        XCTAssertEqual(ParakeetModelChoice(rawValue: "nemotronMultilingual"), .nemotronMultilingual)
+    }
+
+    func testMandarinModelMetadata() {
+        XCTAssertFalse(ParakeetModelChoice.senseVoice.isEnglishOnly)
+        XCTAssertFalse(ParakeetModelChoice.nemotronMultilingual.isEnglishOnly)
+        XCTAssertFalse(ParakeetModelChoice.senseVoice.usesTrueStreaming)
+        XCTAssertTrue(ParakeetModelChoice.nemotronMultilingual.usesTrueStreaming)
+        XCTAssertFalse(ParakeetModelChoice.senseVoice.supportsEndOfUtterance)
+        XCTAssertFalse(ParakeetModelChoice.nemotronMultilingual.supportsEndOfUtterance)
+        XCTAssertEqual(ParakeetModelChoice.senseVoice.modelDirectoryName, "sensevoice-small")
+        XCTAssertEqual(ParakeetModelChoice.nemotronMultilingual.modelDirectoryName,
+                       "nemotron-multilingual/multilingual/1120ms")
+    }
+
+    func testMandarinModelLanguageRules() {
+        XCTAssertNil(ParakeetModelChoice.senseVoice.selectableLanguages)
+        XCTAssertNotNil(ParakeetModelChoice.senseVoice.fixedLanguageLabel)
+        XCTAssertEqual(ParakeetModelChoice.nemotronMultilingual.selectableLanguages,
+                       SupportedLanguage.allCases)
+        XCTAssertEqual(ParakeetModelChoice.multilingual.selectableLanguages,
+                       SupportedLanguage.allCases.filter { $0 != .chinese })
+        XCTAssertFalse(ParakeetModelChoice.multilingual.supportsLanguage(.chinese))
+        XCTAssertTrue(ParakeetModelChoice.nemotronMultilingual.supportsLanguage(.chinese))
+        XCTAssertTrue(ParakeetModelChoice.senseVoice.supportsLanguage(.chinese))
+        XCTAssertFalse(ParakeetModelChoice.englishOnly.supportsLanguage(.chinese))
+    }
+
+    func testMandarinModelsDisableFluidAudioVocabulary() {
+        XCTAssertFalse(ParakeetModelChoice.senseVoice.supportsFluidAudioVocabulary)
+        XCTAssertFalse(ParakeetModelChoice.nemotronMultilingual.supportsFluidAudioVocabulary)
+        XCTAssertTrue(ParakeetModelChoice.multilingual.supportsFluidAudioVocabulary)
+    }
 }
