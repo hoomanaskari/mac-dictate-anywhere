@@ -592,7 +592,7 @@ final class Settings {
     /// Cached compiled regex for filler word removal (invalidated when words change)
     private var cachedFillerRegex: NSRegularExpression?
 
-    static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm"]
+    static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm", "嗯", "呃", "唔"]
 
     // MARK: - Transcript Post Processing
 
@@ -1067,17 +1067,24 @@ final class Settings {
     func removeFillerWords(from text: String) -> String {
         guard isFillerWordRemovalEnabled, !fillerWordsToRemove.isEmpty else { return text }
 
-        // Build and cache the regex (invalidated when fillerWordsToRemove changes)
         let regex: NSRegularExpression
         if let cached = cachedFillerRegex {
             regex = cached
         } else {
-            let escapedWords = fillerWordsToRemove
-                .map { NSRegularExpression.escapedPattern(for: $0.trimmingCharacters(in: .whitespaces)) }
-                .filter { !$0.isEmpty }
-            guard !escapedWords.isEmpty else { return text }
+            let alternatives = fillerWordsToRemove.compactMap { word -> String? in
+                let trimmed = word.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return nil }
+                let escaped = NSRegularExpression.escapedPattern(for: trimmed)
+                // \b is meaningless inside unsegmented Han text; CJK fillers
+                // match bare, and a trailing + collapses stutters (嗯嗯).
+                if trimmed.unicodeScalars.contains(where: { CJKText.isCJK($0) }) {
+                    return "(?:\(escaped))+"
+                }
+                return "\\b\(escaped)\\b"
+            }
+            guard !alternatives.isEmpty else { return text }
 
-            let pattern = "\\b(" + escapedWords.joined(separator: "|") + ")\\b"
+            let pattern = "(?:" + alternatives.joined(separator: "|") + ")"
             do {
                 let compiled = try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
                 cachedFillerRegex = compiled
@@ -1096,6 +1103,13 @@ final class Settings {
         result = result.replacingOccurrences(of: " .", with: ".")
         result = result.replacingOccurrences(of: " !", with: "!")
         result = result.replacingOccurrences(of: " ?", with: "?")
+        result = result.replacingOccurrences(of: " \u{FF0C}", with: "\u{FF0C}")   // ，
+        result = result.replacingOccurrences(of: " \u{3002}", with: "\u{3002}")   // 。
+        result = result.replacingOccurrences(of: " \u{FF01}", with: "\u{FF01}")   // ！
+        result = result.replacingOccurrences(of: " \u{FF1F}", with: "\u{FF1F}")   // ？
+        while result.contains("\u{FF0C}\u{FF0C}") {
+            result = result.replacingOccurrences(of: "\u{FF0C}\u{FF0C}", with: "\u{FF0C}")
+        }
         return result.trimmingCharacters(in: .whitespaces)
     }
 
