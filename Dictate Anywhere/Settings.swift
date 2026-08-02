@@ -221,7 +221,7 @@ enum ParakeetModelChoice: String, CaseIterable {
         case .senseVoice:
             return "~225 MB"
         case .nemotronMultilingual:
-            return "~1 GB"
+            return "~650 MB"
         }
     }
 
