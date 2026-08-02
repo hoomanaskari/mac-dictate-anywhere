@@ -58,6 +58,11 @@
             value = "$(RUN_MANDARIN_ASR_TESTS)"
             isEnabled = "YES">
          </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "RUN_NEMOTRON_ASR_TESTS"
+            value = "$(RUN_NEMOTRON_ASR_TESTS)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
