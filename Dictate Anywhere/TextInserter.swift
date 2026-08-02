@@ -59,12 +59,18 @@ final class TextInserter {
     // MARK: - Private
 
     private func preparedTextForInsertion(_ text: String, targetBundleIdentifier: String?) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-
-        let normalized = Self.hasTerminalPunctuation(trimmed) ? trimmed : trimmed + "."
+        let normalized = Self.normalizedForInsertion(text)
+        guard !normalized.isEmpty else { return "" }
         let separatorPrefix = separatorPrefixIfNeeded(for: targetBundleIdentifier, insertionText: normalized)
         return separatorPrefix + normalized
+    }
+
+    /// Trims and guarantees terminal punctuation, matching the script of the text.
+    static func normalizedForInsertion(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard !hasTerminalPunctuation(trimmed) else { return trimmed }
+        return trimmed + (CJKText.endsWithCJK(trimmed) ? "\u{3002}" : ".")
     }
 
     private func separatorPrefixIfNeeded(for targetBundleIdentifier: String?, insertionText: String) -> String {
@@ -96,18 +102,22 @@ final class TextInserter {
         pendingSeparatorTargetBundleIdentifier = nil
     }
 
+    /// Chinese text needs no space when joined to preceding text.
+    static func needsSeparator(before insertionText: String) -> Bool {
+        !startsWithAttachedPunctuation(insertionText) && !CJKText.startsWithCJK(insertionText)
+    }
+
     private func shouldInsertPendingSeparator(before insertionText: String) -> Bool {
-        guard !Self.startsWithAttachedPunctuation(insertionText),
+        guard Self.needsSeparator(before: insertionText),
               let precedingText = textBeforeInsertionPoint(),
               !precedingText.isEmpty else {
             return false
         }
-
         return !Self.isWhitespaceOrNewline(precedingText)
     }
 
-    private static func hasTerminalPunctuation(_ text: String) -> Bool {
-        let closingScalarValues: Set<UInt32> = [
+    static func hasTerminalPunctuation(_ text: String) -> Bool {
+        let closingScalarValues: Set<UInt32> = Set([
             34, // "
             39, // '
             41, // )
@@ -115,8 +125,8 @@ final class TextInserter {
             125, // }
             0x2019,
             0x201D,
-        ]
-        let punctuationScalarValues: Set<UInt32> = [
+        ]).union(CJKText.cjkClosingPunctuation)
+        let punctuationScalarValues: Set<UInt32> = Set([
             33, // !
             44, // ,
             46, // .
@@ -124,7 +134,7 @@ final class TextInserter {
             59, // ;
             63, // ?
             0x2026,
-        ]
+        ]).union(CJKText.cjkTerminalPunctuation)
 
         for scalar in text.unicodeScalars.reversed() {
             if closingScalarValues.contains(scalar.value) {
@@ -136,8 +146,8 @@ final class TextInserter {
         return false
     }
 
-    private static func startsWithAttachedPunctuation(_ text: String) -> Bool {
-        let attachedPunctuationScalarValues: Set<UInt32> = [
+    static func startsWithAttachedPunctuation(_ text: String) -> Bool {
+        let attachedPunctuationScalarValues: Set<UInt32> = Set([
             33, // !
             41, // )
             44, // ,
@@ -148,7 +158,7 @@ final class TextInserter {
             93, // ]
             125, // }
             0x2026,
-        ]
+        ]).union(CJKText.cjkAttachedLeadingPunctuation)
 
         guard let firstScalar = text.unicodeScalars.first else { return false }
         return attachedPunctuationScalarValues.contains(firstScalar.value)
