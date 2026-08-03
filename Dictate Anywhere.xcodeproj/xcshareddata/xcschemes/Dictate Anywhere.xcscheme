@@ -29,6 +29,13 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "RUN_MODEL_SWITCH_BENCHMARK"
+            value = "$(RUN_MODEL_SWITCH_BENCHMARK)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO">
@@ -53,6 +60,11 @@
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
       <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "RUN_MODEL_SWITCH_BENCHMARK"
+            value = "$(RUN_MODEL_SWITCH_BENCHMARK)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
          <EnvironmentVariable
             key = "RUN_MANDARIN_ASR_TESTS"
             value = "$(RUN_MANDARIN_ASR_TESTS)"
