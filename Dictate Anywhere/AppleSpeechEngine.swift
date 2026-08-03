@@ -244,6 +244,30 @@ final class AppleSpeechEngine: TranscriptionEngine {
         return result
     }
 
+    /// Languages whose on-device Speech assets are already installed —
+    /// distinct from `supportedLanguages()`, which only reports what the
+    /// framework *could* support. Auto-switching must never trigger a
+    /// silent asset download, so callers use this to gate mappings that
+    /// would otherwise call through to `prepare()`.
+    static func installedLanguages() async -> [SupportedLanguage] {
+        guard Self.isSupported else { return [] }
+        guard #available(macOS 26.0, *) else { return [] }
+
+        let installedLocales = await SpeechTranscriber.installedLocales
+        let installedIdentifiers = Set(installedLocales.map { $0.identifier(.bcp47) })
+
+        var result: [SupportedLanguage] = []
+        for language in SupportedLanguage.allCases {
+            guard let canonical = await SpeechTranscriber.supportedLocale(equivalentTo: locale(for: language)) else {
+                continue
+            }
+            if installedIdentifiers.contains(canonical.identifier(.bcp47)) {
+                result.append(language)
+            }
+        }
+        return result
+    }
+
     private func appleContextualVocabulary() -> [String] {
         guard Settings.shared.fluidAudioVocabularyEnabled else { return [] }
         return Settings.shared.customVocabulary

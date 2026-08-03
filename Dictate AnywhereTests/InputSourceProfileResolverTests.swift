@@ -22,7 +22,8 @@ final class InputSourceProfileResolverTests: XCTestCase {
         currentFluidAudioLanguage: SupportedLanguage = .english,
         currentAppleSpeechLanguage: SupportedLanguage = .english,
         appleSpeechSupported: Bool = true,
-        isModelDownloaded: @escaping (ParakeetModelChoice) -> Bool = { _ in true }
+        isModelDownloaded: @escaping (ParakeetModelChoice) -> Bool = { _ in true },
+        isAppleSpeechAssetInstalled: @escaping (SupportedLanguage) -> Bool = { _ in true }
     ) -> InputSourceProfileResolution {
         InputSourceProfileResolver.resolve(
             mapping: mapping,
@@ -32,7 +33,8 @@ final class InputSourceProfileResolverTests: XCTestCase {
             currentFluidAudioLanguage: currentFluidAudioLanguage,
             currentAppleSpeechLanguage: currentAppleSpeechLanguage,
             appleSpeechSupported: appleSpeechSupported,
-            isModelDownloaded: isModelDownloaded
+            isModelDownloaded: isModelDownloaded,
+            isAppleSpeechAssetInstalled: isAppleSpeechAssetInstalled
         )
     }
 
@@ -106,5 +108,32 @@ final class InputSourceProfileResolverTests: XCTestCase {
             .fullApply
         )
         XCTAssertEqual(resolve(mapping: mapping(), currentEngine: .appleSpeech), .fullApply)
+    }
+
+    // MARK: - Apple Speech installed-asset gate
+
+    func testAppleSpeechMappingWithAssetNotInstalledResolvesToInactive() {
+        // Would otherwise be `.noChange` (engine/language already match), but
+        // auto-switching must never trigger a silent asset download.
+        XCTAssertEqual(
+            resolve(
+                mapping: mapping(engine: .appleSpeech, model: nil, language: .german),
+                currentEngine: .appleSpeech,
+                currentAppleSpeechLanguage: .german,
+                isAppleSpeechAssetInstalled: { _ in false }
+            ),
+            .inactive
+        )
+    }
+
+    func testAppleSpeechMappingWithAssetInstalledPreservesPriorBehavior() {
+        XCTAssertEqual(
+            resolve(
+                mapping: mapping(engine: .appleSpeech, model: nil),
+                currentEngine: .parakeet,
+                isAppleSpeechAssetInstalled: { _ in true }
+            ),
+            .fullApply
+        )
     }
 }

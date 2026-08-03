@@ -315,8 +315,15 @@ final class AppState {
     }
 
     func applyInputSourceProfile(for inputSourceID: String, showLoadingOverlay: Bool = false) async {
-        guard status == .idle else { return }
+        // Looked up (and, for Apple Speech, awaited) before the idle guard so
+        // no suspension point lands between the guard and the settings
+        // writes below — an in-flight recording-start guard check must never
+        // race a suspended apply.
         let mapping = settings.mapping(forInputSourceID: inputSourceID)
+        let installedAppleSpeechLanguages = mapping?.engine == .appleSpeech
+            ? await AppleSpeechEngine.installedLanguages()
+            : []
+        guard status == .idle else { return }
         let resolution = InputSourceProfileResolver.resolve(
             mapping: mapping,
             enabled: settings.inputSourceAutoSwitchEnabled,
@@ -325,7 +332,8 @@ final class AppState {
             currentFluidAudioLanguage: settings.selectedLanguage,
             currentAppleSpeechLanguage: settings.appleSpeechLanguage,
             appleSpeechSupported: AppleSpeechEngine.isSupported,
-            isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) }
+            isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) },
+            isAppleSpeechAssetInstalled: { installedAppleSpeechLanguages.contains($0) }
         )
 
         var targetEngine = "n/a"

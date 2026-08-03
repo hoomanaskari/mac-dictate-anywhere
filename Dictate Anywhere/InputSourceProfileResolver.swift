@@ -30,13 +30,15 @@ enum InputSourceProfileResolver {
         currentFluidAudioLanguage: SupportedLanguage,
         currentAppleSpeechLanguage: SupportedLanguage,
         appleSpeechSupported: Bool,
-        isModelDownloaded: (ParakeetModelChoice) -> Bool
+        isModelDownloaded: (ParakeetModelChoice) -> Bool,
+        isAppleSpeechAssetInstalled: (SupportedLanguage) -> Bool
     ) -> InputSourceProfileResolution {
         guard enabled, let mapping else { return .none }
 
         switch mapping.engine {
         case .appleSpeech:
             guard appleSpeechSupported else { return .inactive }
+            guard isAppleSpeechAssetInstalled(mapping.language) else { return .inactive }
             guard currentEngine == .appleSpeech else { return .fullApply }
             return mapping.language == currentAppleSpeechLanguage
                 ? .noChange
