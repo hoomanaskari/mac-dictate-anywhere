@@ -13,6 +13,7 @@ final class SettingsLogicTests: XCTestCase {
     private var savedEngineChoice: TranscriptionEngineChoice = .parakeet
     private var savedParakeetModelChoice: ParakeetModelChoice = .multilingual
     private var savedSelectedLanguage: SupportedLanguage = .english
+    private var savedPendingVocabularyModeRestore = false
 
     override func setUp() {
         super.setUp()
@@ -25,6 +26,7 @@ final class SettingsLogicTests: XCTestCase {
         savedEngineChoice = settings.engineChoice
         savedParakeetModelChoice = settings.parakeetModelChoice
         savedSelectedLanguage = settings.selectedLanguage
+        savedPendingVocabularyModeRestore = settings.pendingVocabularyModeRestore
     }
 
     override func tearDown() {
@@ -33,6 +35,7 @@ final class SettingsLogicTests: XCTestCase {
         settings.fillerWordsToRemove = savedFillerWords
         settings.transcriptHistory = savedHistory
         settings.hotkeyBindings = savedBindings
+        settings.pendingVocabularyModeRestore = savedPendingVocabularyModeRestore
         // Restore engine/model choice before post-processing mode: both
         // carry didSet coercions that can rewrite `transcriptPostProcessingMode`
         // (and `selectedLanguage`), so mode must be restored last to avoid
@@ -216,5 +219,111 @@ final class SettingsLogicTests: XCTestCase {
         // model selected must coerce the mode back to `.none`.
         settings.engineChoice = .parakeet
         XCTAssertEqual(settings.transcriptPostProcessingMode, .none)
+    }
+
+    // MARK: - Pending vocabulary mode restore (auto-switch)
+
+    func testNoteAutoSwitchModelChangeSetsFlagOnlyWhenModeWasStripped() {
+        let settings = Settings.shared
+
+        // Simulate the coercion having fired: mode was `.fluidAudioVocabulary`
+        // before the auto-switch write, and is no longer that after.
+        settings.pendingVocabularyModeRestore = false
+        settings.transcriptPostProcessingMode = .none
+        settings.noteAutoSwitchModelChange(hadVocabularyMode: true)
+        XCTAssertTrue(settings.pendingVocabularyModeRestore)
+    }
+
+    func testNoteAutoSwitchModelChangeNoOpsWhenHadVocabularyModeIsFalse() {
+        let settings = Settings.shared
+
+        settings.pendingVocabularyModeRestore = false
+        settings.transcriptPostProcessingMode = .none
+        settings.noteAutoSwitchModelChange(hadVocabularyMode: false)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
+    }
+
+    func testNoteAutoSwitchModelChangeNoOpsWhenModeStillFluidAudioVocabulary() {
+        let settings = Settings.shared
+
+        // Coercion didn't fire (e.g. destination was still vocab-capable).
+        settings.pendingVocabularyModeRestore = false
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        settings.noteAutoSwitchModelChange(hadVocabularyMode: true)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
+    }
+
+    func testRestoreVocabularyModeRestoresAndClearsWhenModelCapable() {
+        let settings = Settings.shared
+
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        XCTAssertTrue(settings.parakeetModelChoice.supportsFluidAudioVocabulary)
+        settings.transcriptPostProcessingMode = .none
+        settings.pendingVocabularyModeRestore = true
+
+        settings.restoreVocabularyModeAfterAutoSwitchIfPending()
+
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .fluidAudioVocabulary)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
+    }
+
+    func testRestoreVocabularyModeKeepsFlagPendingWhenModelNotCapable() {
+        let settings = Settings.shared
+
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .senseVoice
+        XCTAssertFalse(settings.parakeetModelChoice.supportsFluidAudioVocabulary)
+        // Coerced to .none as a side effect of the assignment above; confirm
+        // the starting point explicitly.
+        settings.transcriptPostProcessingMode = .none
+        settings.pendingVocabularyModeRestore = true
+
+        settings.restoreVocabularyModeAfterAutoSwitchIfPending()
+
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .none)
+        XCTAssertTrue(settings.pendingVocabularyModeRestore)
+    }
+
+    func testRestoreVocabularyModeClearsWithoutChangingModeWhenUserPickedAnotherMode() {
+        let settings = Settings.shared
+
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.transcriptPostProcessingMode = .ollama
+        settings.pendingVocabularyModeRestore = true
+
+        settings.restoreVocabularyModeAfterAutoSwitchIfPending()
+
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .ollama)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
+    }
+
+    func testRestoreVocabularyModeClearsWhenModeAlreadyFluidAudioVocabulary() {
+        let settings = Settings.shared
+
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        settings.pendingVocabularyModeRestore = true
+
+        settings.restoreVocabularyModeAfterAutoSwitchIfPending()
+
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .fluidAudioVocabulary)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
+    }
+
+    func testRestoreVocabularyModeNoOpWhenFlagNotPending() {
+        let settings = Settings.shared
+
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.transcriptPostProcessingMode = .none
+        settings.pendingVocabularyModeRestore = false
+
+        settings.restoreVocabularyModeAfterAutoSwitchIfPending()
+
+        XCTAssertEqual(settings.transcriptPostProcessingMode, .none)
+        XCTAssertFalse(settings.pendingVocabularyModeRestore)
     }
 }

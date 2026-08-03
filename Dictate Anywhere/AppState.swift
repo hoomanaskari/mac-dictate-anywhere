@@ -339,7 +339,14 @@ final class AppState {
         )
 
         switch resolution {
-        case .none, .noChange, .inactive:
+        case .none, .inactive:
+            return
+
+        case .noChange:
+            // A source mapped to the already-active vocab-capable model must
+            // still trigger the restore (e.g. a prior switch away stripped
+            // `.fluidAudioVocabulary` and this source maps back to it).
+            settings.restoreVocabularyModeAfterAutoSwitchIfPending()
             return
 
         case .languageOnly(let language):
@@ -353,6 +360,7 @@ final class AppState {
                 await handleAppleSpeechLanguageChange(language)
                 if showLoadingOverlay { overlay.hide(afterDelay: 0) }
             }
+            settings.restoreVocabularyModeAfterAutoSwitchIfPending()
 
         case .fullApply:
             guard let mapping else { return }
@@ -363,11 +371,14 @@ final class AppState {
             switch mapping.engine {
             case .parakeet:
                 guard let model = mapping.parakeetModel else { break }
+                let hadVocabularyMode = settings.transcriptPostProcessingMode == .fluidAudioVocabulary
                 // Model before language: the model didSet coerces unsupported
                 // languages back to English.
                 settings.parakeetModelChoice = model
                 settings.selectedLanguage = mapping.language
                 await handleParakeetModelSelectionChange(userInitiated: true)
+                settings.noteAutoSwitchModelChange(hadVocabularyMode: hadVocabularyMode)
+                settings.restoreVocabularyModeAfterAutoSwitchIfPending()
             case .appleSpeech:
                 await handleEngineSelectionChange(.appleSpeech)
                 await handleAppleSpeechLanguageChange(mapping.language)

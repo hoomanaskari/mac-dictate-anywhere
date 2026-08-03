@@ -673,6 +673,7 @@ final class Settings {
         static let openAICompatiblePostProcessingPrompt = "openAICompatiblePostProcessingPrompt"
         static let inputSourceMappings = "inputSourceMappings"
         static let inputSourceAutoSwitchEnabled = "inputSourceAutoSwitchEnabled"
+        static let pendingVocabularyModeRestore = "pendingVocabularyModeRestore"
     }
 
     // MARK: - Hotkey Settings
@@ -765,6 +766,17 @@ final class Settings {
     var inputSourceAutoSwitchEnabled: Bool {
         didSet {
             UserDefaults.standard.set(inputSourceAutoSwitchEnabled, forKey: Keys.inputSourceAutoSwitchEnabled)
+        }
+    }
+
+    /// Set when an auto-switch coerced `.fluidAudioVocabulary` away because
+    /// the destination model didn't support it. Consulted the next time an
+    /// auto-switch lands so the mode can be restored once a vocab-capable
+    /// model is active again, without clobbering a mode the user picked
+    /// manually in the meantime.
+    var pendingVocabularyModeRestore: Bool {
+        didSet {
+            UserDefaults.standard.set(pendingVocabularyModeRestore, forKey: Keys.pendingVocabularyModeRestore)
         }
     }
 
@@ -1111,6 +1123,7 @@ final class Settings {
             inputSourceMappings = []
         }
         inputSourceAutoSwitchEnabled = defaults.object(forKey: Keys.inputSourceAutoSwitchEnabled) as? Bool ?? false
+        pendingVocabularyModeRestore = defaults.object(forKey: Keys.pendingVocabularyModeRestore) as? Bool ?? false
 
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
@@ -1352,6 +1365,32 @@ final class Settings {
 
     func mapping(forInputSourceID id: String) -> InputSourceMapping? {
         inputSourceMappings.first { $0.inputSourceID == id }
+    }
+
+    /// Call right after an auto-switch may have driven the `parakeetModelChoice`
+    /// or `engineChoice` didSet coercion that strips `.fluidAudioVocabulary`.
+    /// `hadVocabularyMode` is the mode captured *before* that write. Sets the
+    /// pending-restore flag only when the coercion actually fired.
+    func noteAutoSwitchModelChange(hadVocabularyMode: Bool) {
+        guard hadVocabularyMode, transcriptPostProcessingMode != .fluidAudioVocabulary else { return }
+        pendingVocabularyModeRestore = true
+    }
+
+    /// Call after every auto-switch resolution (including no-ops) so a
+    /// pending restore lands as soon as a vocab-capable Parakeet model is
+    /// active again, without overriding a mode the user picked manually in
+    /// the meantime.
+    func restoreVocabularyModeAfterAutoSwitchIfPending() {
+        guard pendingVocabularyModeRestore else { return }
+
+        if transcriptPostProcessingMode == .fluidAudioVocabulary {
+            pendingVocabularyModeRestore = false
+        } else if transcriptPostProcessingMode != .none {
+            pendingVocabularyModeRestore = false
+        } else if engineChoice == .parakeet, parakeetModelChoice.supportsFluidAudioVocabulary {
+            transcriptPostProcessingMode = .fluidAudioVocabulary
+            pendingVocabularyModeRestore = false
+        }
     }
 
     func addTranscriptHistoryEntry(_ text: String) {
