@@ -89,4 +89,118 @@ final class InputSourceMappingTests: XCTestCase {
         let data = try XCTUnwrap(UserDefaults.standard.data(forKey: "inputSourceMappings"))
         XCTAssertEqual(Settings.sanitizedMappings(from: data), [mapping])
     }
+
+    // MARK: - Mutation helpers
+
+    func testAddMappingDerivesDefaultsFromCurrentSettings() {
+        let settings = Settings.shared
+        settings.inputSourceMappings = []
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .englishOnly
+
+        let mapping = settings.addInputSourceMapping(
+            inputSourceID: "com.apple.inputmethod.SCIM.ITABC",
+            displayName: "Pinyin – Simplified",
+            derivedLanguage: .chinese,
+            isModelDownloaded: { $0 == .senseVoice }
+        )
+
+        // englishOnly can't do Chinese; senseVoice is the downloaded model that can.
+        XCTAssertEqual(mapping?.engine, .parakeet)
+        XCTAssertEqual(mapping?.parakeetModel, .senseVoice)
+        XCTAssertEqual(mapping?.language, .chinese)
+        XCTAssertEqual(settings.inputSourceMappings.count, 1)
+    }
+
+    func testAddMappingKeepsCurrentModelWhenItSupportsDerivedLanguage() {
+        let settings = Settings.shared
+        settings.inputSourceMappings = []
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .nemotronMultilingual
+
+        let mapping = settings.addInputSourceMapping(
+            inputSourceID: "com.apple.keylayout.German",
+            displayName: "German",
+            derivedLanguage: .german,
+            isModelDownloaded: { _ in false }
+        )
+
+        XCTAssertEqual(mapping?.parakeetModel, .nemotronMultilingual)
+        XCTAssertEqual(mapping?.language, .german)
+    }
+
+    func testAddMappingFallsBackToCurrentModelAndCoercesLanguage() {
+        let settings = Settings.shared
+        settings.inputSourceMappings = []
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .englishOnly
+
+        // Nothing downloaded that supports Chinese -> keep current model, coerce language.
+        let mapping = settings.addInputSourceMapping(
+            inputSourceID: "com.apple.inputmethod.SCIM.ITABC",
+            displayName: "Pinyin – Simplified",
+            derivedLanguage: .chinese,
+            isModelDownloaded: { _ in false }
+        )
+
+        XCTAssertEqual(mapping?.parakeetModel, .englishOnly)
+        XCTAssertEqual(mapping?.language, .english)
+    }
+
+    func testAddMappingRejectsDuplicateInputSource() {
+        let settings = Settings.shared
+        settings.inputSourceMappings = [makeMapping(source: "dup")]
+
+        let second = settings.addInputSourceMapping(
+            inputSourceID: "dup", displayName: "Dup",
+            derivedLanguage: nil, isModelDownloaded: { _ in true }
+        )
+
+        XCTAssertNil(second)
+        XCTAssertEqual(settings.inputSourceMappings.count, 1)
+    }
+
+    func testUpdateCoercesLanguageUnsupportedByModel() {
+        let settings = Settings.shared
+        let mapping = makeMapping(model: .nemotronMultilingual, language: .chinese)
+        settings.inputSourceMappings = [mapping]
+
+        var edited = mapping
+        edited.parakeetModel = .englishOnly  // englishOnly can't do Chinese
+        settings.updateInputSourceMapping(edited)
+
+        XCTAssertEqual(settings.inputSourceMappings[0].parakeetModel, .englishOnly)
+        XCTAssertEqual(settings.inputSourceMappings[0].language, .english)
+    }
+
+    func testUpdateNormalizesModelForEngine() {
+        let settings = Settings.shared
+        settings.parakeetModelChoice = .multilingual
+        let mapping = makeMapping()
+        settings.inputSourceMappings = [mapping]
+
+        // Switching to Apple Speech clears the model…
+        var edited = mapping
+        edited.engine = .appleSpeech
+        settings.updateInputSourceMapping(edited)
+        XCTAssertNil(settings.inputSourceMappings[0].parakeetModel)
+
+        // …and switching back fills it from the current global choice.
+        edited = settings.inputSourceMappings[0]
+        edited.engine = .parakeet
+        settings.updateInputSourceMapping(edited)
+        XCTAssertEqual(settings.inputSourceMappings[0].parakeetModel, .multilingual)
+    }
+
+    func testRemoveAndLookup() {
+        let settings = Settings.shared
+        let mapping = makeMapping(source: "findme")
+        settings.inputSourceMappings = [mapping]
+
+        XCTAssertEqual(settings.mapping(forInputSourceID: "findme"), mapping)
+        XCTAssertNil(settings.mapping(forInputSourceID: "absent"))
+
+        settings.removeInputSourceMapping(id: mapping.id)
+        XCTAssertTrue(settings.inputSourceMappings.isEmpty)
+    }
 }

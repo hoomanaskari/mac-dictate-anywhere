@@ -1274,6 +1274,79 @@ final class Settings {
         hotkeyBindings.removeAll { $0.id == id }
     }
 
+    // MARK: - Input Source Mapping Helpers
+
+    /// Adds a mapping for a not-yet-mapped input source, deriving sensible
+    /// defaults. `isModelDownloaded` is injected because on-disk state lives
+    /// in ParakeetEngine; auto-picking a model must never imply a download.
+    @discardableResult
+    func addInputSourceMapping(
+        inputSourceID: String,
+        displayName: String,
+        derivedLanguage: SupportedLanguage?,
+        isModelDownloaded: (ParakeetModelChoice) -> Bool
+    ) -> InputSourceMapping? {
+        guard !inputSourceMappings.contains(where: { $0.inputSourceID == inputSourceID }) else { return nil }
+        let engine = engineChoice
+        var language = derivedLanguage ?? (engine == .appleSpeech ? appleSpeechLanguage : selectedLanguage)
+        var model: ParakeetModelChoice?
+        if engine == .parakeet {
+            if let derived = derivedLanguage,
+               !parakeetModelChoice.supportsLanguage(derived),
+               let downloaded = ParakeetModelChoice.allCases.first(where: {
+                   $0.supportsLanguage(derived) && isModelDownloaded($0)
+               }) {
+                model = downloaded
+            } else {
+                model = parakeetModelChoice
+            }
+            if let chosen = model, !chosen.supportsLanguage(language) {
+                language = .english
+            }
+        }
+        let mapping = InputSourceMapping(
+            id: UUID(),
+            inputSourceID: inputSourceID,
+            inputSourceDisplayName: displayName,
+            engine: engine,
+            parakeetModel: model,
+            language: language
+        )
+        inputSourceMappings.append(mapping)
+        return mapping
+    }
+
+    /// Replaces a mapping by ID, normalizing model/language so every stored
+    /// mapping satisfies the capability rules. Apple Speech language
+    /// availability is validated at apply time (the authority is
+    /// AppleSpeechEngine, which Settings cannot query synchronously).
+    func updateInputSourceMapping(_ mapping: InputSourceMapping) {
+        guard let index = inputSourceMappings.firstIndex(where: { $0.id == mapping.id }) else { return }
+        guard !inputSourceMappings.contains(where: {
+            $0.id != mapping.id && $0.inputSourceID == mapping.inputSourceID
+        }) else { return }
+        var updated = mapping
+        switch updated.engine {
+        case .appleSpeech:
+            updated.parakeetModel = nil
+        case .parakeet:
+            let model = updated.parakeetModel ?? parakeetModelChoice
+            updated.parakeetModel = model
+            if !model.supportsLanguage(updated.language) {
+                updated.language = .english
+            }
+        }
+        inputSourceMappings[index] = updated
+    }
+
+    func removeInputSourceMapping(id: UUID) {
+        inputSourceMappings.removeAll { $0.id == id }
+    }
+
+    func mapping(forInputSourceID id: String) -> InputSourceMapping? {
+        inputSourceMappings.first { $0.inputSourceID == id }
+    }
+
     func addTranscriptHistoryEntry(_ text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
