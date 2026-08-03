@@ -78,7 +78,7 @@ enum AppAppearanceMode: String, CaseIterable {
 
 // MARK: - Transcription Engine Choice
 
-enum TranscriptionEngineChoice: String, CaseIterable {
+enum TranscriptionEngineChoice: String, CaseIterable, Codable {
     case parakeet = "parakeet"
     case appleSpeech = "appleSpeech"
 
@@ -99,7 +99,7 @@ enum TranscriptionEngineChoice: String, CaseIterable {
     }
 }
 
-enum ParakeetModelChoice: String, CaseIterable {
+enum ParakeetModelChoice: String, CaseIterable, Codable {
     case multilingual = "multilingual"
     case englishOnly = "englishOnly"
     case compactEnglish = "compactEnglish"
@@ -528,6 +528,31 @@ struct HotkeyBinding: Codable, Identifiable, Equatable {
     )
 }
 
+/// One user-configured input-source → transcription-profile mapping.
+/// Language/model capability is never stored here — it is always resolved
+/// through `ParakeetModelChoice` / Apple Speech at read time.
+struct InputSourceMapping: Codable, Identifiable, Equatable {
+    var id: UUID
+    var inputSourceID: String
+    /// Cached for display when the source is no longer enabled in macOS.
+    var inputSourceDisplayName: String
+    var engine: TranscriptionEngineChoice
+    /// Present iff `engine == .parakeet`.
+    var parakeetModel: ParakeetModelChoice?
+    var language: SupportedLanguage
+}
+
+/// Decode-tolerant shape: enum raw values may vanish across app versions,
+/// and a strict `[InputSourceMapping]` decode would throw away every entry.
+private struct RawInputSourceMapping: Decodable {
+    let id: UUID
+    let inputSourceID: String
+    let inputSourceDisplayName: String
+    let engine: String
+    let parakeetModel: String?
+    let language: String
+}
+
 struct TranscriptHistoryEntry: Identifiable, Codable, Equatable {
     let id: UUID
     let text: String
@@ -646,6 +671,8 @@ final class Settings {
         static let openAICompatibleBaseURL = "openAICompatibleBaseURL"
         static let openAICompatibleModel = "openAICompatibleModel"
         static let openAICompatiblePostProcessingPrompt = "openAICompatiblePostProcessingPrompt"
+        static let inputSourceMappings = "inputSourceMappings"
+        static let inputSourceAutoSwitchEnabled = "inputSourceAutoSwitchEnabled"
     }
 
     // MARK: - Hotkey Settings
@@ -723,6 +750,45 @@ final class Settings {
     var appleSpeechLanguage: SupportedLanguage {
         didSet {
             UserDefaults.standard.set(appleSpeechLanguage.rawValue, forKey: Keys.appleSpeechLanguage)
+        }
+    }
+
+    // MARK: - Input Source Auto-Switch
+
+    var inputSourceMappings: [InputSourceMapping] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(inputSourceMappings) else { return }
+            UserDefaults.standard.set(data, forKey: Keys.inputSourceMappings)
+        }
+    }
+
+    var inputSourceAutoSwitchEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(inputSourceAutoSwitchEnabled, forKey: Keys.inputSourceAutoSwitchEnabled)
+        }
+    }
+
+    /// Decodes mappings, dropping entries whose enum raw values no longer
+    /// exist and parakeet entries missing a model.
+    nonisolated static func sanitizedMappings(from data: Data) -> [InputSourceMapping] {
+        guard let raw = try? JSONDecoder().decode([RawInputSourceMapping].self, from: data) else { return [] }
+        return raw.compactMap { entry in
+            guard let engine = TranscriptionEngineChoice(rawValue: entry.engine),
+                  let language = SupportedLanguage(rawValue: entry.language) else { return nil }
+            var model: ParakeetModelChoice?
+            if let rawModel = entry.parakeetModel {
+                guard let parsed = ParakeetModelChoice(rawValue: rawModel) else { return nil }
+                model = parsed
+            }
+            if engine == .parakeet, model == nil { return nil }
+            return InputSourceMapping(
+                id: entry.id,
+                inputSourceID: entry.inputSourceID,
+                inputSourceDisplayName: entry.inputSourceDisplayName,
+                engine: engine,
+                parakeetModel: model,
+                language: language
+            )
         }
     }
 
@@ -1030,6 +1096,14 @@ final class Settings {
         selectedLanguage = SupportedLanguage(rawValue: langCode) ?? .english
         let appleLangCode = defaults.string(forKey: Keys.appleSpeechLanguage) ?? "en"
         appleSpeechLanguage = SupportedLanguage(rawValue: appleLangCode) ?? .english
+
+        // Input source auto-switching
+        if let mappingData = defaults.data(forKey: Keys.inputSourceMappings) {
+            inputSourceMappings = Self.sanitizedMappings(from: mappingData)
+        } else {
+            inputSourceMappings = []
+        }
+        inputSourceAutoSwitchEnabled = defaults.object(forKey: Keys.inputSourceAutoSwitchEnabled) as? Bool ?? false
 
         // Filler words
         isFillerWordRemovalEnabled = defaults.object(forKey: Keys.isFillerWordRemovalEnabled) as? Bool ?? false
