@@ -77,6 +77,8 @@ struct SettingsView: View {
                 }
             }
 
+            InputSourceSettingsSection()
+
             DSSection(overline: "Audio") {
                 DSInfoRow(label: "Microphone") {
                     DSDropdown(
