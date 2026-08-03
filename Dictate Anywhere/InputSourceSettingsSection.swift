@@ -41,7 +41,7 @@ struct InputSourceSettingsSection: View {
             .onChange(of: settings.inputSourceAutoSwitchEnabled) { _, enabled in
                 guard enabled,
                       let inputSourceID = appState.inputSourceMonitor.currentInputSourceID() else { return }
-                Task { await appState.applyInputSourceProfile(for: inputSourceID) }
+                appState.enqueueInputSourceProfileApply(for: inputSourceID)
             }
 
             if settings.inputSourceAutoSwitchEnabled {

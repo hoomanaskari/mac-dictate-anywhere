@@ -70,6 +70,16 @@ final class InputSourceMappingTests: XCTestCase {
         XCTAssertEqual(survivors.map(\.inputSourceID), ["a"])
     }
 
+    func testSanitizedMappingsCoercesLanguageUnsupportedByStoredModel() throws {
+        let json = """
+        [{"id":"\(UUID().uuidString)","inputSourceID":"a","inputSourceDisplayName":"A",
+          "engine":"parakeet","parakeetModel":"englishOnly","language":"zh"}]
+        """
+        let survivors = Settings.sanitizedMappings(from: Data(json.utf8))
+        XCTAssertEqual(survivors.map(\.inputSourceID), ["a"])
+        XCTAssertEqual(survivors.first?.language, .english)
+    }
+
     func testSanitizedMappingsDropsParakeetEntryWithoutModel() throws {
         let json = """
         [{"id":"\(UUID().uuidString)","inputSourceID":"a","inputSourceDisplayName":"A",

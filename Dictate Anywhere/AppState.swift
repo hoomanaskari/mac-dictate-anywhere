@@ -183,7 +183,7 @@ final class AppState {
         inputSourceMonitor.startMonitoring()
         if settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
-            await applyInputSourceProfile(for: inputSourceID)
+            await enqueueInputSourceProfileApply(for: inputSourceID).value
         }
     }
 
@@ -295,8 +295,13 @@ final class AppState {
 
     // MARK: - Input Source Auto-Switch
 
+    /// Serializes calls to `applyInputSourceProfile` so overlapping input
+    /// source changes apply in order. Internal (not private) so callers
+    /// outside AppState — e.g. the startup sequence and settings UI — also
+    /// go through the queue instead of calling `applyInputSourceProfile`
+    /// directly.
     @discardableResult
-    private func enqueueInputSourceProfileApply(
+    func enqueueInputSourceProfileApply(
         for inputSourceID: String,
         showLoadingOverlay: Bool = false
     ) -> Task<Void, Never> {
@@ -323,12 +328,23 @@ final class AppState {
             isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) }
         )
 
+        var targetEngine = "n/a"
+        var targetModel = "n/a"
+        if case .fullApply = resolution, let mapping {
+            targetEngine = mapping.engine.rawValue
+            targetModel = mapping.parakeetModel?.rawValue ?? "n/a"
+        }
+        logger.info(
+            "applyInputSourceProfile: inputSourceID=\(inputSourceID, privacy: .public), resolution=\(String(describing: resolution), privacy: .public), targetEngine=\(targetEngine, privacy: .public), targetModel=\(targetModel, privacy: .public)"
+        )
+
         switch resolution {
         case .none, .noChange, .inactive:
             return
 
         case .languageOnly(let language):
-            switch settings.engineChoice {
+            guard let mapping else { return }
+            switch mapping.engine {
             case .parakeet:
                 // Read at recording start; no engine reload needed.
                 settings.selectedLanguage = language

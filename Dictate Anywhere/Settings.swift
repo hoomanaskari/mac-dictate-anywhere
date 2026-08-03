@@ -769,18 +769,25 @@ final class Settings {
     }
 
     /// Decodes mappings, dropping entries whose enum raw values no longer
-    /// exist and parakeet entries missing a model.
+    /// exist and parakeet entries missing a model. Also re-coerces the
+    /// language against the model's capability, since a model's supported
+    /// language set can change across app versions after a mapping was
+    /// stored (same rule as the `parakeetModelChoice` didSet and the
+    /// mutation helpers below).
     nonisolated static func sanitizedMappings(from data: Data) -> [InputSourceMapping] {
         guard let raw = try? JSONDecoder().decode([RawInputSourceMapping].self, from: data) else { return [] }
         return raw.compactMap { entry in
             guard let engine = TranscriptionEngineChoice(rawValue: entry.engine),
-                  let language = SupportedLanguage(rawValue: entry.language) else { return nil }
+                  var language = SupportedLanguage(rawValue: entry.language) else { return nil }
             var model: ParakeetModelChoice?
             if let rawModel = entry.parakeetModel {
                 guard let parsed = ParakeetModelChoice(rawValue: rawModel) else { return nil }
                 model = parsed
             }
             if engine == .parakeet, model == nil { return nil }
+            if engine == .parakeet, model?.supportsLanguage(language) == false {
+                language = .english
+            }
             return InputSourceMapping(
                 id: entry.id,
                 inputSourceID: entry.inputSourceID,
