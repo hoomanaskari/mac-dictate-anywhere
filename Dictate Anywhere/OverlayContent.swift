@@ -26,6 +26,7 @@ enum OverlayState: Equatable {
     case processing
     case success
     case copiedOnly
+    case preparingModel(name: String)
 }
 
 /// Observable model bridging OverlayWindow → SwiftUI
@@ -72,6 +73,7 @@ struct OverlayContent: View {
         case .processing: "processing"
         case .success: "success"
         case .copiedOnly: "copiedOnly"
+        case .preparingModel: "preparingModel"
         }
     }
 
@@ -100,6 +102,8 @@ struct OverlayContent: View {
             return statusCircleDiameter
         case .copiedOnly:
             return OverlayMetrics.size(130)
+        case .preparingModel:
+            return OverlayMetrics.size(240)
         }
     }
 
@@ -110,6 +114,8 @@ struct OverlayContent: View {
         case .processing, .success:
             return statusCircleDiameter
         case .copiedOnly:
+            return OverlayMetrics.size(44)
+        case .preparingModel:
             return OverlayMetrics.size(44)
         }
     }
@@ -167,6 +173,16 @@ struct OverlayContent: View {
                     .font(.system(size: OverlayMetrics.type(12), weight: .medium))
                     .foregroundStyle(overlayTextColor.opacity(0.9))
             }
+
+        case .preparingModel(let name):
+            HStack(spacing: OverlayMetrics.size(10)) {
+                ProcessingStatusView(tint: overlayTextColor)
+                Text("Loading \(name)…")
+                    .font(.system(size: OverlayMetrics.type(12), weight: .medium))
+                    .foregroundStyle(overlayTextColor.opacity(0.9))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, OverlayMetrics.size(14))
         }
     }
 
