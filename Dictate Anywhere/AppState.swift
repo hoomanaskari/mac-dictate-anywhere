@@ -388,6 +388,16 @@ final class AppState {
                 settings.noteAutoSwitchModelChange(hadVocabularyMode: hadVocabularyMode)
                 settings.restoreVocabularyModeAfterAutoSwitchIfPending()
             case .appleSpeech:
+                // Pin the language before the engine switch: handleEngineSelectionChange
+                // calls prepareActiveEngine(), which prepares Apple Speech using
+                // whatever Settings.shared.appleSpeechLanguage currently holds. If
+                // that's stale (e.g. left over from a cancelled download), the first
+                // prepare would silently download assets for the wrong, uninstalled
+                // language even though the resolver already gated on the mapped
+                // language's assets being installed. Writing it first — synchronously,
+                // before any await in this arm — makes the first prepare already
+                // target the gated language.
+                settings.appleSpeechLanguage = mapping.language
                 await handleEngineSelectionChange(.appleSpeech)
                 await handleAppleSpeechLanguageChange(mapping.language)
             }
