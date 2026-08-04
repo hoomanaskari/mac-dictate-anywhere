@@ -38,7 +38,9 @@ final class MandarinFixtureTests: XCTestCase {
             ProcessInfo.processInfo.environment["RUN_MANDARIN_ASR_TESTS"] == "1",
             "Set RUN_MANDARIN_ASR_TESTS=1 to run Mandarin ASR fixture tests (downloads ~225 MB on first run)")
         if Self.manager == nil {
-            let models = try await SenseVoiceModels.downloadAndLoad(precision: .int8)
+            // Match shipping: fp32 encoder on non-ANE hardware, int8 otherwise.
+            let models = try await SenseVoiceModels.downloadAndLoad(
+                precision: ParakeetEngine.senseVoiceEncoderPrecision)
             Self.manager = SenseVoiceManager(models: models, textNorm: 14)
         }
     }
@@ -93,23 +95,44 @@ final class MandarinFixtureTests: XCTestCase {
         print("code-switch transcript: \(text)")
     }
 
+    /// Reproduces the shipping chunker rather than an idealized one.
+    ///
+    /// `ParakeetEngine.commitBufferedChunksIfNeeded` commits fixed-size chunks
+    /// and then drops exactly that many samples, retaining **no** overlap, and
+    /// the finalize path transcribes whatever tail is left over. Consecutive
+    /// chunk transcripts therefore meet at a hard seam with no repeated audio
+    /// for `mergeTranscripts` to align on — so this splits the fixture on the
+    /// same boundary, using the production constant so the two cannot drift.
     func testLongAudioSplitMergeMatchesFullTranscription() async throws {
         let all = try samples(for: "zh-long")
-        try XCTSkipUnless(all.count > 22 * 16_000, "zh-long fixture shorter than 22 s — regenerate")
-        let full = try await XCTUnwrap(Self.manager).transcribe(audio: all)
+        let chunk = ParakeetEngine.chunkTranscriptionSampleCount
+        let minimumTailSamples = 8_000  // finalize skips a shorter tail
+        try XCTSkipUnless(
+            all.count > chunk + minimumTailSamples,
+            "zh-long fixture must exceed one \(ParakeetEngine.chunkTranscriptionSeconds) s chunk plus a tail — regenerate")
+        let manager = try XCTUnwrap(Self.manager)
+        let full = try await manager.transcribe(audio: all)
 
-        // Simulate the 20 s chunk commit with a 2 s overlap, then merge.
-        let cut = 20 * 16_000
-        let first = try await XCTUnwrap(Self.manager).transcribe(audio: Array(all[0..<cut]))
-        let second = try await XCTUnwrap(Self.manager).transcribe(audio: Array(all[(cut - 2 * 16_000)...]))
-        let merged = ParakeetEngine.mergeTranscripts(base: first, addition: second)
+        var merged = ""
+        var seamOffsets: [Int] = []
+        for start in stride(from: 0, to: all.count, by: chunk) {
+            let slice = Array(all[start..<min(start + chunk, all.count)])
+            // Production drops a sub-8000-sample tail instead of transcribing it.
+            if slice.count <= minimumTailSamples { break }
+            let text = try await manager.transcribe(audio: slice)
+            if !merged.isEmpty { seamOffsets.append(merged.count) }
+            merged = ParakeetEngine.mergeTranscripts(base: merged, addition: text)
+        }
 
+        XCTAssertFalse(seamOffsets.isEmpty, "fixture produced no chunk seam to exercise")
         XCTAssertLessThanOrEqual(characterErrorRate(reference: full, hypothesis: merged), 0.15,
             "merged: \(merged)\nfull: \(full)")
         // CER strips whitespace, so check space injection separately: pure-zh
         // audio must not gain spaces between Han characters at the merge seam.
         XCTAssertNil(merged.range(of: #"\p{Han}\s+\p{Han}"#, options: .regularExpression),
             "space injected between Han characters: \(merged)")
+        print("chunked transcript (seams at \(seamOffsets)): \(merged)")
+        print("full transcript: \(full)")
     }
 
     /// Optional real-voice fixture (TTS audio is artificially easy for ASR).

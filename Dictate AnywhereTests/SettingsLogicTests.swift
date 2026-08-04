@@ -97,7 +97,7 @@ final class SettingsLogicTests: XCTestCase {
     }
 
     func testDefaultFillerWords() {
-        XCTAssertEqual(Settings.defaultFillerWords, ["um", "uh", "erm", "er", "hmm", "嗯", "呃", "唔"])
+        XCTAssertEqual(Settings.defaultFillerWords, ["um", "uh", "erm", "er", "hmm", "嗯", "呃"])
     }
 
     // MARK: - Transcript history

@@ -219,7 +219,8 @@ enum ParakeetModelChoice: String, CaseIterable {
         case .nemotron560, .nemotron1120, .nemotron2240:
             return "~1 GB"
         case .senseVoice:
-            return "~225 MB"
+            // Non-ANE Macs download the fp32 encoder instead of int8.
+            return Hardware.hasAppleNeuralEngine ? "~225 MB" : "~900 MB"
         case .nemotronMultilingual:
             return "~650 MB"
         }
@@ -311,6 +312,61 @@ enum ParakeetModelChoice: String, CaseIterable {
         case .senseVoice, .nemotronMultilingual: return false
         default: return true
         }
+    }
+
+    /// Nemotron multilingual ships only an int8 ANE-targeted encoder and is
+    /// documented by FluidAudio as "Apple Silicon only", with no CPU build to
+    /// fall back to. Hide it on Intel rather than let a user pick a model that
+    /// can only fail after a ~650 MB download.
+    ///
+    /// SenseVoice is deliberately not listed here: its fp16/int8 encoders are
+    /// ANE-only, but FluidAudio also ships an fp32 encoder that runs on any
+    /// compute unit, which `ParakeetEngine.senseVoiceEncoderPrecision` selects
+    /// on non-ANE hardware.
+    nonisolated var requiresAppleNeuralEngine: Bool {
+        switch self {
+        case .nemotronMultilingual:
+            return true
+        case .multilingual, .englishOnly, .compactEnglish, .parakeetEou320,
+             .nemotron560, .nemotron1120, .nemotron2240, .senseVoice:
+            return false
+        }
+    }
+
+    // The `hasNeuralEngine` parameter exists so the Intel outcome is testable
+    // on Apple Silicon; production callers use the no-argument variants.
+
+    nonisolated func isAvailable(hasNeuralEngine: Bool) -> Bool {
+        !requiresAppleNeuralEngine || hasNeuralEngine
+    }
+
+    nonisolated var isAvailableOnThisMac: Bool {
+        isAvailable(hasNeuralEngine: Hardware.hasAppleNeuralEngine)
+    }
+
+    nonisolated static func availableCases(hasNeuralEngine: Bool) -> [ParakeetModelChoice] {
+        allCases.filter { $0.isAvailable(hasNeuralEngine: hasNeuralEngine) }
+    }
+
+    /// Models this Mac can actually run — the list the picker offers.
+    nonisolated static var availableCases: [ParakeetModelChoice] {
+        availableCases(hasNeuralEngine: Hardware.hasAppleNeuralEngine)
+    }
+
+    /// Fallback when a stored selection isn't runnable on this hardware.
+    nonisolated static func availableFallback(
+        for language: SupportedLanguage,
+        hasNeuralEngine: Bool
+    ) -> ParakeetModelChoice {
+        let runnable = availableCases(hasNeuralEngine: hasNeuralEngine)
+        if let match = runnable.first(where: { $0.supportsLanguage(language) }) {
+            return match
+        }
+        return runnable.first ?? .multilingual
+    }
+
+    nonisolated static func availableFallback(for language: SupportedLanguage) -> ParakeetModelChoice {
+        availableFallback(for: language, hasNeuralEngine: Hardware.hasAppleNeuralEngine)
     }
 }
 
@@ -681,7 +737,19 @@ final class Settings {
     /// Cached compiled regex for filler word removal (invalidated when words change)
     private var cachedFillerRegex: NSRegularExpression?
 
-    static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm", "嗯", "呃", "唔"]
+    /// 唔 is deliberately absent: it is a hesitation sound in Mandarin but the
+    /// standard negator in Cantonese (唔知 "don't know"), so removing it by
+    /// default can invert the meaning of a transcript.
+    static let defaultFillerWords = ["um", "uh", "erm", "er", "hmm", "嗯", "呃"]
+
+    /// Han fillers safe to delete from inside continuous text.
+    ///
+    /// Unsegmented Han has no word boundaries for `\b` to anchor to, so a CJK
+    /// filler pattern matches anywhere in the string. That is only safe for pure
+    /// interjections that never form part of a word — every other Han filler a
+    /// user adds is matched boundary-anchored instead, so it is removed only
+    /// when standing alone. Keep this list conservative.
+    static let bareMatchCJKFillers: Set<String> = ["嗯", "呃"]
 
     // MARK: - Transcript Post Processing
 
@@ -1049,11 +1117,20 @@ final class Settings {
         // Mandarin model coercion: reading `self` properties requires all stored
         // properties to be initialized first, so these run last even though they
         // logically belong with the language/post-processing decoding above.
-        if !persistedParakeetModelChoice.supportsLanguage(selectedLanguage) {
+        // A stored selection can outlive the hardware that could run it — a
+        // migration from an Apple Silicon Mac carries the preference across.
+        // Coerce in memory only, so the stored choice still applies if the same
+        // home directory later lands back on a Mac with a Neural Engine.
+        var effectiveParakeetModelChoice = persistedParakeetModelChoice
+        if !effectiveParakeetModelChoice.isAvailableOnThisMac {
+            effectiveParakeetModelChoice = ParakeetModelChoice.availableFallback(for: selectedLanguage)
+            parakeetModelChoice = effectiveParakeetModelChoice
+        }
+        if !effectiveParakeetModelChoice.supportsLanguage(selectedLanguage) {
             selectedLanguage = .english
         }
         if engineChoice == .parakeet,
-           !persistedParakeetModelChoice.supportsFluidAudioVocabulary,
+           !effectiveParakeetModelChoice.supportsFluidAudioVocabulary,
            transcriptPostProcessingMode == .fluidAudioVocabulary {
             transcriptPostProcessingMode = .none
         }
@@ -1173,10 +1250,18 @@ final class Settings {
                 let trimmed = word.trimmingCharacters(in: .whitespaces)
                 guard !trimmed.isEmpty else { return nil }
                 let escaped = NSRegularExpression.escapedPattern(for: trimmed)
-                // \b is meaningless inside unsegmented Han text; CJK fillers
-                // match bare, and a trailing + collapses stutters (嗯嗯).
+                // \b is meaningless inside unsegmented Han text, so Han fillers
+                // cannot anchor on it. A curated pure interjection matches bare,
+                // with a trailing + to collapse stutters (嗯嗯). Every other Han
+                // filler is boundary-anchored so it is only removed when
+                // standing alone — a word-forming character such as the
+                // Cantonese negator 唔 must never be cut out of running text.
                 if trimmed.unicodeScalars.contains(where: { CJKText.isCJK($0) }) {
-                    return "(?:\(escaped))+"
+                    let repeated = "(?:\(escaped))+"
+                    guard Self.bareMatchCJKFillers.contains(trimmed) else {
+                        return "(?<![^\\s\\p{P}])\(repeated)(?![^\\s\\p{P}])"
+                    }
+                    return repeated
                 }
                 return "\\b\(escaped)\\b"
             }

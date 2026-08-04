@@ -27,7 +27,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 
 - **Global Hotkey** - Press and hold Fn key (or custom shortcut) to dictate from anywhere
 - **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet, Nemotron, or SenseVoice models
-- **26 Languages** - English, German, French, Spanish and 21 more European languages, plus Mandarin Chinese (Simplified) via the SenseVoice and Nemotron multilingual models
+- **26 Languages** - English, German, French, Spanish and 21 more European languages, plus Mandarin Chinese (Simplified) via the SenseVoice and Nemotron multilingual models (Nemotron multilingual requires Apple Silicon; SenseVoice also runs on Intel)
 - **Hands-Free Mode** - Tap to start, tap again to stop
 - **Live Preview** - See your transcription in real-time with animated waveform
 - **Filler Word Removal** - Automatically removes "um", "uh", and other filler words

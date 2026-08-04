@@ -44,6 +44,40 @@ final class MergeTranscriptsTests: XCTestCase {
                        "我要去 Apple Park")
     }
 
+    // MARK: - Disjoint chunk seams (the shipping chunker's actual output)
+
+    // commitBufferedChunksIfNeeded drops exactly one chunk per commit and keeps
+    // no overlap, so consecutive chunk transcripts share no repeated audio. The
+    // seam must join with nothing added and nothing dropped.
+    func testDisjointCJKChunkSeamJoinsWithoutSpaceOrLoss() {
+        let first = "今天天气很好我们打算"
+        let second = "去公园散步然后回家"
+        XCTAssertEqual(ParakeetEngine.mergeTranscripts(base: first, addition: second), first + second)
+    }
+
+    // ASR's ITN commonly closes a truncated chunk with a fullwidth period even
+    // mid-utterance; the next chunk must not gain a space after it.
+    func testDisjointCJKChunkSeamAfterTruncationPunctuation() {
+        let merged = ParakeetEngine.mergeTranscripts(base: "我们打算去公园。", addition: "散步然后回家")
+        XCTAssertEqual(merged, "我们打算去公园。散步然后回家")
+        XCTAssertNil(merged.range(of: #"\p{Han}\s+\p{Han}"#, options: .regularExpression))
+    }
+
+    // Latin chunks meeting at a disjoint seam still get exactly one space.
+    func testDisjointLatinChunkSeamGetsSingleSpace() {
+        XCTAssertEqual(
+            ParakeetEngine.mergeTranscripts(base: "we are going to the", addition: "park this afternoon"),
+            "we are going to the park this afternoon")
+    }
+
+    // The chunk length the seam tests split on must stay tied to production.
+    func testChunkConstantsMatchProductionChunker() {
+        XCTAssertEqual(ParakeetEngine.transcriptionSampleRate, 16_000)
+        XCTAssertEqual(
+            ParakeetEngine.chunkTranscriptionSampleCount,
+            ParakeetEngine.transcriptionSampleRate * ParakeetEngine.chunkTranscriptionSeconds)
+    }
+
     // Base/addition passthroughs
     func testEmptySides() {
         XCTAssertEqual(ParakeetEngine.mergeTranscripts(base: "", addition: "你好"), "你好")

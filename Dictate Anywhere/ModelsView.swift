@@ -62,7 +62,7 @@ struct ModelsView: View {
                                     }
                                 }
                             ),
-                            options: Array(ParakeetModelChoice.allCases),
+                            options: ParakeetModelChoice.availableCases,
                             title: \.displayName,
                             isEnabled: appState.status == .idle && !appState.parakeetEngine.isDownloading
                         )
@@ -260,7 +260,9 @@ struct ModelsView: View {
     }
 
     private func alternateInstalledModel(excluding selectedModel: ParakeetModelChoice) -> ParakeetModelChoice? {
-        ParakeetModelChoice.allCases.first {
+        // Files for a model this Mac can't run may survive a migration — don't
+        // advertise one the picker won't offer.
+        ParakeetModelChoice.availableCases.first {
             $0 != selectedModel && appState.parakeetEngine.checkModelOnDisk(for: $0)
         }
     }

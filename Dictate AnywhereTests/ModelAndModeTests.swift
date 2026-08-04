@@ -1,7 +1,117 @@
 import XCTest
+import FluidAudio
 @testable import Dictate_Anywhere_Dev
 
 final class ModelAndModeTests: XCTestCase {
+
+    // MARK: - Architecture-aware availability
+
+    /// Guards against the failure that would be invisible in CI: a broken
+    /// sysctl probe reporting "no Neural Engine" on Apple Silicon, which would
+    /// hide working models from every user.
+    func testHardwareDetectionMatchesBuildArchitecture() {
+        #if arch(arm64)
+        XCTAssertTrue(Hardware.isAppleSilicon, "arm64 build must detect Apple Silicon")
+        #endif
+        // An x86_64 slice can be Rosetta on Apple Silicon, so it has no fixed
+        // expectation — only that the two accessors agree.
+        XCTAssertEqual(Hardware.hasAppleNeuralEngine, Hardware.isAppleSilicon)
+    }
+
+    /// Nemotron multilingual ships only an ANE-targeted int8 encoder
+    /// ("Apple Silicon only" per FluidAudio), so it is the one model with no
+    /// non-ANE code path. Everything else must stay available on Intel.
+    func testOnlyNemotronMultilingualRequiresAppleNeuralEngine() {
+        for choice in ParakeetModelChoice.allCases {
+            XCTAssertEqual(
+                choice.requiresAppleNeuralEngine,
+                choice == .nemotronMultilingual,
+                "\(choice) has the wrong Neural Engine requirement")
+        }
+    }
+
+    /// SenseVoice falls back to the fp32 encoder rather than being hidden.
+    func testSenseVoiceStaysAvailableWithoutNeuralEngine() {
+        XCTAssertFalse(ParakeetModelChoice.senseVoice.requiresAppleNeuralEngine)
+        XCTAssertTrue(ParakeetModelChoice.senseVoice.isAvailableOnThisMac)
+    }
+
+    func testAvailableCasesExcludeModelsThisMacCannotRun() {
+        XCTAssertEqual(
+            ParakeetModelChoice.availableCases,
+            ParakeetModelChoice.allCases.filter(\.isAvailableOnThisMac))
+        for choice in ParakeetModelChoice.availableCases {
+            XCTAssertTrue(choice.isAvailableOnThisMac, "\(choice) offered but not runnable")
+        }
+        XCTAssertEqual(
+            ParakeetModelChoice.availableCases.contains(.nemotronMultilingual),
+            Hardware.hasAppleNeuralEngine,
+            "nemotronMultilingual availability must track the Neural Engine")
+    }
+
+    /// The picker must never be empty, whatever the hardware.
+    func testAvailableCasesAreNeverEmpty() {
+        XCTAssertFalse(ParakeetModelChoice.availableCases.isEmpty)
+    }
+
+    func testAvailableFallbackIsRunnableAndPrefersLanguageSupport() {
+        for language in SupportedLanguage.allCases {
+            let fallback = ParakeetModelChoice.availableFallback(for: language)
+            XCTAssertTrue(fallback.isAvailableOnThisMac, "fallback for \(language) is not runnable")
+            if ParakeetModelChoice.availableCases.contains(where: { $0.supportsLanguage(language) }) {
+                XCTAssertTrue(
+                    fallback.supportsLanguage(language),
+                    "fallback for \(language) dropped language support unnecessarily")
+            }
+        }
+    }
+
+    /// Chinese must keep working on Intel, where nemotronMultilingual is gone
+    /// but SenseVoice's fp32 build still runs.
+    func testChineseFallbackResolvesToSenseVoice() {
+        XCTAssertEqual(ParakeetModelChoice.availableFallback(for: .chinese), .senseVoice)
+    }
+
+    // MARK: - Intel behavior (simulated — CI runs on Apple Silicon)
+
+    func testIntelPickerHidesNemotronMultilingualAndKeepsEverythingElse() {
+        let intel = ParakeetModelChoice.availableCases(hasNeuralEngine: false)
+        XCTAssertFalse(intel.contains(.nemotronMultilingual), "Nemotron multilingual cannot run on Intel")
+        XCTAssertEqual(intel, ParakeetModelChoice.allCases.filter { $0 != .nemotronMultilingual },
+                       "only the ANE-only model should be withheld on Intel")
+    }
+
+    func testAppleSiliconPickerOffersEveryModel() {
+        XCTAssertEqual(
+            ParakeetModelChoice.availableCases(hasNeuralEngine: true),
+            ParakeetModelChoice.allCases)
+    }
+
+    /// A Mac migrated from Apple Silicon can hold a nemotronMultilingual
+    /// selection Intel can't run; Chinese users must land on SenseVoice rather
+    /// than silently losing Chinese support.
+    func testIntelFallbackKeepsChineseOnSenseVoice() {
+        XCTAssertEqual(
+            ParakeetModelChoice.availableFallback(for: .chinese, hasNeuralEngine: false),
+            .senseVoice)
+    }
+
+    func testIntelFallbackIsRunnableForEveryLanguage() {
+        for language in SupportedLanguage.allCases {
+            let fallback = ParakeetModelChoice.availableFallback(for: language, hasNeuralEngine: false)
+            XCTAssertNotEqual(fallback, .nemotronMultilingual, "\(language) fell back to an Intel-incapable model")
+            XCTAssertTrue(fallback.isAvailable(hasNeuralEngine: false))
+            XCTAssertTrue(fallback.supportsLanguage(language), "\(language) lost language support on Intel")
+        }
+    }
+
+    /// fp16/int8 SenseVoice encoders emit NaN off the ANE, so non-ANE Macs must
+    /// load the fp32 build instead.
+    func testSenseVoicePrecisionTracksNeuralEngineAvailability() {
+        XCTAssertEqual(
+            ParakeetEngine.senseVoiceEncoderPrecision,
+            Hardware.hasAppleNeuralEngine ? SenseVoiceEncoderPrecision.int8 : .fp32)
+    }
 
     // MARK: - ParakeetModelChoice
 

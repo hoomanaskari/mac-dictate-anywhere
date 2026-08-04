@@ -449,13 +449,33 @@ final class ParakeetEngine: TranscriptionEngine {
     private let minimumSpeechPeak: Float = 0.02
     private let minimumSpeechSampleRatio: Float = 0.015
     private let transcriptionIntervalMs: UInt64 = 500
-    private let sampleRate: Int = 16_000
+    private let sampleRate: Int = ParakeetEngine.transcriptionSampleRate
     private let minTranscriptionDeltaSamples: Int = 4_800
     private let audioLevelWindowSamples: Int = 1_600
     private let speechCheckWindowSamples: Int = 8_000
 
+    static let transcriptionSampleRate = 16_000
+    static let chunkTranscriptionSeconds = 20
+
+    /// Samples committed per buffered transcription chunk.
+    ///
+    /// Chunks are disjoint: `commitBufferedChunksIfNeeded` drops exactly this
+    /// many samples after each commit and retains no overlap, so consecutive
+    /// chunk transcripts meet at a hard seam that `mergeTranscripts` has to
+    /// join. Tests split fixture audio on this boundary to exercise that seam.
+    static var chunkTranscriptionSampleCount: Int {
+        transcriptionSampleRate * chunkTranscriptionSeconds
+    }
+
+    /// SenseVoice's fp16/int8 encoders are correct only on the Neural Engine —
+    /// FluidAudio documents them as producing NaN on CPU/GPU paths. The fp32
+    /// build runs on any compute unit, so non-ANE Macs load that instead.
+    static var senseVoiceEncoderPrecision: SenseVoiceEncoderPrecision {
+        Hardware.hasAppleNeuralEngine ? .int8 : .fp32
+    }
+
     /// Keeps pending Parakeet context bounded for long recordings.
-    private var chunkTranscriptionSamples: Int { sampleRate * 20 }
+    private var chunkTranscriptionSamples: Int { Self.chunkTranscriptionSampleCount }
     private var maxPendingSamplesBeforeCommit: Int { sampleRate * 30 }
     private var hardPendingSampleCap: Int { sampleRate * 120 }
 
@@ -576,7 +596,7 @@ final class ParakeetEngine: TranscriptionEngine {
         if modelChoice == .senseVoice {
             let dir = fluidAudioModelCacheRoot()
                 .appendingPathComponent(modelChoice.modelDirectoryName, isDirectory: true)
-            return SenseVoiceModels.modelsExist(at: dir, precision: .int8)
+            return SenseVoiceModels.modelsExist(at: dir, precision: Self.senseVoiceEncoderPrecision)
         }
 
         if modelChoice == .nemotronMultilingual {
@@ -1358,7 +1378,9 @@ private actor AsrManagerCoordinator {
     func initializeSenseVoice() async throws {
         await cleanup()
         // int8: ~225 MB, ANE-targeted, accuracy-neutral per FluidAudio docs.
-        let svModels = try await SenseVoiceModels.downloadAndLoad(precision: .int8)
+        // Non-ANE Macs get the fp32 encoder instead — see senseVoiceEncoderPrecision.
+        let precision = ParakeetEngine.senseVoiceEncoderPrecision
+        let svModels = try await SenseVoiceModels.downloadAndLoad(precision: precision)
         // textNorm 14 = withitn: punctuated, inverse-text-normalized output.
         // The library default (15) strips punctuation — unusable for dictation.
         senseVoiceManager = SenseVoiceManager(
@@ -1381,6 +1403,9 @@ private actor AsrManagerCoordinator {
 
     func initializeStreaming(modelChoice: ParakeetModelChoice) async throws {
         guard modelChoice.usesTrueStreaming else { throw TranscriptionError.engineNotReady }
+        // The picker already hides ANE-only models on Intel; this stops a stale
+        // persisted selection from starting a download that can never load.
+        guard modelChoice.isAvailableOnThisMac else { throw TranscriptionError.engineNotReady }
         if isInitialized(for: modelChoice) {
             try await resetSession(for: modelChoice)
             return
