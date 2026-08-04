@@ -6,16 +6,58 @@ final class ModelAndModeTests: XCTestCase {
 
     // MARK: - Architecture-aware availability
 
-    /// Guards against the failure that would be invisible in CI: a broken
-    /// sysctl probe reporting "no Neural Engine" on Apple Silicon, which would
-    /// hide working models from every user.
-    func testHardwareDetectionMatchesBuildArchitecture() {
+    /// The capability flag must equal `#if arch(arm64)` in *both* directions.
+    ///
+    /// Upward: an arm64 run reporting "no Neural Engine" would hide working
+    /// models from every user, and would be invisible in CI.
+    /// Downward: the x86_64 slice of our universal binary can be running under
+    /// Rosetta on Apple Silicon, where the host *does* have a Neural Engine but
+    /// FluidAudio still refuses to load its ANE-only models. A runtime probe
+    /// (`hw.optional.arm64` / `sysctl.proc_translated`) answers true there, so
+    /// this test is what stops one from creeping back in.
+    func testNeuralEngineCapabilityMatchesCompileTimeArchitecture() {
         #if arch(arm64)
-        XCTAssertTrue(Hardware.isAppleSilicon, "arm64 build must detect Apple Silicon")
+        XCTAssertTrue(Hardware.isArm64Process, "arm64 slice must report an arm64 process")
+        XCTAssertTrue(Hardware.canUseAppleNeuralEngine, "arm64 build must be able to use the ANE")
+        #else
+        XCTAssertFalse(Hardware.isArm64Process, "non-arm64 slice must not report an arm64 process")
+        XCTAssertFalse(
+            Hardware.canUseAppleNeuralEngine,
+            "a non-arm64 slice must be treated as ANE-incapable even under Rosetta on Apple Silicon")
         #endif
-        // An x86_64 slice can be Rosetta on Apple Silicon, so it has no fixed
-        // expectation — only that the two accessors agree.
-        XCTAssertEqual(Hardware.hasAppleNeuralEngine, Hardware.isAppleSilicon)
+        XCTAssertEqual(Hardware.canUseAppleNeuralEngine, Hardware.isArm64Process)
+    }
+
+    /// Pins our gate to the one FluidAudio actually enforces: both Nemotron
+    /// multilingual entry points do
+    /// `guard SystemInfo.isAppleSilicon else { throw ASRError.unsupportedPlatform }`.
+    /// If FluidAudio ever changes that rule, this fails instead of users
+    /// downloading ~650 MB for a model that cannot load.
+    func testNeuralEngineCapabilityMatchesFluidAudioPlatformGate() {
+        XCTAssertEqual(
+            Hardware.canUseAppleNeuralEngine,
+            SystemInfo.isAppleSilicon,
+            "capability must match FluidAudio's own unsupportedPlatform guard")
+    }
+
+    /// Nemotron multilingual is offered exactly when this process slice can run
+    /// it — never on x86_64, whatever hardware is underneath.
+    func testNemotronMultilingualAvailabilityTracksCompileTimeArchitecture() {
+        #if arch(arm64)
+        XCTAssertTrue(ParakeetModelChoice.nemotronMultilingual.isAvailableOnThisMac)
+        XCTAssertTrue(ParakeetModelChoice.availableCases.contains(.nemotronMultilingual))
+        #else
+        XCTAssertFalse(
+            ParakeetModelChoice.nemotronMultilingual.isAvailableOnThisMac,
+            "Rosetta/Intel slice must not offer the ANE-only model")
+        XCTAssertFalse(ParakeetModelChoice.availableCases.contains(.nemotronMultilingual))
+        XCTAssertEqual(
+            ParakeetModelChoice.availableFallback(for: .chinese), .senseVoice,
+            "Chinese must fall back to SenseVoice's fp32 build off arm64")
+        #endif
+        XCTAssertEqual(
+            ParakeetModelChoice.availableCases.contains(.nemotronMultilingual),
+            Hardware.canUseAppleNeuralEngine)
     }
 
     /// Nemotron multilingual ships only an ANE-targeted int8 encoder
@@ -45,7 +87,7 @@ final class ModelAndModeTests: XCTestCase {
         }
         XCTAssertEqual(
             ParakeetModelChoice.availableCases.contains(.nemotronMultilingual),
-            Hardware.hasAppleNeuralEngine,
+            Hardware.canUseAppleNeuralEngine,
             "nemotronMultilingual availability must track the Neural Engine")
     }
 
@@ -110,7 +152,7 @@ final class ModelAndModeTests: XCTestCase {
     func testSenseVoicePrecisionTracksNeuralEngineAvailability() {
         XCTAssertEqual(
             ParakeetEngine.senseVoiceEncoderPrecision,
-            Hardware.hasAppleNeuralEngine ? SenseVoiceEncoderPrecision.int8 : .fp32)
+            Hardware.canUseAppleNeuralEngine ? SenseVoiceEncoderPrecision.int8 : .fp32)
     }
 
     // MARK: - ParakeetModelChoice

@@ -219,8 +219,8 @@ enum ParakeetModelChoice: String, CaseIterable {
         case .nemotron560, .nemotron1120, .nemotron2240:
             return "~1 GB"
         case .senseVoice:
-            // Non-ANE Macs download the fp32 encoder instead of int8.
-            return Hardware.hasAppleNeuralEngine ? "~225 MB" : "~900 MB"
+            // Without ANE access we download the fp32 encoder instead of int8.
+            return Hardware.canUseAppleNeuralEngine ? "~225 MB" : "~900 MB"
         case .nemotronMultilingual:
             return "~650 MB"
         }
@@ -316,8 +316,12 @@ enum ParakeetModelChoice: String, CaseIterable {
 
     /// Nemotron multilingual ships only an int8 ANE-targeted encoder and is
     /// documented by FluidAudio as "Apple Silicon only", with no CPU build to
-    /// fall back to. Hide it on Intel rather than let a user pick a model that
-    /// can only fail after a ~650 MB download.
+    /// fall back to. FluidAudio enforces that with a compile-time
+    /// `guard SystemInfo.isAppleSilicon else { throw ASRError.unsupportedPlatform }`,
+    /// so it also refuses on the x86_64 slice of our universal binary running
+    /// under Rosetta. Hide it wherever `Hardware.canUseAppleNeuralEngine` is
+    /// false rather than let a user pick a model that can only fail after a
+    /// ~650 MB download.
     ///
     /// SenseVoice is deliberately not listed here: its fp16/int8 encoders are
     /// ANE-only, but FluidAudio also ships an fp32 encoder that runs on any
@@ -333,15 +337,18 @@ enum ParakeetModelChoice: String, CaseIterable {
         }
     }
 
-    // The `hasNeuralEngine` parameter exists so the Intel outcome is testable
-    // on Apple Silicon; production callers use the no-argument variants.
+    // The `hasNeuralEngine` parameter exists so the non-ANE outcome (Intel, or
+    // our x86_64 slice under Rosetta) is testable from an arm64 test run;
+    // production callers use the no-argument variants, which read
+    // `Hardware.canUseAppleNeuralEngine` — a compile-time property of this
+    // process, not a runtime probe of the host.
 
     nonisolated func isAvailable(hasNeuralEngine: Bool) -> Bool {
         !requiresAppleNeuralEngine || hasNeuralEngine
     }
 
     nonisolated var isAvailableOnThisMac: Bool {
-        isAvailable(hasNeuralEngine: Hardware.hasAppleNeuralEngine)
+        isAvailable(hasNeuralEngine: Hardware.canUseAppleNeuralEngine)
     }
 
     nonisolated static func availableCases(hasNeuralEngine: Bool) -> [ParakeetModelChoice] {
@@ -350,7 +357,7 @@ enum ParakeetModelChoice: String, CaseIterable {
 
     /// Models this Mac can actually run — the list the picker offers.
     nonisolated static var availableCases: [ParakeetModelChoice] {
-        availableCases(hasNeuralEngine: Hardware.hasAppleNeuralEngine)
+        availableCases(hasNeuralEngine: Hardware.canUseAppleNeuralEngine)
     }
 
     /// Fallback when a stored selection isn't runnable on this hardware.
@@ -366,7 +373,7 @@ enum ParakeetModelChoice: String, CaseIterable {
     }
 
     nonisolated static func availableFallback(for language: SupportedLanguage) -> ParakeetModelChoice {
-        availableFallback(for: language, hasNeuralEngine: Hardware.hasAppleNeuralEngine)
+        availableFallback(for: language, hasNeuralEngine: Hardware.canUseAppleNeuralEngine)
     }
 }
 

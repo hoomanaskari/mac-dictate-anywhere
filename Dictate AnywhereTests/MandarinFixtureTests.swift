@@ -89,9 +89,20 @@ final class MandarinFixtureTests: XCTestCase {
 
     func testCodeSwitchKeepsEnglishTerm() async throws {
         let text = try await transcribe("zh-mixed")
-        // TTS renders English words with a Chinese voice — keep this lenient
-        // and rely on the printed transcript for human review.
+        // TTS renders English words with a Chinese voice, so the surrounding
+        // Han transcription is shakier than the pure-zh fixtures — keep the CER
+        // bound lenient and rely on the printed transcript for human review.
         XCTAssertLessThanOrEqual(characterErrorRate(reference: Self.references["zh-mixed"]!, hypothesis: text), 0.5, "transcript: \(text)")
+        // ...but that bound alone would pass with the English term dropped
+        // entirely, which is the whole point of this fixture. Assert it
+        // survives, tolerating the two things the model legitimately varies:
+        // casing (it currently emits lowercase "apple park") and the internal
+        // gap (`\s*` covers "Apple Park", "applepark", and any run of spaces).
+        // No \b anchors: Han characters are word characters to ICU, so there is
+        // no boundary between 去 and "apple" and the pattern would never match.
+        XCTAssertNotNil(
+            text.range(of: #"apple\s*park"#, options: [.regularExpression, .caseInsensitive]),
+            "English term \"Apple Park\" did not survive transcription: \(text)")
         print("code-switch transcript: \(text)")
     }
 
@@ -100,9 +111,10 @@ final class MandarinFixtureTests: XCTestCase {
     /// `ParakeetEngine.commitBufferedChunksIfNeeded` commits fixed-size chunks
     /// and then drops exactly that many samples, retaining **no** overlap, and
     /// the finalize path transcribes whatever tail is left over. Consecutive
-    /// chunk transcripts therefore meet at a hard seam with no repeated audio
-    /// for `mergeTranscripts` to align on — so this splits the fixture on the
-    /// same boundary, using the production constant so the two cannot drift.
+    /// chunk transcripts therefore meet at a hard seam with no repeated audio —
+    /// which is why `joinChunkTranscripts` concatenates rather than
+    /// deduplicating. This splits the fixture on the same boundary, using the
+    /// production constant so the two cannot drift.
     func testLongAudioSplitMergeMatchesFullTranscription() async throws {
         let all = try samples(for: "zh-long")
         let chunk = ParakeetEngine.chunkTranscriptionSampleCount
@@ -121,7 +133,7 @@ final class MandarinFixtureTests: XCTestCase {
             if slice.count <= minimumTailSamples { break }
             let text = try await manager.transcribe(audio: slice)
             if !merged.isEmpty { seamOffsets.append(merged.count) }
-            merged = ParakeetEngine.mergeTranscripts(base: merged, addition: text)
+            merged = ParakeetEngine.joinChunkTranscripts(base: merged, addition: text)
         }
 
         XCTAssertFalse(seamOffsets.isEmpty, "fixture produced no chunk seam to exercise")
