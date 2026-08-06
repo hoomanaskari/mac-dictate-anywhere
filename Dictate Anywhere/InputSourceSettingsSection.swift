@@ -85,7 +85,7 @@ struct InputSourceSettingsSection: View {
             inputSourceID: source.id,
             displayName: source.localizedName,
             derivedLanguage: InputSourceMonitor.deriveLanguage(fromBCP47: source.languageCodes),
-            isModelDownloaded: { appState.parakeetEngine.checkModelOnDisk(for: $0) }
+            isModelDownloaded: { appState.parakeetEngine.checkModelOnDisk(for: $0) && $0.isAvailableOnThisMac }
         )
     }
 }
@@ -126,7 +126,7 @@ private struct InputSourceMappingRow: View {
                 DSInfoRow(label: "Model") {
                     DSDropdown(
                         selection: modelBinding,
-                        options: Array(ParakeetModelChoice.allCases),
+                        options: ParakeetModelChoice.availableCases,
                         title: { modelTitle(for: $0) }
                     )
                 }
@@ -183,7 +183,10 @@ private struct InputSourceMappingRow: View {
     }
 
     private func modelTitle(for model: ParakeetModelChoice) -> String {
-        appState.parakeetEngine.checkModelOnDisk(for: model)
+        guard model.isAvailableOnThisMac else {
+            return "\(model.displayName) (not available on this Mac)"
+        }
+        return appState.parakeetEngine.checkModelOnDisk(for: model)
             ? model.displayName
             : "\(model.displayName) (not downloaded)"
     }

@@ -332,7 +332,9 @@ final class AppState {
             currentFluidAudioLanguage: settings.selectedLanguage,
             currentAppleSpeechLanguage: settings.appleSpeechLanguage,
             appleSpeechSupported: AppleSpeechEngine.isSupported,
-            isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) },
+            // Availability = on disk AND runnable by this process (FluidAudio
+            // hard-fails Nemotron multilingual under Rosetta/x86_64).
+            isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) && $0.isAvailableOnThisMac },
             isAppleSpeechAssetInstalled: { installedAppleSpeechLanguages.contains($0) }
         )
 
