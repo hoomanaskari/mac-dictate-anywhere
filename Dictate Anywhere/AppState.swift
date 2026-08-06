@@ -258,6 +258,12 @@ final class AppState {
             }
             logger.info("prepareActiveEngine: prepare() completed, isReady=\(self.activeEngine.isReady, privacy: .public)")
         }
+        // A just-completed prepare may have installed the Apple Speech asset
+        // the input-source mapping hint is watching; refresh so the hint
+        // clears without waiting for settings to reopen.
+        if settings.engineChoice == .appleSpeech {
+            appleSpeechInstalledLanguages = await AppleSpeechEngine.installedLanguages()
+        }
         isPreparingEngine = false
     }
 

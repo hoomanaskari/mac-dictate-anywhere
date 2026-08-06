@@ -72,7 +72,7 @@ enum InputSourceMappingAvailability {
                 return "Apple Speech isn't available on this Mac."
             }
             guard installedAppleSpeechLanguages.contains(mapping.language) else {
-                return "\(mapping.language.displayName) isn't installed for Apple Speech. Select it once under Transcription language to download it."
+                return "\(mapping.language.displayName) isn't installed for Apple Speech. Choose Apple Speech under Speech Model, then pick the language under Transcription language to download it."
             }
             return nil
         case .parakeet:
