@@ -399,18 +399,19 @@ final class AppState {
                 settings.noteAutoSwitchModelChange(hadVocabularyMode: hadVocabularyMode)
                 settings.restoreVocabularyModeAfterAutoSwitchIfPending()
             case .appleSpeech:
-                // Pin the language before the engine switch: handleEngineSelectionChange
-                // calls prepareActiveEngine(), which prepares Apple Speech using
-                // whatever Settings.shared.appleSpeechLanguage currently holds. If
-                // that's stale (e.g. left over from a cancelled download), the first
-                // prepare would silently download assets for the wrong, uninstalled
-                // language even though the resolver already gated on the mapped
-                // language's assets being installed. Writing it first — synchronously,
-                // before any await in this arm — makes the first prepare already
-                // target the gated language.
+                // Pin the language before the engine switch so the one and only
+                // prepare targets the gated, installed language (a stale
+                // appleSpeechLanguage would otherwise download the wrong
+                // assets). The explicit invalidate matters: a session prepared
+                // earlier for a different language would satisfy the isReady
+                // check in prepareActiveEngine and skip preparation entirely.
+                // handleEngineSelectionChange only invalidates when switching
+                // AWAY from Apple Speech, so it won't double-invalidate here,
+                // and no second language-change call is needed — that was the
+                // duplicate-preparation path.
                 settings.appleSpeechLanguage = mapping.language
+                await appleSpeechEngine.invalidatePreparedSession()
                 await handleEngineSelectionChange(.appleSpeech)
-                await handleAppleSpeechLanguageChange(mapping.language)
             }
             if showLoadingOverlay { overlay.hide(afterDelay: 0) }
         }
