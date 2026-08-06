@@ -64,12 +64,15 @@ struct InputSourceSettingsSection: View {
         let settings = appState.settings
         let taken = Set(settings.inputSourceMappings.map(\.inputSourceID))
         guard let source = availableSources.first(where: { !taken.contains($0.id) }) else { return }
-        settings.addInputSourceMapping(
+        let mapping = settings.addInputSourceMapping(
             inputSourceID: source.id,
             displayName: source.localizedName,
             derivedLanguage: InputSourceMonitor.deriveLanguage(fromBCP47: source.languageCodes),
             isModelDownloaded: { appState.parakeetEngine.checkModelOnDisk(for: $0) && $0.isAvailableOnThisMac }
         )
+        if let mapping, mapping.inputSourceID == appState.inputSourceMonitor.currentInputSourceID() {
+            appState.enqueueInputSourceProfileApply(for: mapping.inputSourceID)
+        }
     }
 }
 
@@ -189,7 +192,7 @@ private struct InputSourceMappingRow: View {
             : "\(model.displayName) (not downloaded)"
     }
 
-    // MARK: Bindings (route every edit through updateInputSourceMapping)
+    // MARK: Bindings (route every edit through commit)
 
     private var sourceBinding: Binding<String> {
         Binding(
@@ -200,7 +203,7 @@ private struct InputSourceMappingRow: View {
                 if let source = availableSources.first(where: { $0.id == newID }) {
                     updated.inputSourceDisplayName = source.localizedName
                 }
-                appState.settings.updateInputSourceMapping(updated)
+                commit(updated)
             }
         )
     }
@@ -211,7 +214,7 @@ private struct InputSourceMappingRow: View {
             set: { newEngine in
                 var updated = mapping
                 updated.engine = newEngine
-                appState.settings.updateInputSourceMapping(updated)
+                commit(updated)
             }
         )
     }
@@ -222,7 +225,7 @@ private struct InputSourceMappingRow: View {
             set: { newModel in
                 var updated = mapping
                 updated.parakeetModel = newModel
-                appState.settings.updateInputSourceMapping(updated)
+                commit(updated)
             }
         )
     }
@@ -233,8 +236,18 @@ private struct InputSourceMappingRow: View {
             set: { newLanguage in
                 var updated = mapping
                 updated.language = newLanguage
-                appState.settings.updateInputSourceMapping(updated)
+                commit(updated)
             }
         )
+    }
+
+    /// Persists an edit and, when the row governs the input source that is
+    /// active right now, immediately enqueues the profile apply so the model
+    /// pre-warms instead of waiting for the next source change or recording.
+    private func commit(_ updated: InputSourceMapping) {
+        appState.settings.updateInputSourceMapping(updated)
+        if updated.inputSourceID == appState.inputSourceMonitor.currentInputSourceID() {
+            appState.enqueueInputSourceProfileApply(for: updated.inputSourceID)
+        }
     }
 }
