@@ -63,6 +63,7 @@ final class AppState {
     let appleSpeechEngine = AppleSpeechEngine()
     let inputSourceMonitor = InputSourceMonitor()
     var appleSpeechSupportedLanguages: [SupportedLanguage] = []
+    var appleSpeechInstalledLanguages: [SupportedLanguage] = []
     private var isShowingMigrationAlert = false
 
     /// Whether the app is transitioning between states (simple guard)
@@ -180,6 +181,7 @@ final class AppState {
         await permissions.check()
         updateAccessibilityIntegration(granted: permissions.accessibilityGranted, promptIfNeeded: true)
         await prepareActiveEngine()
+        await refreshAppleSpeechAssetState()
         inputSourceMonitor.startMonitoring()
         if settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
@@ -228,7 +230,7 @@ final class AppState {
                 settings.legacyAppleSpeechMigrationPending = false
             }
         case .appleSpeech:
-            await refreshAppleSpeechLanguages()
+            await refreshAppleSpeechAssetState()
             if !appleSpeechSupportedLanguages.contains(settings.appleSpeechLanguage),
                let fallback = appleSpeechSupportedLanguages.first {
                 settings.appleSpeechLanguage = fallback
@@ -289,8 +291,12 @@ final class AppState {
         await prepareActiveEngine()
     }
 
-    private func refreshAppleSpeechLanguages() async {
+    /// Refreshes both the supportable and the installed Apple Speech language
+    /// sets. Installed state drives the input-source mapping UI, so it must be
+    /// fresh even while FluidAudio is the active engine.
+    func refreshAppleSpeechAssetState() async {
         appleSpeechSupportedLanguages = await AppleSpeechEngine.supportedLanguages()
+        appleSpeechInstalledLanguages = await AppleSpeechEngine.installedLanguages()
     }
 
     // MARK: - Input Source Auto-Switch
@@ -324,6 +330,9 @@ final class AppState {
             ? await AppleSpeechEngine.installedLanguages()
             : []
         guard status == .idle else { return }
+        if mapping?.engine == .appleSpeech {
+            appleSpeechInstalledLanguages = installedAppleSpeechLanguages
+        }
         let resolution = InputSourceProfileResolver.resolve(
             mapping: mapping,
             enabled: settings.inputSourceAutoSwitchEnabled,

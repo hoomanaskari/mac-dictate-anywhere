@@ -54,3 +54,36 @@ enum InputSourceProfileResolver {
         }
     }
 }
+
+/// Why a mapping cannot currently apply on this machine, phrased for the
+/// settings UI — or nil when the mapping is active. Pure so the matrix is
+/// unit-testable; the UI injects live caches/closures.
+enum InputSourceMappingAvailability {
+    static func inactiveReason(
+        for mapping: InputSourceMapping,
+        appleSpeechSupported: Bool,
+        installedAppleSpeechLanguages: [SupportedLanguage],
+        runnableModels: [ParakeetModelChoice],
+        isModelOnDisk: (ParakeetModelChoice) -> Bool
+    ) -> String? {
+        switch mapping.engine {
+        case .appleSpeech:
+            guard appleSpeechSupported else {
+                return "Apple Speech isn't available on this Mac."
+            }
+            guard installedAppleSpeechLanguages.contains(mapping.language) else {
+                return "\(mapping.language.displayName) isn't installed for Apple Speech. Select it once under Transcription language to download it."
+            }
+            return nil
+        case .parakeet:
+            guard let model = mapping.parakeetModel else { return nil }
+            guard runnableModels.contains(model) else {
+                return "\(model.displayName) isn't available on this Mac."
+            }
+            guard isModelOnDisk(model) else {
+                return "\(model.displayName) isn't downloaded. Get it in Speech Model settings — auto-switching never downloads models."
+            }
+            return nil
+        }
+    }
+}

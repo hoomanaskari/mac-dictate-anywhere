@@ -50,26 +50,9 @@ struct InputSourceSettingsSection: View {
                         addMapping(availableSources: availableSources)
                     }
                 }
-                if !inactiveMappingNames.isEmpty {
-                    DSHint(
-                        text: "Inactive until downloaded in Speech Model settings: \(inactiveMappingNames.joined(separator: ", ")). Auto-switching never downloads models.",
-                        icon: "exclamationmark.triangle"
-                    )
-                }
             }
         }
-    }
-
-    private var inactiveMappingNames: [String] {
-        appState.settings.inputSourceMappings.compactMap { mapping in
-            switch mapping.engine {
-            case .appleSpeech:
-                return AppleSpeechEngine.isSupported ? nil : "Apple Speech"
-            case .parakeet:
-                guard let model = mapping.parakeetModel else { return nil }
-                return appState.parakeetEngine.checkModelOnDisk(for: model) ? nil : model.displayName
-            }
-        }
+        .task { await appState.refreshAppleSpeechAssetState() }
     }
 
     private func canAddMapping(availableSources: [InputSourceInfo]) -> Bool {
@@ -132,7 +115,22 @@ private struct InputSourceMappingRow: View {
                 }
             }
             languageRow
+            if let reason = inactiveReason {
+                DSHint(text: reason, icon: "exclamationmark.triangle")
+                    .padding(.horizontal, DS.Spacing.rowHorizontal)
+                    .padding(.bottom, 10)
+            }
         }
+    }
+
+    private var inactiveReason: String? {
+        InputSourceMappingAvailability.inactiveReason(
+            for: mapping,
+            appleSpeechSupported: AppleSpeechEngine.isSupported,
+            installedAppleSpeechLanguages: appState.appleSpeechInstalledLanguages,
+            runnableModels: ParakeetModelChoice.availableCases,
+            isModelOnDisk: { appState.parakeetEngine.checkModelOnDisk(for: $0) }
+        )
     }
 
     @ViewBuilder
