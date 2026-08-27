@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E2A66B572F18203C00DABF41"
-               BuildableName = "Dictate Anywhere.app"
+               BuildableName = "Dictate Anywhere Dev.app"
                BlueprintName = "Dictate Anywhere"
                ReferencedContainer = "container:Dictate Anywhere.xcodeproj">
             </BuildableReference>
@@ -64,7 +64,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E2A66B572F18203C00DABF41"
-            BuildableName = "Dictate Anywhere.app"
+            BuildableName = "Dictate Anywhere Dev.app"
             BlueprintName = "Dictate Anywhere"
             ReferencedContainer = "container:Dictate Anywhere.xcodeproj">
          </BuildableReference>
