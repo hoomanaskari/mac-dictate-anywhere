@@ -10,7 +10,9 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
+#if !DEBUG
     let softwareUpdater = SoftwareUpdater()
+#endif
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
 
@@ -81,9 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         vocabItem.target = self
         menu.addItem(vocabItem)
 
+#if !DEBUG
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
+#endif
 
         menu.addItem(NSMenuItem.separator())
 
@@ -204,9 +208,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(transcript, forType: .string)
     }
 
+#if !DEBUG
     @objc private func checkForUpdates() {
         softwareUpdater.checkForUpdates()
     }
+#endif
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         Settings.shared.selectedMicrophoneUID = sender.representedObject as? String
