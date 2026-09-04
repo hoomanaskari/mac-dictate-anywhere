@@ -6,6 +6,29 @@
         <description>Dictate Anywhere update feed.</description>
         <language>en</language>
         <item>
+            <title>2.8.3</title>
+            <pubDate>Fri, 04 Sep 2026 11:46:06 -0400</pubDate>
+            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
+            <sparkle:version>38</sparkle:version>
+            <sparkle:shortVersionString>2.8.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Dictate Anywhere 2.8.3
+
+- Microphone and Accessibility permission status now refreshes when returning from System Settings, so resolved warnings clear without relaunching.
+- Granting microphone access for the first time no longer starts recording from the original permission gesture; press the dictation shortcut again when permission is granted.
+- Permission warnings now provide clearer actions for opening the correct System Settings pages.
+- Development builds now use a separate app identity and disable production update checks, preventing local testing from interfering with the installed public app.
+]]></description>
+            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/DictateAnywhere-2.8.3.zip" length="12422783" type="application/octet-stream" sparkle:edSignature="iYpUWLShEgYbPdqW4KeywDpW6txFubkayvoDh5mWpY6N1MNjnf2h59lkMGW+kI5kanDNHIR2jhtrlP97e17BAQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/Dictate.Anywhere38-37.delta" sparkle:deltaFrom="37" length="624238" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="gOo+bnGU5opZ/qqxB7dLDDG3l6qgCX4iKqh3jaYIbug3NEs3GrAQRNDkyLfBqUqnF6FfGNe+xStZqSb2zjpzDg=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/Dictate.Anywhere38-36.delta" sparkle:deltaFrom="36" length="753550" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="fthS2/xKGq/mds7JaNl8J1AU7MbkoidzVXJY5ZCQr88NiqHympcosZNXHm7TCmUDqN0YNjgyF1TfPdauPtP2BQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/Dictate.Anywhere38-35.delta" sparkle:deltaFrom="35" length="850794" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="0xpWfVrh0JIkMuP00L7DsVrExq/mfesQ+yceE5agmNFrwoqYkJS7WnbKueQLMhEnl9rRAcj1dd2YkX3DQJMDAw=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/Dictate.Anywhere38-34.delta" sparkle:deltaFrom="34" length="4428630" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2mhW0g3EQZMoXXFuET3WfTouJFx8kLVSUyjvWVkNmw4JvkMcEz0k+3uH336hpmAyWZej/hRnp7FklQ958jqgDQ=="/>
+                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.3/Dictate.Anywhere38-33.delta" sparkle:deltaFrom="33" length="4448950" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WG29X3AqH41NGA/VHseoKqpws/zibhLP/AqAbDwTP1Wu2+7tdDF9zgJX6lioLovWFxJYVuOs4TQMSwKhWBvYDw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>2.8.2</title>
             <pubDate>Wed, 02 Sep 2026 12:33:39 -0400</pubDate>
             <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
@@ -49,30 +72,6 @@
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.1/Dictate.Anywhere36-33.delta" sparkle:deltaFrom="33" length="4390330" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="L3KpByUpyXdx8J2qZCPjW9hVl0xc+A8roAuegFNuAsKQhju0O/u6TNlbWJPMWH39E8MR0uyxTV5klN3aTT0fCA=="/>
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.1/Dictate.Anywhere36-30.delta" sparkle:deltaFrom="30" length="5359846" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="cHpv61HbXdz4fQ+4SxovRTuoN4sj8n+trnEND63FAB3cciA3bH55MZ5Um5rNqvTFQTrIDLmB//GGtiJB4EqNAA=="/>
                 <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.1/Dictate.Anywhere36-29.delta" sparkle:deltaFrom="29" length="5378858" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="M/Ydqbzg7WYVDwZ94bw3GsY2hqCU+TN989FLHfG7FgpTi6gn8uqsgyLVj+KfgtrAJfLe/vhWZeNMMAOo0x2+Cw=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>2.8.0</title>
-            <pubDate>Thu, 27 Aug 2026 14:35:15 -0400</pubDate>
-            <link>https://github.com/hoomanaskari/mac-dictate-anywhere</link>
-            <sparkle:version>35</sparkle:version>
-            <sparkle:shortVersionString>2.8.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Dictate Anywhere 2.8.0
-
-- Added S1-mini by Superwhisper as a private, fully local cleanup option for final English transcripts.
-- Added one-click download and deletion of the pinned 462 MB model, with visible progress and integrity verification before installation.
-- Added S1-mini's trained styling, structure, and email/general context controls, with Metal acceleration on Apple Silicon and CPU support on Intel Macs.
-- Kept live preview transcription unchanged: S1-mini runs only after dictation finishes, and the original transcript is preserved if local cleanup cannot run.
-- Reorganized Transcript Cleanup settings so the selected method's setup, availability, and privacy behavior are easier to understand.
-]]></description>
-            <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/DictateAnywhere-2.8.0.zip" length="12383508" type="application/octet-stream" sparkle:edSignature="ufj9c1/o7GmZiPPqDZAXOs6EvyrlQAEZXBBIvrG4opKkRcfUpDP2YPMm8kICBgwn897okisOUYaX4X36rZ+kAw=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/Dictate.Anywhere35-34.delta" sparkle:deltaFrom="34" length="4312498" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3s78eeUc6Vwq5dzIbhYlA0nvs6eAZUImRGxUSAqFbGOmTOzUwucpTa2piG68CN5PN1aW6vXtIIAfTm0l80ROAg=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/Dictate.Anywhere35-33.delta" sparkle:deltaFrom="33" length="4367002" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="jBPJc3lwCXt8qlgbuHJbhCqmY2rQQwlSzsdJINqmsFH3I/0U8o2+Pi539ZmiiQc9DMlYLA7bVJXJ/BNKvfmMBg=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/Dictate.Anywhere35-30.delta" sparkle:deltaFrom="30" length="5332226" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="tOFiFmsVPB9a61lz3JNst6AgTQPk3QB1aA/cswEQ8NqlJz1V27siZ1F3zh9X6zabM2jB11ablhSDwXjrjj1tBQ=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/Dictate.Anywhere35-29.delta" sparkle:deltaFrom="29" length="5356746" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WPE6VF04ah6ZL9QD+GEqc3p0m+XPvk/x0mY8rYO1j8SvfFM+Hlw7iyETMMij6bEOIPGGYdhYYXPEGY+JW/v9Bw=="/>
-                <enclosure url="https://github.com/hoomanaskari/mac-dictate-anywhere/releases/download/v2.8.0/Dictate.Anywhere35-28.delta" sparkle:deltaFrom="28" length="5365902" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ECFSmolyVWLnRbXCmlPN6IVqG87fLfdCYqmH5gdzXrnez4YN2joJHJ3fRtK70hvWLB7vshy8mpX/BqLJA6e2AA=="/>
             </sparkle:deltas>
         </item>
     </channel>
