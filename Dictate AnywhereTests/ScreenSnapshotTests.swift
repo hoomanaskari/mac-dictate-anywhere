@@ -1,6 +1,6 @@
 import XCTest
 import SwiftUI
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Renders every page inside the full window chrome at the design canvas size
 /// (1120×780). Asserts the render succeeds and writes PNGs to the temporary

@@ -198,11 +198,37 @@ xcodebuild -project "Dictate Anywhere.xcodeproj" -scheme "Dictate Anywhere" -con
 
 If you only want to run the app locally, you do not need the release packaging script.
 
-If you want to sign builds with your own Apple Developer account, create `Config/Signing.local.xcconfig` on your machine with:
+### Stable Local Development Workflow
 
-```xcconfig
-DEVELOPMENT_TEAM = YOUR_TEAM_ID
+For local development, use `scripts/dev.sh` with the shared **Dictate Anywhere** scheme. The workflow defaults to the **Debug** configuration, stable DerivedData, and the isolated `Dictate Anywhere Dev.app` so local permissions do not affect Release builds.
+
+Create the ignored local signing override when needed:
+
+```bash
+scripts/dev.sh signing [TEAM_ID]
 ```
+
+Automatic signing requires an Xcode account with the matching Apple Developer team and a matching development certificate. Keep `Config/Signing.local.xcconfig` ignored and do not commit it.
+
+Common commands:
+
+```bash
+scripts/dev.sh check
+scripts/dev.sh build
+scripts/dev.sh build --configuration Release
+scripts/dev.sh build --release
+scripts/dev.sh launch
+scripts/dev.sh test
+scripts/dev.sh stop
+```
+
+Use `--configuration Debug` or `--configuration Release` with `build`. Tests run only with `Debug` because Release is not testable. The default is `Debug`, and `--release` is an alias for `--configuration Release`. Provisioning updates are disabled by default; pass `--allow-provisioning-updates` when you explicitly want Xcode to update signing assets. Release builds use the production signing identity and team. They do not package, notarize, update the appcast, or change production Release settings.
+
+Set the optional `DERIVED_DATA_PATH` environment variable to use another stable path. The default is `$HOME/Library/Developer/Xcode/DerivedData/DictateAnywhereDev`.
+
+If Accessibility permission is stale, remove `Dictate Anywhere Dev.app` from **System Settings → Privacy & Security → Accessibility**, launch it again, and add that exact app.
+
+Release signing remains separate from this local workflow.
 
 ### Create DMG (optional)
 

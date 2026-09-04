@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// The accessibility messaging timeout is process-global: the SDK documents
 /// that setting it on the system-wide element "sets the timeout globally for

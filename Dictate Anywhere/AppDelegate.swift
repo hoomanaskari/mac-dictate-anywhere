@@ -8,12 +8,25 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let appState = AppState()
+    let appState: AppState
+#if !DEBUG
     let softwareUpdater = SoftwareUpdater()
+#endif
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
     private var customVocabularyMenuItem: NSMenuItem?
+
+    override init() {
+        self.appState = AppState()
+        super.init()
+    }
+
+    init(appState: AppState) {
+        self.appState = appState
+        super.init()
+    }
 
     // MARK: - Lifecycle
 
@@ -60,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task {
+            await appState.permissions.refresh()
+        }
+    }
+
     // MARK: - Menu Bar
 
     private func setupMenuBar() {
@@ -84,9 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         customVocabularyMenuItem = vocabItem
         menu.addItem(vocabItem)
 
+#if !DEBUG
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
+#endif
 
         menu.addItem(NSMenuItem.separator())
 
@@ -207,9 +228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(transcript, forType: .string)
     }
 
+#if !DEBUG
     @objc private func checkForUpdates() {
         softwareUpdater.checkForUpdates()
     }
+#endif
 
     @objc private func selectMicrophone(_ sender: NSMenuItem) {
         Settings.shared.selectedMicrophoneUID = sender.representedObject as? String

@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Warm-cache model switch timings. Gated behind RUN_MODEL_SWITCH_BENCHMARK=1
 /// because it loads real CoreML models from the app's model cache.

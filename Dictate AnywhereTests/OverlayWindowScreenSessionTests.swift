@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// `OverlayWindow.show` runs on every overlay update, and `AppState` drives the
 /// listening waveform at roughly thirty updates a second. These tests pin the

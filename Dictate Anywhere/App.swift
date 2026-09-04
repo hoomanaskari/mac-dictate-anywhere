@@ -23,9 +23,11 @@ struct DictateAnywhereApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Dictate Anywhere", action: appDelegate.showMainWindow)
             }
+#if !DEBUG
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: appDelegate.softwareUpdater)
             }
+#endif
         }
     }
 }

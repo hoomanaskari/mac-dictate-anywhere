@@ -4,9 +4,11 @@
 <dict>
 	<key>ATSApplicationFontsPath</key>
 	<string>.</string>
+#if RELEASE
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/appcast.xml</string>
+	<string>https:&#x2F;&#x2F;raw.githubusercontent.com/hoomanaskari/mac-dictate-anywhere/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>z7u+QuecsTX6G6rpZUEFQofMbF4bkEk6JdHh6/q370k=</string>
+#endif
 </dict>
 </plist>

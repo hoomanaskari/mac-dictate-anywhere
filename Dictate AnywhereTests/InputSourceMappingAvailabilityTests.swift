@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Pure availability-reason tests — no Settings.shared mutation, no snapshot needed.
 final class InputSourceMappingAvailabilityTests: XCTestCase {

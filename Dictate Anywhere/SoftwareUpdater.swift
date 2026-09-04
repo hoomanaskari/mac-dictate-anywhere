@@ -5,6 +5,7 @@
 //  Sparkle auto-update wrapper.
 //
 
+#if !DEBUG
 import Sparkle
 import SwiftUI
 
@@ -66,3 +67,4 @@ struct CheckForUpdatesView: View {
         }
     }
 }
+#endif

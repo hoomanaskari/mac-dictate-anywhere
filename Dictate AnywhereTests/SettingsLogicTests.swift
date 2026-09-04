@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Tests that exercise `Settings.shared` mutating APIs.
 /// Every touched property is snapshotted in `setUp` and restored in `tearDown`

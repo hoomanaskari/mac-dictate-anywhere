@@ -81,6 +81,17 @@ struct MainWindow: View {
             SidebarView(selectedPage: $appState.selectedPage)
 
             VStack(spacing: 0) {
+                if !appState.permissions.micGranted {
+                    WarningBanner(
+                        message: "Microphone permission is required for dictation.",
+                        buttonTitle: "Grant Permission"
+                    ) {
+                        Task {
+                            await appState.permissions.requestMic()
+                        }
+                    }
+                }
+
                 if !appState.permissions.accessibilityGranted {
                     WarningBanner(
                         message: "Accessibility permission is required for keyboard shortcuts.",

@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 @MainActor
 final class FillerWordCJKTests: XCTestCase {

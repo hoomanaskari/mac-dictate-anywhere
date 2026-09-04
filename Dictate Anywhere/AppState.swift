@@ -51,7 +51,7 @@ final class AppState {
 
     // MARK: - Services
 
-    let permissions = Permissions()
+    let permissions: Permissions
     let settings = Settings.shared
     let hotkeyService = HotkeyService()
     let audioMonitor = AudioMonitor()
@@ -73,6 +73,8 @@ final class AppState {
     /// Set when a hold-to-record key-up arrives during a transition (race condition guard)
     private var pendingHoldRelease = false
 
+    private(set) var isHoldToRecordKeyDown = false
+
     /// True while prepareActiveEngine is running (suppresses transient "not ready" warnings)
     var isPreparingEngine = false
 
@@ -93,6 +95,9 @@ final class AppState {
     /// Serializes profile applies; a change arriving mid-apply queues behind it.
     private var inputSourceApplyTask: Task<Void, Never>?
 
+    /// Optional test hook for suspending the first microphone permission request.
+    private let microphonePermissionRequester: (@MainActor @Sendable () async -> Bool)?
+
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
@@ -110,7 +115,12 @@ final class AppState {
 
     // MARK: - Initialization
 
-    init() {
+    init(
+        permissions: Permissions? = nil,
+        microphonePermissionRequester: (@MainActor @Sendable () async -> Bool)? = nil
+    ) {
+        self.permissions = permissions ?? Permissions()
+        self.microphonePermissionRequester = microphonePermissionRequester
         setupHotkeyCallbacks()
         setupPermissionCallbacks()
         setupInputSourceCallbacks()
@@ -124,6 +134,7 @@ final class AppState {
                 guard let self else { return }
                 switch binding.mode {
                 case .holdToRecord:
+                    self.isHoldToRecordKeyDown = true
                     await self.startDictation(mode: binding.mode)
                 case .handsFreeToggle:
                     if self.status == .recording {
@@ -139,6 +150,7 @@ final class AppState {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard binding.mode == .holdToRecord else { return }
+                self.isHoldToRecordKeyDown = false
                 if self.status == .recording, !self.isTransitioning {
                     await self.stopDictation()
                 } else if self.isTransitioning {
@@ -502,6 +514,22 @@ final class AppState {
             status = .idle
         }
         guard status == .idle, !isTransitioning else { return }
+        if !permissions.micGranted {
+            let granted: Bool
+            if let microphonePermissionRequester {
+                granted = await microphonePermissionRequester()
+            } else {
+                granted = await permissions.requestMic()
+            }
+
+            guard granted else {
+                status = .error("Microphone access is required to dictate. Enable it in System Settings, then try again.")
+                return
+            }
+
+            permissions.micGranted = true
+            return // The permission gesture must never become a recording gesture.
+        }
         if settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
             // Backstop: the eager pre-warm usually already did this; going

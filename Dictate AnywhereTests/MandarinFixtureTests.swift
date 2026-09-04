@@ -1,7 +1,7 @@
 import XCTest
 import AVFoundation
 import FluidAudio
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Character error rate over punctuation-and-whitespace-stripped text.
 func characterErrorRate(reference: String, hypothesis: String) -> Double {

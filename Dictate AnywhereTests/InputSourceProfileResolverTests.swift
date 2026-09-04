@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Pure resolution tests — no Settings.shared mutation, no snapshot needed.
 final class InputSourceProfileResolverTests: XCTestCase {

@@ -31,10 +31,12 @@ final class Permissions {
 
     private let queue = DispatchQueue(label: "com.dictate-anywhere.permissions", qos: .userInitiated)
     private var pollingTimer: Timer?
+    private let statusProvider: @Sendable () -> (mic: Bool, accessibility: Bool)
 
     // MARK: - Initialization
 
-    init() {
+    init(statusProvider: (@Sendable () -> (mic: Bool, accessibility: Bool))? = nil) {
+        self.statusProvider = statusProvider ?? Self.currentStatus
         queue.async { [weak self] in
             self?.checkSync()
         }
@@ -44,16 +46,40 @@ final class Permissions {
 
     /// Checks both permissions (async, off MainActor)
     func check() async {
-        await withCheckedContinuation { continuation in
+        let provider = statusProvider
+        let (mic, accessibility) = await withCheckedContinuation { continuation in
             queue.async { [weak self] in
-                self?.checkSync()
-                continuation.resume()
+                guard self != nil else {
+                    continuation.resume(returning: (false, false))
+                    return
+                }
+                continuation.resume(returning: provider())
             }
+        }
+        await MainActor.run {
+            self.micGranted = mic
+            self.accessibilityGranted = accessibility
         }
     }
 
     /// Requests microphone permission
     func requestMic() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            await MainActor.run {
+                self.micGranted = true
+            }
+            return true
+        case .denied, .restricted:
+            openMicrophoneSettings()
+            return false
+        case .notDetermined:
+            break
+        @unknown default:
+            openMicrophoneSettings()
+            return false
+        }
+
         let granted = await AVCaptureDevice.requestAccess(for: .audio)
         await MainActor.run {
             self.micGranted = granted
@@ -80,11 +106,16 @@ final class Permissions {
         }
     }
 
-    /// Refreshes permission state (call periodically or after returning from Settings)
-    func refresh() {
-        queue.async { [weak self] in
-            self?.checkSync()
+    /// Opens System Settings to the Microphone pane after a previous denial.
+    func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
         }
+    }
+
+    /// Refreshes permission state (call periodically or after returning from Settings)
+    func refresh() async {
+        await check()
     }
 
     /// Starts polling accessibility permission every ~2.5 seconds.
@@ -93,8 +124,10 @@ final class Permissions {
         guard pollingTimer == nil else { return }
         pollingTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
-            self.refresh()
-            if self.allGranted {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.refresh()
+                guard self.allGranted else { return }
                 self.stopPolling()
             }
         }
@@ -109,11 +142,18 @@ final class Permissions {
     // MARK: - Private
 
     private func checkSync() {
-        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        let ax = AXIsProcessTrusted()
+        let (mic, ax) = statusProvider()
         DispatchQueue.main.async { [weak self] in
             self?.micGranted = mic
             self?.accessibilityGranted = ax
         }
+    }
+
+    /// Runs on the private background queue via `queue.async`, never on the main actor.
+    private nonisolated static func currentStatus() -> (mic: Bool, accessibility: Bool) {
+        (
+            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+            AXIsProcessTrusted()
+        )
     }
 }

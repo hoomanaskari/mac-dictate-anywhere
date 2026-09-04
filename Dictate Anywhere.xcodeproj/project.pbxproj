@@ -23,7 +23,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Dictate Anywhere Dev.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Dictate Anywhere.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.shared.xcconfig; sourceTree = "<group>"; };
 		E2TEST000002 /* Dictate AnywhereTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Dictate AnywhereTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -88,7 +88,7 @@
 		E2A66B592F18203C00DABF41 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */,
+				E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */,
 				E2TEST000002 /* Dictate AnywhereTests.xctest */,
 			);
 			name = Products;
@@ -119,7 +119,7 @@
 				E2SPARKLE002 /* Sparkle */,
 			);
 			productName = "Dictate Anywhere";
-			productReference = E2A66B582F18203C00DABF41 /* Dictate Anywhere Dev.app */;
+			productReference = E2A66B582F18203C00DABF41 /* Dictate Anywhere.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E2TEST000001 /* Dictate AnywhereTests */ = {
@@ -265,6 +265,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -330,9 +331,11 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COMPILATION_CACHE_ENABLE_CACHING = YES;
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2SQ9JNU8XE;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -370,6 +373,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dictate Anywhere/Info.plist";
+				INFOPLIST_PREPROCESS = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere Dev";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -383,6 +387,7 @@
 				);
 				MARKETING_VERSION = 2.8.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere.dev";
+				PRODUCT_MODULE_NAME = Dictate_Anywhere;
 				PRODUCT_NAME = "Dictate Anywhere Dev";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -396,7 +401,6 @@
 		};
 		E2A66B652F18203D00DABF41 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -411,6 +415,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dictate Anywhere/Info.plist";
+				INFOPLIST_PREPROCESS = YES;
+				INFOPLIST_PREPROCESSOR_DEFINITIONS = "RELEASE=1";
 				INFOPLIST_KEY_CFBundleDisplayName = "Dictate Anywhere";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -424,6 +430,7 @@
 				);
 				MARKETING_VERSION = 2.8.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.pixelforty.dictate-anywhere";
+				PRODUCT_MODULE_NAME = Dictate_Anywhere;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -459,7 +466,6 @@
 		};
 		E2TEST000005 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E2A66B6B2F18203D00DABF41 /* Config/Signing.shared.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -473,6 +479,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dictate Anywhere.app/Contents/MacOS/Dictate Anywhere";

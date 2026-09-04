@@ -19,6 +19,7 @@ Carthage/Build/
 # Generated files
 *.dSYM
 *.dSYM.zip
+*.profraw
 
 # Archives
 *.xcarchive

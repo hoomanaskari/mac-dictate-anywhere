@@ -1,5 +1,5 @@
 import XCTest
-@testable import Dictate_Anywhere_Dev
+@testable import Dictate_Anywhere
 
 /// Choosing the overlay's display is expensive: it crosses a process boundary
 /// to ask the target application where it is. The overlay repositions on every
