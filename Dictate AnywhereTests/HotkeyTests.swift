@@ -88,6 +88,8 @@ final class HotkeyTests: XCTestCase {
 
     func testTokenizerKeyOnly() {
         XCTAssertEqual(HotkeyKeycapTokenizer.tokens(from: "F5"), ["F5"])
+        XCTAssertEqual(Settings.displayName(keyCode: 53, modifiers: []), "Esc")
+        XCTAssertEqual(HotkeyKeycapTokenizer.tokens(from: "⌘⎋"), ["⌘", "Esc"])
     }
 
     // MARK: - HotkeyBinding

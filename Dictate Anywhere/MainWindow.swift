@@ -118,6 +118,12 @@ struct MainWindow: View {
         }
         .background(DS.Colors.bgWindow)
         .preferredColorScheme(.light)
+        .alert("Dictation recovery", isPresented: Binding(
+            get: { appState.recoveryStore.errorMessage != nil },
+            set: { if !$0 { appState.recoveryStore.errorMessage = nil } }
+        )) {
+            Button("OK") { appState.recoveryStore.errorMessage = nil }
+        } message: { Text(appState.recoveryStore.errorMessage ?? "") }
         .frame(
             minWidth: MainWindowSizing.minimumWidth,
             maxWidth: .infinity,

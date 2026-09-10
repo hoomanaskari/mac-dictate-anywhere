@@ -36,7 +36,9 @@ final class AppState {
         category: "AppState"
     )
 
-    var status: DictationStatus = .idle
+    var status: DictationStatus = .idle {
+        didSet { updateCancellationAvailability() }
+    }
     var currentTranscript = ""
     var lastTranscript = ""
     var selectedPage: SidebarPage = .models
@@ -63,6 +65,31 @@ final class AppState {
     let appleSpeechEngine = AppleSpeechEngine()
     let s1MiniModelManager = S1MiniModelManager()
     let inputSourceMonitor = InputSourceMonitor()
+    let recoveryStore: DictationRecoveryStore
+    private var recoveryCapture: RecoveryAudioCapture?
+    private var completedRecognitionTranscript: String?
+    private var processingTask: Task<Void, Never>?
+    private var processingOperationID: UUID?
+    private var isCancelling = false
+    private var isDeliveringTranscript = false
+    private(set) var recoveringEntryID: UUID?
+    private(set) var continuingEntryID: UUID?
+    private var transcriptPrefix = ""
+    private var previousRecordingDuration: TimeInterval = 0
+    private var continuationTargetBundleIdentifier: String?
+    private let engineOverride: TranscriptionEngine?
+    private let transcriptDeliveryOverride: ((String) async -> TextInsertionResult)?
+
+    var canCancelDictation: Bool {
+        (status == .recording || status == .processing)
+            && !isCancelling && !isDeliveringTranscript && recoveringEntryID == nil
+    }
+
+    var canStopDictation: Bool { status == .recording && !isTransitioning }
+
+    private func updateCancellationAvailability() {
+        hotkeyService.isCancellationEnabled = canCancelDictation
+    }
     var appleSpeechSupportedLanguages: [SupportedLanguage] = []
     var appleSpeechInstalledLanguages: [SupportedLanguage] = []
     private var isShowingMigrationAlert = false
@@ -101,6 +128,7 @@ final class AppState {
     // MARK: - Active Engine
 
     var activeEngine: TranscriptionEngine {
+        if let engineOverride { return engineOverride }
         switch settings.engineChoice {
         case .parakeet:
             return parakeetEngine
@@ -117,10 +145,16 @@ final class AppState {
 
     init(
         permissions: Permissions? = nil,
-        microphonePermissionRequester: (@MainActor @Sendable () async -> Bool)? = nil
+        microphonePermissionRequester: (@MainActor @Sendable () async -> Bool)? = nil,
+        recoveryStore: DictationRecoveryStore? = nil,
+        engine: TranscriptionEngine? = nil,
+        transcriptDelivery: ((String) async -> TextInsertionResult)? = nil
     ) {
         self.permissions = permissions ?? Permissions()
         self.microphonePermissionRequester = microphonePermissionRequester
+        self.recoveryStore = recoveryStore ?? DictationRecoveryStore()
+        self.engineOverride = engine
+        self.transcriptDeliveryOverride = transcriptDelivery
         setupHotkeyCallbacks()
         setupPermissionCallbacks()
         setupInputSourceCallbacks()
@@ -161,10 +195,13 @@ final class AppState {
             }
         }
 
-        hotkeyService.onEscape = { [weak self] in
+        hotkeyService.onCancel = { [weak self] in
             Task { @MainActor [weak self] in
                 await self?.cancelDictation()
             }
+        }
+        hotkeyService.onCancelProgress = { [weak self] progress in
+            self?.overlay.setCancellationProgress(progress)
         }
     }
 
@@ -185,6 +222,7 @@ final class AppState {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        do { try recoveryStore.reload() } catch { recoveryStore.errorMessage = error.localizedDescription }
 
         Task { [weak self] in
             await self?.s1MiniModelManager.refreshInstallationState()
@@ -213,7 +251,7 @@ final class AppState {
     private func updateAccessibilityIntegration(granted: Bool, promptIfNeeded: Bool) {
         if granted {
             permissions.stopPolling()
-            if settings.hasHotkey && !hotkeyService.isMonitoring {
+            if (settings.hasHotkey || settings.cancelShortcut.hasBinding) && !hotkeyService.isMonitoring {
                 hotkeyService.startMonitoring()
             }
         } else {
@@ -571,6 +609,10 @@ final class AppState {
             }
         }
         await captureInsertionTargetAppAndContext()
+        await beginRecording(engine: engine, mode: mode)
+    }
+
+    private func beginRecording(engine: TranscriptionEngine, mode: HotkeyMode?) async {
         engine.setSessionContextualVocabulary(sessionDictationContext?.lexicalHints ?? [])
 
         isTransitioning = true
@@ -581,8 +623,25 @@ final class AppState {
         sessionHotkeyMode = mode
         configureEndOfUtteranceHandler(for: engine)
 
+        completedRecognitionTranscript = nil
+        isDeliveringTranscript = false
+        prepareSessionRecovery(for: engine)
+        if continuingEntryID != nil && recoveryCapture == nil {
+            await discardSessionRecovery()
+            clearEndOfUtteranceHandler(for: engine)
+            engine.setSessionContextualVocabulary([])
+            sessionEngine = nil
+            sessionHotkeyMode = nil
+            activeRecordingStartupID = nil
+            insertionTargetApp = nil
+            sessionDictationContext = nil
+            isTransitioning = false
+            status = .idle
+            return
+        }
+
         status = .recording
-        currentTranscript = ""
+        currentTranscript = transcriptPrefix
 
         // Play start sound
         settings.playSound("Tink")
@@ -650,7 +709,13 @@ final class AppState {
         }
 
         guard didStart else {
+            let wasContinuing = continuingEntryID != nil
+            await discardSessionRecovery()
             let message = lastStartError?.localizedDescription ?? "Unknown audio startup error"
+            if wasContinuing {
+                currentTranscript = ""
+                recoveryStore.errorMessage = "Could not start the microphone. Your saved session is still available. \(message)"
+            }
             status = .error("Failed to start recording: \(message)")
             overlay.show(state: .processing)
             overlay.hide(afterDelay: 2.0)
@@ -672,7 +737,7 @@ final class AppState {
         }
 
         // Show overlay only after mic is confirmed active
-        overlay.show(state: .listening(level: 0, transcript: ""))
+        overlay.show(state: .listening(level: 0, transcript: currentTranscript))
 
         // Start audio level polling
         startAudioLevelPolling(engine: engine)
@@ -690,9 +755,20 @@ final class AppState {
     func stopDictation() async {
         guard status == .recording, !isTransitioning else { return }
         isTransitioning = true
-        defer { isTransitioning = false }
-
         status = .processing
+        hotkeyService.resetCancellationGesture()
+        let operationID = UUID()
+        processingOperationID = operationID
+        let task = Task { @MainActor in await self.finishDictation() }
+        processingTask = task
+        await task.value
+        guard processingOperationID == operationID else { return }
+        processingTask = nil
+        processingOperationID = nil
+        if !isCancelling { isTransitioning = false }
+    }
+
+    private func finishDictation() async {
         stopAudioLevelPolling()
 
         // Show processing overlay
@@ -704,10 +780,15 @@ final class AppState {
         let engine = sessionEngine ?? activeEngine
 
         // Get final transcript
-        let transcript = await engine.stopRecording()
+        let newTranscript = await engine.stopRecording()
+        let transcript = CancelledDictation.joining(transcriptPrefix, newTranscript)
+        // A cancelled decoder may return no new result. The restored prefix
+        // alone must not mark the newest audio as already fully transcribed.
+        completedRecognitionTranscript = newTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil : transcript
+        guard !Task.isCancelled else { return }
         engine.setSessionContextualVocabulary([])
         clearEndOfUtteranceHandler(for: engine)
-        sessionEngine = nil
         sessionHotkeyMode = nil
 
         // Apply filler word removal
@@ -723,6 +804,11 @@ final class AppState {
                 try? await Task.sleep(for: .milliseconds(200))
                 volumeController.restoreAfterRecording()
             }
+            guard !Task.isCancelled else { return }
+            isDeliveringTranscript = true
+            updateCancellationAvailability()
+            await discardSessionRecovery(completed: true)
+            sessionEngine = nil
             overlay.show(state: .success)
             overlay.hide(afterDelay: 0.5)
             status = .idle
@@ -850,6 +936,7 @@ final class AppState {
             }
         }
 
+        guard !Task.isCancelled else { return }
         if settings.transcriptPostProcessingMode != .none,
            settings.transcriptPostProcessingMode != .fluidAudioVocabulary {
             processedText = normalizePostProcessedTranscript(processedText)
@@ -858,6 +945,10 @@ final class AppState {
             "postProcessing: completed changed=\(processedText != finalText, privacy: .public), outputChars=\(processedText.count, privacy: .public)"
         )
 
+        guard !Task.isCancelled else { return }
+        // Delivery is committed from this point; cancellation must never race a paste.
+        isDeliveringTranscript = true
+        updateCancellationAvailability()
         currentTranscript = processedText
         lastTranscript = processedText
         Self.lastTranscriptForMenuBar = processedText
@@ -867,12 +958,20 @@ final class AppState {
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
         await reactivateInsertionTargetIfNeeded()
         let insertionStyle = sessionDictationContext.map { settings.dictationWritingStyle(for: $0.category) }
-        let result = await textInserter.insertText(
-            processedText,
-            context: sessionDictationContext,
-            style: insertionStyle,
-            knownTerms: settings.customVocabulary
-        )
+        let result: TextInsertionResult
+        if let transcriptDeliveryOverride {
+            result = await transcriptDeliveryOverride(processedText)
+        } else {
+            // A continued session with no usable original destination must not
+            // paste into History or an unrelated app that happens to be frontmost.
+            let canPaste = continuingEntryID == nil || (insertionTargetApp != nil
+                && insertionTargetApp?.isTerminated == false
+                && NSWorkspace.shared.frontmostApplication?.processIdentifier == insertionTargetApp?.processIdentifier)
+            result = await textInserter.insertText(
+                processedText, context: sessionDictationContext, style: insertionStyle,
+                knownTerms: settings.customVocabulary, pasteAutomatically: canPaste
+            )
+        }
         insertionTargetApp = nil
         sessionDictationContext = nil
 
@@ -894,19 +993,48 @@ final class AppState {
         }
 
         overlay.hide(afterDelay: 1.0)
+        await discardSessionRecovery(completed: true)
+        sessionEngine = nil
         status = .idle
     }
 
     func cancelDictation() async {
-        guard status == .recording || status == .processing else { return }
+        guard canCancelDictation else { return }
+
+        isCancelling = true
+        updateCancellationAvailability()
+        let preview = currentTranscript
+        processingTask?.cancel()
 
         activeRecordingStartupID = nil
-        isTransitioning = false
+        isTransitioning = true
         pendingHoldRelease = false
+        isHoldToRecordKeyDown = false
         stopAudioLevelPolling()
+        overlay.hide(afterDelay: 0)
 
         let engine = sessionEngine ?? activeEngine
+        // Let a cancelled finish/cleanup unwind before reusing the same engine.
+        // The task checks cancellation before saving or delivering its result.
+        await processingTask?.value
+        processingOperationID = nil
+        processingTask = nil
         await engine.cancel()
+        if let capture = recoveryCapture {
+            do {
+                let saved = try await recoveryStore.preserve(
+                    capture, preview: preview, completedTranscript: completedRecognitionTranscript,
+                    transcriptPrefix: transcriptPrefix.isEmpty ? nil : transcriptPrefix,
+                    previousDuration: previousRecordingDuration,
+                    targetBundleIdentifier: insertionTargetApp?.bundleIdentifier ?? continuationTargetBundleIdentifier
+                )
+                finishContinuation(removingSource: saved != nil && saved?.captureError == nil)
+            } catch { recoveryStore.errorMessage = "The recovery copy could not be saved: \(error.localizedDescription)" }
+        }
+        finishContinuation(removingSource: false)
+        recoveryCapture = nil
+        engine.recoveryCapture = nil
+        completedRecognitionTranscript = nil
         engine.setSessionContextualVocabulary([])
         clearEndOfUtteranceHandler(for: engine)
         sessionEngine = nil
@@ -923,13 +1051,149 @@ final class AppState {
         status = .idle
         insertionTargetApp = nil
         sessionDictationContext = nil
+        isCancelling = false
+        isTransitioning = false
+        updateCancellationAvailability()
+    }
+
+    private func discardSessionRecovery(completed: Bool = false) async {
+        if let capture = recoveryCapture {
+            do { try await recoveryStore.discard(capture) }
+            catch { recoveryStore.errorMessage = error.localizedDescription }
+        }
+        recoveryCapture = nil
+        completedRecognitionTranscript = nil
+        (sessionEngine ?? activeEngine).recoveryCapture = nil
+        finishContinuation(removingSource: completed)
+    }
+
+    private func finishContinuation(removingSource: Bool) {
+        if let id = continuingEntryID {
+            recoveryStore.release(id: id)
+            if removingSource {
+                do { try recoveryStore.remove(id: id) }
+                catch { recoveryStore.errorMessage = error.localizedDescription }
+            }
+        }
+        continuingEntryID = nil
+        transcriptPrefix = ""
+        previousRecordingDuration = 0
+        continuationTargetBundleIdentifier = nil
+    }
+
+    func prepareSessionRecovery(for engine: TranscriptionEngine) {
+        // Continuing explicitly opts into retaining this existing session,
+        // even if preservation has since been disabled for new dictations.
+        if settings.preserveCancelledSessions || continuingEntryID != nil {
+            do { recoveryCapture = try recoveryStore.beginCapture() }
+            catch { recoveryStore.errorMessage = "Audio recovery is unavailable for this recording: \(error.localizedDescription)" }
+        }
+        engine.recoveryCapture = recoveryCapture
+    }
+
+    func recoverCancelledDictation(_ entry: CancelledDictation) async {
+        guard status == .idle, !isTransitioning else { return }
+        do {
+            try recoveryStore.reload()
+            guard recoveryStore.entries.contains(where: { $0.id == entry.id }) else { return }
+            recoveringEntryID = entry.id
+            recoveryStore.retain(id: entry.id)
+            isTransitioning = true
+            status = .processing
+            defer {
+                recoveringEntryID = nil
+                recoveryStore.release(id: entry.id)
+                isTransitioning = false
+                status = .idle
+            }
+            let text = try await restoredTranscript(for: entry, engine: activeEngine)
+            let cleaned = settings.removeFillerWords(from: text).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else {
+                recoveryStore.errorMessage = "No speech was recovered. The recording is still available; try a different speech model."
+                return
+            }
+            settings.addTranscriptHistoryEntry(cleaned)
+            lastTranscript = cleaned
+            Self.lastTranscriptForMenuBar = cleaned
+            recoveryStore.release(id: entry.id)
+            try recoveryStore.remove(id: entry.id)
+        } catch {
+            recoveryStore.errorMessage = "Recovery failed. The saved session is still available. \(error.localizedDescription)"
+        }
+    }
+
+    private func restoredTranscript(for entry: CancelledDictation, engine: TranscriptionEngine) async throws -> String {
+        if let completed = entry.completedTranscript, !completed.isEmpty { return completed }
+        if entry.hasAudio {
+            if !engine.isReady { try await engine.prepare() }
+            let text = try await engine.transcribeRecording(at: recoveryStore.audioURL(id: entry.id))
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               entry.transcriptPrefix?.isEmpty == false {
+                // The earlier words must not conceal a failed decode of the
+                // newest audio and allow that audio to be replaced on cancel.
+                throw NSError(domain: "DictationRecovery", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                    "No speech was recognized in the latest saved audio. It has been kept so you can try another speech model."])
+            }
+            return CancelledDictation.joining(entry.transcriptPrefix ?? "", text)
+        }
+        return entry.preview.isEmpty ? (entry.transcriptPrefix ?? "") : entry.preview
+    }
+
+    func continueCancelledDictation(_ entry: CancelledDictation) async {
+        guard status == .idle, !isTransitioning else { return }
+        isTransitioning = true
+        defer { if status != .recording { isTransitioning = false } }
+        if !permissions.micGranted {
+            let granted: Bool
+            if let microphonePermissionRequester { granted = await microphonePermissionRequester() }
+            else { granted = await permissions.requestMic() }
+            permissions.micGranted = granted
+            recoveryStore.errorMessage = granted
+                ? "Microphone access is ready. Click Continue to resume your saved session."
+                : "Microphone access is required to continue. Your saved session is still available."
+            return
+        }
+        do {
+            try recoveryStore.reload()
+            guard let saved = recoveryStore.entries.first(where: { $0.id == entry.id }) else { return }
+            recoveryStore.retain(id: saved.id)
+            continuingEntryID = saved.id
+            recoveringEntryID = saved.id
+            status = .processing
+            let engine = activeEngine
+            if !engine.isReady { try await engine.prepare() }
+            let restored = try await restoredTranscript(for: saved, engine: engine)
+            try Task.checkCancellation()
+            guard !restored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "DictationRecovery", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                    "No speech was restored. Try Recover text with a different speech model."])
+            }
+            transcriptPrefix = restored
+            previousRecordingDuration = saved.duration
+            continuationTargetBundleIdentifier = saved.targetBundleIdentifier
+            let target = saved.targetBundleIdentifier.flatMap {
+                NSRunningApplication.runningApplications(withBundleIdentifier: $0).first { !$0.isTerminated }
+            }
+            await captureInsertionTargetAppAndContext(target: target, useFrontmost: false)
+            await reactivateInsertionTargetIfNeeded()
+            try Task.checkCancellation()
+            recoveringEntryID = nil
+            await beginRecording(engine: engine, mode: .handsFreeToggle)
+        } catch {
+            finishContinuation(removingSource: false)
+            recoveringEntryID = nil
+            insertionTargetApp = nil
+            sessionDictationContext = nil
+            status = .idle
+            recoveryStore.errorMessage = "Could not continue. Your saved session is still available. \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Audio Level Polling
 
-    private func captureInsertionTargetAppAndContext() async {
+    private func captureInsertionTargetAppAndContext(target: NSRunningApplication? = nil, useFrontmost: Bool = true) async {
         let currentPID = ProcessInfo.processInfo.processIdentifier
-        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+        guard let frontmost = useFrontmost ? NSWorkspace.shared.frontmostApplication : target,
               frontmost.processIdentifier != currentPID else {
             insertionTargetApp = nil
             sessionDictationContext = nil
@@ -1000,7 +1264,7 @@ final class AppState {
 
     private func startAudioLevelPolling(engine: TranscriptionEngine) {
         audioLevelTask = Task { [weak self] in
-            var displayTranscript = ""
+            var displayTranscript = self?.transcriptPrefix ?? ""
             var transcriptPollTick = 0
             var lastTranscriptLength = 0
             while !Task.isCancelled {
@@ -1018,7 +1282,7 @@ final class AppState {
                     let transcript = engine.currentTranscript
                     if transcript.count != lastTranscriptLength {
                         lastTranscriptLength = transcript.count
-                        displayTranscript = transcript
+                        displayTranscript = CancelledDictation.joining(self.transcriptPrefix, transcript)
                         self.currentTranscript = displayTranscript
                     }
                 }

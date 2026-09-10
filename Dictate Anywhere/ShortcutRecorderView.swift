@@ -14,6 +14,7 @@ struct ShortcutRecorderView: View {
     let onClear: () -> Void
     let onRecordingStarted: () -> Void
     let onRecordingStopped: () -> Void
+    var allowsEscape = false
 
     @State private var isRecording = false
     @State private var recorder = ShortcutRecorder()
@@ -23,13 +24,15 @@ struct ShortcutRecorderView: View {
         onRecord: @escaping (UInt16?, HotkeyModifiers, String) -> Void,
         onClear: @escaping () -> Void,
         onRecordingStarted: @escaping () -> Void = {},
-        onRecordingStopped: @escaping () -> Void = {}
+        onRecordingStopped: @escaping () -> Void = {},
+        allowsEscape: Bool = false
     ) {
         self.displayName = displayName
         self.onRecord = onRecord
         self.onClear = onClear
         self.onRecordingStarted = onRecordingStarted
         self.onRecordingStopped = onRecordingStopped
+        self.allowsEscape = allowsEscape
     }
 
     var body: some View {
@@ -69,12 +72,14 @@ struct ShortcutRecorderView: View {
         }
         .fixedSize(horizontal: true, vertical: false)
         .layoutPriority(1)
+        .onDisappear { if isRecording { stopRecording() } }
     }
 
     private func startRecording() {
         guard !isRecording else { return }
         isRecording = true
         onRecordingStarted()
+        recorder.allowsEscape = allowsEscape
         recorder.start { keyCode, modifiers, name in
             onRecord(keyCode, modifiers, name)
             isRecording = false
@@ -96,6 +101,7 @@ struct ShortcutRecorderView: View {
 
 @Observable
 final class ShortcutRecorder {
+    var allowsEscape = false
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var onCapture: ((UInt16?, HotkeyModifiers, String) -> Void)?
@@ -162,7 +168,7 @@ final class ShortcutRecorder {
     private func handleKeyDown(_ event: CGEvent) {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
-        if keyCode == 53 {
+        if keyCode == 53 && !allowsEscape {
             DispatchQueue.main.async { [weak self] in
                 self?.onCancel?()
                 self?.stop()
@@ -240,7 +246,7 @@ final class ShortcutRecorder {
 
             let keyCode = event.keyCode
 
-            if keyCode == 53 {
+            if keyCode == 53 && !self.allowsEscape {
                 self.onCancel?()
                 self.stop()
                 return nil

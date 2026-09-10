@@ -15,7 +15,22 @@ final class HotkeyService {
 
     var onKeyDown: ((HotkeyBinding) -> Void)?
     var onKeyUp: ((HotkeyBinding) -> Void)?
-    var onEscape: (() -> Void)?
+    var onCancel: (() -> Void)?
+    var onCancelProgress: ((Double?) -> Void)?
+    var isCancellationEnabled = false {
+        didSet { if !isCancellationEnabled { resetCancellationGesture() } }
+    }
+    private var cancelBinding = HotkeyBinding.defaultCancelBinding
+    private var requiresCancelHold = true
+    private var cancelGesture = CancellationGesture()
+    private var cancelHoldTask: Task<Void, Never>?
+
+    func resetCancellationGesture() {
+        cancelHoldTask?.cancel()
+        cancelHoldTask = nil
+        cancelGesture.reset()
+        onCancelProgress?(nil)
+    }
 
     // MARK: - State
 
@@ -51,6 +66,7 @@ final class HotkeyService {
     }
 
     func stopMonitoring() {
+        resetCancellationGesture()
         cancelRetry(resetAttempts: true)
         if let source = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
@@ -77,7 +93,7 @@ final class HotkeyService {
         guard !isMonitoring else { return }
 
         let settings = Settings.shared
-        guard settings.hasHotkey else {
+        guard settings.hasHotkey || settings.cancelShortcut.hasBinding else {
             cachedBindings = []
             cancelRetry(resetAttempts: true)
             return
@@ -90,7 +106,8 @@ final class HotkeyService {
         }
 
         // Snapshot + normalize bindings so the callback thread never touches Settings
-        cachedBindings = settings.hotkeyBindings.map(canonicalBindingForMatching)
+        configureBindings(recording: settings.hotkeyBindings, cancellation: settings.cancelShortcut,
+                          requiresHold: settings.holdToCancel)
 
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
 
@@ -148,17 +165,16 @@ final class HotkeyService {
 
     // MARK: - Event Handling
 
-    fileprivate func handleEvent(_ proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Bool {
-        // Handle escape key for cancelling hands-free mode
-        if type == .keyDown {
-            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            if keyCode == 53 { // Escape
-                DispatchQueue.main.async { [weak self] in
-                    self?.onEscape?()
-                }
-                return false
-            }
-        }
+    func configureBindings(recording: [HotkeyBinding], cancellation: HotkeyBinding, requiresHold: Bool) {
+        resetCancellationGesture()
+        cachedBindings = recording.map(canonicalBindingForMatching)
+        cancelBinding = canonicalBindingForMatching(cancellation)
+        requiresCancelHold = requiresHold
+    }
+
+    func handleEvent(type: CGEventType, event: CGEvent) -> Bool {
+        let consumedByCancellation = handleCancellationEvent(type: type, event: event)
+        if consumedByCancellation { return true }
 
         let bindings = cachedBindings
         var shouldConsumeEvent = false
@@ -172,6 +188,71 @@ final class HotkeyService {
             }
         }
         return shouldConsumeEvent
+    }
+
+    private func handleCancellationEvent(type: CGEventType, event: CGEvent) -> Bool {
+        guard isCancellationEnabled, cancelBinding.hasBinding else { return false }
+        let wasPressed = cancelGesture.startedAt != nil
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        cancelGesture.update(
+            type: type, keyCode: keyCode,
+            modifiers: cancellationModifiers(from: Settings.hotkeyModifiers(from: event.flags)),
+            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+            binding: cancelBinding, now: ProcessInfo.processInfo.systemUptime
+        )
+        let isPressed = cancelGesture.startedAt != nil
+        if wasPressed && !isPressed {
+            resetCancellationGesture()
+        } else if !wasPressed && isPressed {
+            advanceCancellationGesture()
+            if requiresCancelHold {
+                cancelHoldTask = Task { @MainActor [weak self] in
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                        guard let self, self.isCancellationEnabled,
+                              self.cancelGesture.startedAt != nil else { return }
+                        self.advanceCancellationGesture()
+                        if self.cancelGesture.fired { return }
+                    }
+                }
+            }
+        }
+        // Plain Escape remains available to the foreground application during a hold.
+        // Other bound key combinations are reserved only during an active dictation.
+        let isPlainEscape = cancelBinding.keyCode == 53 && cancelBinding.modifiers.isEmpty
+        return !isPlainEscape && cancelBinding.keyCode == keyCode
+            && (type == .keyDown || type == .keyUp) && (wasPressed || isPressed)
+    }
+
+    private func advanceCancellationGesture() {
+        let now = ProcessInfo.processInfo.systemUptime
+        onCancelProgress?(requiresCancelHold ? cancelGesture.progress(now: now, requiresHold: true) : nil)
+        if cancelGesture.shouldCancel(now: now, requiresHold: requiresCancelHold) {
+            onCancelProgress?(nil)
+            onCancel?()
+        }
+    }
+
+    private func cancellationModifiers(from eventModifiers: HotkeyModifiers) -> HotkeyModifiers {
+        var modifiers = eventModifiers
+        let cancellationGroups = Settings.deviceIndependentModifiers(from: cancelBinding.modifiers)
+        let groups: [(HotkeyModifiers, HotkeyModifiers)] = [
+            (.command, [.command, .leftCommand, .rightCommand]),
+            (.control, [.control, .leftControl, .rightControl]),
+            (.option, [.option, .leftOption, .rightOption]),
+            (.shift, [.shift, .leftShift, .rightShift]),
+            (.function, [.function]),
+        ]
+        // A user holding their push-to-talk shortcut must still be able to
+        // cancel. Ignore only those held recording modifiers that are not
+        // themselves part of the cancellation shortcut.
+        for binding in cachedBindings where binding.mode == .holdToRecord && activeBindingIDs.contains(binding.id) {
+            let heldGroups = Settings.deviceIndependentModifiers(from: binding.modifiers)
+            for (generic, allSides) in groups where heldGroups.contains(generic) && !cancellationGroups.contains(generic) {
+                modifiers.subtract(allSides)
+            }
+        }
+        return modifiers
     }
 
     private func canonicalBindingForMatching(_ binding: HotkeyBinding) -> HotkeyBinding {
@@ -279,6 +360,7 @@ private func hotkeyEventCallback(
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         // Re-enable the tap
         let service = Unmanaged<HotkeyService>.fromOpaque(userInfo).takeUnretainedValue()
+        service.resetCancellationGesture()
         if let tap = service.eventTap {
             CGEvent.tapEnable(tap: tap, enable: true)
         }
@@ -286,7 +368,7 @@ private func hotkeyEventCallback(
     }
 
     let service = Unmanaged<HotkeyService>.fromOpaque(userInfo).takeUnretainedValue()
-    if service.handleEvent(proxy, type: type, event: event) {
+    if service.handleEvent(type: type, event: event) {
         return nil
     }
 

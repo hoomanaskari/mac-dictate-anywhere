@@ -26,6 +26,8 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 ## Features
 
 - **Global Hotkey** - Press and hold Fn key (or custom shortcut) to dictate from anywhere
+- **Safer Cancellation** - Rebind or clear the cancel shortcut in Shortcuts. Optional one-second hold-to-cancel is enabled by default; a quick Escape tap keeps dictation running.
+- **Continue Cancelled Sessions** - Cancelled dictations are saved locally for 24 hours by default. Continue in History restores your words using the selected speech model and language, then restarts the microphone. Stop to insert one combined dictation into the original app, or copy it if that app is unavailable. Recover text saves words to History without recording or pasting.
 - **On-Device Processing** - All speech recognition runs locally using FluidAudio Parakeet, Nemotron, or SenseVoice models
 - **26 Languages** - English, German, French, Spanish and 21 more European languages, plus Mandarin Chinese (Simplified) via the SenseVoice and Nemotron multilingual models (Nemotron multilingual requires Apple Silicon; SenseVoice also runs on Intel)
 - **Hands-Free Mode** - Tap to start, tap again to stop
@@ -282,6 +284,7 @@ The app uses FluidAudio speech models that run entirely on your Mac. Parakeet TD
 
 ## Privacy
 
+- **Temporary Recovery Audio** - When Preserve cancelled sessions is enabled, audio is written locally while recording. Completed sessions delete this temporary copy; cancelled sessions expire after 24 hours (or on the next launch if the app is closed). Recovery files are excluded from backups. Continue retains the original until the combined dictation is completed or safely saved, and preserves all restored words if cancelled again. Turning preservation off applies to new dictations; continuing an existing saved session still protects it. Existing copies can be deleted from History.
 - **100% On-Device Speech Recognition** - All audio transcription happens locally on your Mac
 - **Context Stays Local by Default** - Surrounding text is used by on-device/local processing but is withheld from remote servers unless you explicitly enable remote context sharing
 - **S1-mini Stays Fully Local** - After its one-time model download, S1-mini by Superwhisper receives transcript text only in local memory and does not require a model server

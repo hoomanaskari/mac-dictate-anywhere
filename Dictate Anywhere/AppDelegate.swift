@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var mainWindow: NSWindow?
     private var customVocabularyMenuItem: NSMenuItem?
+    private var cancelDictationMenuItem: NSMenuItem?
+    private var stopDictationMenuItem: NSMenuItem?
 
     override init() {
         self.appState = AppState()
@@ -98,6 +100,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         copyItem.target = self
         menu.addItem(copyItem)
 
+        let stopItem = NSMenuItem(title: "Stop Dictation", action: #selector(stopDictation), keyEquivalent: "")
+        stopItem.target = self
+        stopDictationMenuItem = stopItem
+        menu.addItem(stopItem)
+
+        let cancelItem = NSMenuItem(title: "Cancel Dictation", action: #selector(cancelDictation), keyEquivalent: "")
+        cancelItem.target = self
+        cancelDictationMenuItem = cancelItem
+        menu.addItem(cancelItem)
+
         let vocabItem = NSMenuItem(title: "Add Custom Vocabulary", action: #selector(showVocabularyPanel), keyEquivalent: "")
         vocabItem.target = self
         customVocabularyMenuItem = vocabItem
@@ -148,6 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Window
+
+    @objc private func cancelDictation() {
+        Task { await appState.cancelDictation() }
+    }
+
+    @objc private func stopDictation() {
+        Task { await appState.stopDictation() }
+    }
 
     private func configureMainWindow() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -252,6 +272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if let statusMenu = statusItem?.menu, menu === statusMenu {
+            stopDictationMenuItem?.isHidden = !appState.canStopDictation
+            cancelDictationMenuItem?.isHidden = !appState.canCancelDictation
             customVocabularyMenuItem?.isHidden = !Settings.shared
                 .transcriptPostProcessingMode
                 .supportedFeatures

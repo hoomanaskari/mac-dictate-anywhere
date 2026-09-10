@@ -9,7 +9,8 @@ enum HotkeyKeycapTokenizer {
         guard !displayName.isEmpty else { return [] }
 
         var tokens: [String] = []
-        var remainder = Substring(displayName)
+        // Also render bindings saved before Escape used its readable key name.
+        var remainder = Substring(displayName.replacingOccurrences(of: "\u{238B}", with: "Esc"))
 
         while !remainder.isEmpty {
             if remainder.hasPrefix("fn") {

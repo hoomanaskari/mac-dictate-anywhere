@@ -29,7 +29,11 @@ final class PermissionLifecycleTests: XCTestCase {
         }
         XCTAssertFalse(appState.isHoldToRecordKeyDown)
         await permissionResponse.resolve(granted: true)
-        await Task.yield()
+        // Resolving the continuation resumes another task; a single yield is
+        // not a completion barrier for its permission-state update.
+        for _ in 0..<100 where !appState.permissions.micGranted {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertTrue(appState.permissions.micGranted)
         XCTAssertEqual(appState.status, .idle)

@@ -30,6 +30,10 @@ final class OverlayWindow {
 
     // MARK: - Public
 
+    func setCancellationProgress(_ progress: Double?) {
+        model.cancellationProgress = progress
+    }
+
     /// Whether the overlay is currently presented.
     var isVisible: Bool {
         model.isVisible

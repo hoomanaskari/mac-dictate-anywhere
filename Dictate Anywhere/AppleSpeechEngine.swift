@@ -73,6 +73,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
     private var transcript = ""
     private var levelSampleBuffer: [Float] = []
     private var audioCaptureController: AudioCaptureController?
+    var recoveryCapture: RecoveryAudioCapture?
     private var preparedSession: (any AppleSpeechSessionProtocol)?
     private var activeSession: (any AppleSpeechSessionProtocol)?
     private var preparedLanguage: SupportedLanguage?
@@ -142,6 +143,13 @@ final class AppleSpeechEngine: TranscriptionEngine {
             throw TranscriptionError.appleSpeechUnavailable
         }
 
+        // Cancellation must cover preparation as well as the microphone
+        // factory, including the fresh session needed after a previous stop.
+        audioCaptureStartupCancellation?.cancel()
+        let startupCancellation = AudioCaptureStartupCancellation()
+        audioCaptureStartupCancellation = startupCancellation
+        let recoveryCapture = self.recoveryCapture
+
         let language = Settings.shared.appleSpeechLanguage
         let vocabulary = appleContextualVocabulary()
         if !isReady
@@ -151,6 +159,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
             try await prepare()
         }
 
+        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
         guard let session = preparedSession else {
             throw TranscriptionError.engineNotReady
         }
@@ -162,9 +171,6 @@ final class AppleSpeechEngine: TranscriptionEngine {
             levelSampleBuffer.removeAll(keepingCapacity: true)
         }
         let usesExplicitMicrophoneSelection = Settings.shared.selectedMicrophoneUID != nil
-        audioCaptureStartupCancellation?.cancel()
-        let startupCancellation = AudioCaptureStartupCancellation()
-        audioCaptureStartupCancellation = startupCancellation
 
         do {
             try await session.start()
@@ -177,6 +183,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
                     deviceID: deviceID,
                     usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection
                 ) { [weak self, weak session] samples in
+                    recoveryCapture?.append(samples)
                     guard let self, let session else { return }
                     self.appendLevelSamples(samples)
                     session.append(samples: samples)
@@ -226,6 +233,15 @@ final class AppleSpeechEngine: TranscriptionEngine {
         stateLock.withLock {
             levelSampleBuffer.removeAll(keepingCapacity: false)
         }
+    }
+
+    func transcribeRecording(at url: URL) async throws -> String {
+        guard #available(macOS 26.0, *), Self.isSupported else { throw TranscriptionError.appleSpeechUnavailable }
+        let session = try await AppleSpeechSession(
+            language: Settings.shared.appleSpeechLanguage,
+            contextualVocabulary: appleContextualVocabulary(), onTranscript: { _ in }
+        )
+        return try await session.transcribeFile(at: url)
     }
 
     func invalidatePreparedSession() async {
@@ -391,6 +407,13 @@ private final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionP
     }
 
     func start() async throws {
+        startResults()
+        analysisTask = Task { [analyzer, inputStream] in
+            try await analyzer.analyzeSequence(inputStream)
+        }
+    }
+
+    private func startResults() {
         resultTask = Task { [transcriber, onTranscript] in
             var finalized = ""
             var volatile = ""
@@ -407,8 +430,33 @@ private final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionP
             return finalized + volatile
         }
 
-        analysisTask = Task { [analyzer, inputStream] in
-            try await analyzer.analyzeSequence(inputStream)
+    }
+
+    func transcribeFile(at url: URL) async throws -> String {
+        let reader = try RecoveryAudioReader(url: url)
+        // Pull audio only when the analyzer requests the next chunk. The live
+        // microphone's push stream would otherwise buffer the entire file.
+        let stream = AsyncThrowingStream<AnalyzerInput, Error>(unfolding: { [self] in
+            try Task.checkCancellation()
+            guard let samples = try reader.nextSamples() else { return nil }
+            let source = try makePCMBuffer(from: samples)
+            let buffer = try conversionLock.withLock { try convertIfNeeded(source) }
+            return AnalyzerInput(buffer: buffer)
+        })
+        startResults()
+        do {
+            if let lastSample = try await analyzer.analyzeSequence(stream) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            let text = try await resultTask?.value ?? ""
+            resultTask = nil
+            try Task.checkCancellation()
+            return text
+        } catch {
+            await cancel()
+            throw error
         }
     }
 

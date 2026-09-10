@@ -26,7 +26,8 @@ final class TextInserter {
         _ text: String,
         context: DictationContext? = nil,
         style: DictationWritingStyle? = nil,
-        knownTerms: [String] = []
+        knownTerms: [String] = [],
+        pasteAutomatically: Bool = true
     ) async -> TextInsertionResult {
         let targetBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let insertionText = preparedTextForInsertion(
@@ -40,6 +41,10 @@ final class TextInserter {
 
         // Copy to clipboard first (always)
         guard await copyToClipboard(insertionText) else { return .failed }
+        guard pasteAutomatically else {
+            resetPendingSeparator()
+            return .copiedOnly
+        }
 
         // Check accessibility permission
         guard hasAccessibilityPermission(promptIfNeeded: true) else {

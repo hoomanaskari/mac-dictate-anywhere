@@ -207,6 +207,7 @@ nonisolated private func removeEmptyParentDirectories(from directory: URL) {
 // MARK: - Protocol
 
 protocol TranscriptionEngine: AnyObject {
+    var recoveryCapture: RecoveryAudioCapture? { get set }
     var isReady: Bool { get }
     var currentTranscript: String { get }
     var audioSamples: [Float] { get }
@@ -216,6 +217,7 @@ protocol TranscriptionEngine: AnyObject {
     func startRecording(deviceID: AudioDeviceID?) async throws
     func stopRecording() async -> String
     func cancel() async
+    func transcribeRecording(at url: URL) async throws -> String
     /// Session-scoped local recognition hints. Engines that do not support
     /// contextual vocabulary safely ignore this value.
     func setSessionContextualVocabulary(_ terms: [String])
@@ -441,6 +443,8 @@ final class ParakeetEngine: TranscriptionEngine {
     private var loadedModels: AsrModels?
     private let asrCoordinator = AsrManagerCoordinator()
     private var audioCaptureController: AudioCaptureController?
+    var recoveryCapture: RecoveryAudioCapture?
+    private var audioCaptureStartupCancellation: AudioCaptureStartupCancellation?
     private var sampleBuffer: [Float] = []
     private var levelSampleBuffer: [Float] = []
     private var fullRecordingSamples: [Float] = []
@@ -862,6 +866,10 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func startRecording(deviceID: AudioDeviceID?) async throws {
+        let startupCancellation = AudioCaptureStartupCancellation()
+        audioCaptureStartupCancellation?.cancel()
+        audioCaptureStartupCancellation = startupCancellation
+        let recoveryCapture = self.recoveryCapture
         logger.info("startRecording: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
         let modelChoice = selectedModelChoice
         if !(await asrCoordinator.isInitialized(for: modelChoice)) {
@@ -880,6 +888,7 @@ final class ParakeetEngine: TranscriptionEngine {
             }
             throw TranscriptionError.engineNotReady
         }
+        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
         try await asrCoordinator.resetSession(for: modelChoice)
 
         if modelChoice == .nemotronMultilingual {
@@ -887,9 +896,11 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Ensure a previous engine is fully torn down before starting a new one.
+        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
         await teardownAudioEngineIfNeeded()
 
         // Clear state
+        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: true)
             levelSampleBuffer.removeAll(keepingCapacity: true)
@@ -907,46 +918,47 @@ final class ParakeetEngine: TranscriptionEngine {
 
         // Start audio engine (async to avoid deadlock — the tap callback dispatches to main)
         logger.info("startRecording: dispatching to engineQueue for audio engine setup")
-        let captureController = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AudioCaptureController, Error>) in
-            engineQueue.async {
-                do {
-                    let result = try makeAudioCaptureController(
-                        deviceID: deviceID,
-                        usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection
-                    ) { [weak self] samples in
-                        guard let self else { return }
-                        self.lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
-                        var droppedCount = 0
-                        self.sampleLock.withLock {
-                            // Trim before appending to avoid memory spike
-                            let projectedCount = self.sampleBuffer.count + samples.count
-                            if projectedCount > self.hardPendingSampleCap {
-                                droppedCount = projectedCount - self.hardPendingSampleCap
-                                let toRemove = min(droppedCount, self.sampleBuffer.count)
-                                if toRemove > 0 {
-                                    self.sampleBuffer.removeFirst(toRemove)
-                                }
-                            }
-                            self.sampleBuffer.append(contentsOf: samples)
-                            self.levelSampleBuffer.append(contentsOf: samples)
-                            let levelCap = self.sampleRate * 10
-                            if self.levelSampleBuffer.count > levelCap {
-                                self.levelSampleBuffer.removeFirst(self.levelSampleBuffer.count - levelCap)
-                            }
-                            self.fullRecordingSamples.append(contentsOf: samples)
-                            self.totalSampleCount += samples.count
-                        }
-                        if droppedCount > 0 {
-                            self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
+        let captureController = try await startAudioCaptureOffMainActor(
+            timeout: 5, queue: engineQueue, cancellation: startupCancellation
+        ) {
+            try makeAudioCaptureController(
+                deviceID: deviceID,
+                usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection
+            ) { [weak self] samples in
+                recoveryCapture?.append(samples)
+                guard let self else { return }
+                self.lastTapCallbackTime = CFAbsoluteTimeGetCurrent()
+                var droppedCount = 0
+                self.sampleLock.withLock {
+                    // Trim before appending to avoid memory spike
+                    let projectedCount = self.sampleBuffer.count + samples.count
+                    if projectedCount > self.hardPendingSampleCap {
+                        droppedCount = projectedCount - self.hardPendingSampleCap
+                        let toRemove = min(droppedCount, self.sampleBuffer.count)
+                        if toRemove > 0 {
+                            self.sampleBuffer.removeFirst(toRemove)
                         }
                     }
-                    continuation.resume(returning: result)
-                } catch {
-                    audioLogger.error("startRecording: makeRecordingEngine failed: \(error.localizedDescription, privacy: .public)")
-                    continuation.resume(throwing: error)
+                    self.sampleBuffer.append(contentsOf: samples)
+                    self.levelSampleBuffer.append(contentsOf: samples)
+                    let levelCap = self.sampleRate * 10
+                    if self.levelSampleBuffer.count > levelCap {
+                        self.levelSampleBuffer.removeFirst(self.levelSampleBuffer.count - levelCap)
+                    }
+                    self.fullRecordingSamples.append(contentsOf: samples)
+                    self.totalSampleCount += samples.count
+                }
+                if droppedCount > 0 {
+                    self.logger.warning("Dropped \(droppedCount, privacy: .public) buffered samples to avoid memory pressure.")
                 }
             }
         }
+
+        guard audioCaptureStartupCancellation === startupCancellation else {
+            captureController.stop()
+            throw CancellationError()
+        }
+        audioCaptureStartupCancellation = nil
 
         audioCaptureController = captureController
         isRecordingActive = true
@@ -967,6 +979,10 @@ final class ParakeetEngine: TranscriptionEngine {
     func stopRecording() async -> String {
         guard isRecordingActive else { return currentTranscript }
 
+        // Stop capture before awaiting recognition so a finishing request cannot
+        // keep recording the user's microphone in the background.
+        await teardownAudioEngineIfNeeded()
+
         // Stop transcription loop
         isTranscribing = false
         if let task = transcriptionTask {
@@ -974,9 +990,6 @@ final class ParakeetEngine: TranscriptionEngine {
             _ = await task.result
             transcriptionTask = nil
         }
-
-        // Stop audio engine
-        await teardownAudioEngineIfNeeded()
 
         // Final transcription
         let final_transcript = await performFinalTranscription()
@@ -986,10 +999,14 @@ final class ParakeetEngine: TranscriptionEngine {
     }
 
     func cancel() async {
+        audioCaptureStartupCancellation?.cancel()
+        audioCaptureStartupCancellation = nil
         isTranscribing = false
         transcriptionTask?.cancel()
-        transcriptionTask = nil
         await teardownAudioEngineIfNeeded()
+        let task = transcriptionTask
+        await task?.value
+        transcriptionTask = nil
         isRecordingActive = false
         committedTranscript = ""
         sampleLock.withLock {
@@ -1003,6 +1020,40 @@ final class ParakeetEngine: TranscriptionEngine {
             self.currentTranscript = ""
             self.audioSamples = []
         }
+    }
+
+    func transcribeRecording(at url: URL) async throws -> String {
+        let model = selectedModelChoice
+        guard await asrCoordinator.isInitialized(for: model) else { throw TranscriptionError.engineNotReady }
+        if model.tdtModelVersion != nil {
+            // The library's disk-backed decoder keeps context across windows.
+            // Independently transcribing file chunks can split and lose words.
+            return try await asrCoordinator.transcribeRecording(at: url)
+        }
+        try await asrCoordinator.resetSession(for: model)
+        if model == .nemotronMultilingual {
+            await asrCoordinator.setStreamingLanguage(Settings.shared.selectedLanguage.nemotronLanguageCode)
+        }
+        let reader = try RecoveryAudioReader(url: url)
+        var text = ""
+        while let samples = try reader.nextSamples(maxSamples: Self.chunkTranscriptionSampleCount) {
+            try Task.checkCancellation()
+            if model.usesTrueStreaming {
+                // Feed streaming models in one-second blocks to keep latency and memory bounded.
+                for offset in stride(from: 0, to: samples.count, by: 16_000) {
+                    try Task.checkCancellation()
+                    let buffer = try makePCMBuffer(from: Array(samples[offset..<min(offset + 16_000, samples.count)]))
+                    try await asrCoordinator.appendStreamingAudio(buffer)
+                    try await asrCoordinator.processStreamingAudio()
+                }
+            } else {
+                let result = try await asrCoordinator.transcribe(samples)
+                text = Self.joinChunkTranscripts(base: text, addition: result.text)
+            }
+        }
+        if model.usesTrueStreaming { text = try await asrCoordinator.finishStreaming() }
+        try Task.checkCancellation()
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Transcription Loop
@@ -1545,6 +1596,14 @@ private actor AsrManagerCoordinator {
         let result = try await manager.transcribe(samples, decoderState: &decoderState)
         logger.info("transcribe: returned \(result.text.count, privacy: .public) chars")
         return result
+    }
+
+    func transcribeRecording(at url: URL) async throws -> String {
+        guard let manager else { throw TranscriptionError.engineNotReady }
+        var decoderState = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(url, decoderState: &decoderState)
+        try Task.checkCancellation()
+        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func transcribeWithCustomVocabulary(_ samples: [Float], terms: [String]) async throws -> ASRResult {

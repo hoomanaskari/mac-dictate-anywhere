@@ -636,6 +636,11 @@ struct HotkeyBinding: Codable, Identifiable, Equatable {
         displayName: "\u{2303}\u{2325}\u{2318}",
         mode: .holdToRecord
     )
+
+    static let defaultCancelBinding = HotkeyBinding(
+        id: UUID(), keyCode: 53, modifiersRawValue: 0,
+        displayName: "Esc", mode: .handsFreeToggle
+    )
 }
 
 /// One user-configured input-source → transcription-profile mapping.
@@ -672,6 +677,23 @@ struct TranscriptHistoryEntry: Identifiable, Codable, Equatable {
 // MARK: - Conflict Detector
 
 enum ConflictDetector {
+    /// Includes modifier prefixes: a modifier-only recording shortcut would fire
+    /// before the user could finish pressing a keyed cancellation shortcut.
+    static func cancellationConflict(_ recording: HotkeyBinding, _ cancellation: HotkeyBinding) -> Bool {
+        guard recording.hasBinding, cancellation.hasBinding else { return false }
+        switch (recording.keyCode, cancellation.keyCode) {
+        case (.some(let recordingKey), .some(let cancellationKey)):
+            return recordingKey == cancellationKey
+                && Settings.keyedModifiersMatch(event: cancellation.modifiers, target: recording.modifiers)
+        case (.none, .some):
+            return Settings.keyedModifiersMatch(event: cancellation.modifiers, target: recording.modifiers)
+        case (.some, .none):
+            return Settings.keyedModifiersMatch(event: recording.modifiers, target: cancellation.modifiers)
+        case (.none, .none):
+            return Settings.modifierOnlyModifiersMatch(event: recording.modifiers, target: cancellation.modifiers)
+                || Settings.modifierOnlyModifiersMatch(event: cancellation.modifiers, target: recording.modifiers)
+        }
+    }
     /// Checks if a binding duplicates another binding in the array (by key combo, ignoring mode)
     static func internalConflict(for binding: HotkeyBinding, in bindings: [HotkeyBinding]) -> String? {
         guard binding.hasBinding else { return nil }
@@ -743,6 +765,9 @@ final class Settings {
 
     private enum Keys {
         static let hotkeyBindings = "hotkeyBindings"
+        static let cancelShortcut = "cancelShortcut"
+        static let holdToCancel = "holdToCancel"
+        static let preserveCancelledSessions = "preserveCancelledSessions"
         // Legacy keys for migration
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
@@ -798,6 +823,22 @@ final class Settings {
     }
 
     // MARK: - Hotkey Settings
+
+    var cancelShortcut: HotkeyBinding {
+        didSet {
+            if let data = try? JSONEncoder().encode(cancelShortcut) {
+                UserDefaults.standard.set(data, forKey: Keys.cancelShortcut)
+            }
+        }
+    }
+
+    var holdToCancel: Bool {
+        didSet { UserDefaults.standard.set(holdToCancel, forKey: Keys.holdToCancel) }
+    }
+
+    var preserveCancelledSessions: Bool {
+        didSet { UserDefaults.standard.set(preserveCancelledSessions, forKey: Keys.preserveCancelledSessions) }
+    }
 
     /// All configured hotkey bindings
     var hotkeyBindings: [HotkeyBinding] {
@@ -1264,6 +1305,12 @@ final class Settings {
 
     private init() {
         let defaults = UserDefaults.standard
+
+        cancelShortcut = defaults.data(forKey: Keys.cancelShortcut)
+            .flatMap { try? JSONDecoder().decode(HotkeyBinding.self, from: $0) }
+            .map(Self.canonicalizedHotkeyBinding) ?? .defaultCancelBinding
+        holdToCancel = defaults.object(forKey: Keys.holdToCancel) as? Bool ?? true
+        preserveCancelledSessions = defaults.object(forKey: Keys.preserveCancelledSessions) as? Bool ?? true
 
         // Hotkey bindings (with migration from legacy single-hotkey format)
         if let data = defaults.data(forKey: Keys.hotkeyBindings),
@@ -1775,7 +1822,7 @@ final class Settings {
             30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P", 37: "L",
             38: "J", 39: "'", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/",
             45: "N", 46: "M", 47: ".",
-            36: "\u{21A9}", 48: "\u{21E5}", 49: "Space", 51: "\u{232B}", 53: "\u{238B}",
+            36: "\u{21A9}", 48: "\u{21E5}", 49: "Space", 51: "\u{232B}", 53: "Esc",
             76: "\u{2305}",
             96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8",
             101: "F9", 103: "F11", 105: "F13", 107: "F14", 109: "F10",
