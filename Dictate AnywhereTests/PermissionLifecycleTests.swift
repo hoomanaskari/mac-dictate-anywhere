@@ -8,7 +8,8 @@ final class PermissionLifecycleTests: XCTestCase {
         let permissionResponse = SuspendedPermissionResponse {
             permissionRequested.fulfill()
         }
-        let appState = AppState(microphonePermissionRequester: {
+        let permissions = Permissions(statusProvider: { (false, false) })
+        let appState = AppState(permissions: permissions, microphonePermissionRequester: {
             await permissionResponse.waitForResolution()
         })
         let binding = HotkeyBinding(
