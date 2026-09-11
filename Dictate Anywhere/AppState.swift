@@ -232,6 +232,26 @@ final class AppState {
         }
     }
 
+    /// Stops process-lifetime services before AppKit tears down the process.
+    func shutdown() async {
+        startupTask?.cancel()
+        startupTask = nil
+        inputSourceApplyTask?.cancel()
+        inputSourceApplyTask = nil
+        stopAudioLevelPolling()
+        inputSourceMonitor.stopMonitoring()
+        hotkeyService.stopMonitoring()
+        permissions.stopPolling()
+
+        await parakeetEngine.cancel()
+        await appleSpeechEngine.cancel()
+        await appleSpeechEngine.invalidatePreparedSession()
+
+        volumeController.restoreMicrophoneVolume()
+        volumeController.restoreAfterRecording()
+        overlay.hide(afterDelay: 0)
+    }
+
     private func runStartupSequence() async {
         await permissions.check()
         updateAccessibilityIntegration(granted: permissions.accessibilityGranted, promptIfNeeded: true)

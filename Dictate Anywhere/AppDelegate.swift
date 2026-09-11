@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var customVocabularyMenuItem: NSMenuItem?
     private var cancelDictationMenuItem: NSMenuItem?
     private var stopDictationMenuItem: NSMenuItem?
+    private var isTerminating = false
 
     override init() {
         self.appState = AppState()
@@ -61,6 +62,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else { return .terminateLater }
+        isTerminating = true
+
+        // llama.cpp's Metal backend must release its model buffers before AppKit
+        // begins process teardown, including Sparkle's update-and-relaunch path.
+        Task { [weak self] in
+            await self?.appState.shutdown()
+            await S1MiniPostProcessingService.unload()
+            sender.reply(toApplicationShouldTerminate: true)
+            self?.isTerminating = false
+        }
+        return .terminateLater
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
