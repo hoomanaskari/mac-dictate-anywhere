@@ -118,6 +118,7 @@ final class AppState {
     private var activeRecordingStartupID: UUID?
     private var startupTask: Task<Void, Never>?
     private var hasStarted = false
+    private var isShuttingDown = false
 
     /// Serializes profile applies; a change arriving mid-apply queues behind it.
     private var inputSourceApplyTask: Task<Void, Never>?
@@ -220,7 +221,7 @@ final class AppState {
     }
 
     func start() {
-        guard !hasStarted else { return }
+        guard !hasStarted, !isShuttingDown else { return }
         hasStarted = true
         do { try recoveryStore.reload() } catch { recoveryStore.errorMessage = error.localizedDescription }
 
@@ -234,6 +235,8 @@ final class AppState {
 
     /// Stops process-lifetime services before AppKit tears down the process.
     func shutdown() async {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
         startupTask?.cancel()
         startupTask = nil
         inputSourceApplyTask?.cancel()
@@ -254,9 +257,12 @@ final class AppState {
 
     private func runStartupSequence() async {
         await permissions.check()
+        guard !isShuttingDown else { return }
         updateAccessibilityIntegration(granted: permissions.accessibilityGranted, promptIfNeeded: true)
         await prepareActiveEngine()
+        guard !isShuttingDown else { return }
         await refreshAppleSpeechAssetState()
+        guard !isShuttingDown else { return }
         inputSourceMonitor.startMonitoring()
         if settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
@@ -269,6 +275,7 @@ final class AppState {
     }
 
     private func updateAccessibilityIntegration(granted: Bool, promptIfNeeded: Bool) {
+        guard !isShuttingDown else { return }
         if granted {
             permissions.stopPolling()
             if (settings.hasHotkey || settings.cancelShortcut.hasBinding) && !hotkeyService.isMonitoring {
@@ -286,6 +293,7 @@ final class AppState {
     // MARK: - Engine Lifecycle
 
     func prepareActiveEngine() async {
+        guard !isShuttingDown else { return }
         logger.info("prepareActiveEngine: called, engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public), status=\(String(describing: self.status), privacy: .public)")
         if case .recording = status { return }
         if case .processing = status { return }
@@ -296,7 +304,9 @@ final class AppState {
             // Auto-default: if the user hasn't explicitly chosen an engine and
             // a speech model is downloaded, ensure FluidAudio is selected.
             await parakeetEngine.recheckAllModelsOnDisk()
+            guard !isShuttingDown else { return }
             await parakeetEngine.handleSelectedModelChange()
+            guard !isShuttingDown else { return }
             let hasSpeechModel = parakeetEngine.checkAnyModelOnDisk()
             if !settings.userHasChosenEngine, hasSpeechModel {
                 settings.engineChoice = .parakeet
@@ -306,6 +316,7 @@ final class AppState {
             }
         case .appleSpeech:
             await refreshAppleSpeechAssetState()
+            guard !isShuttingDown else { return }
             if !appleSpeechSupportedLanguages.contains(settings.appleSpeechLanguage),
                let fallback = appleSpeechSupportedLanguages.first {
                 settings.appleSpeechLanguage = fallback
@@ -321,11 +332,20 @@ final class AppState {
             enginePreparationError = nil
             do {
                 try await activeEngine.prepare()
+                guard !isShuttingDown else {
+                    await activeEngine.cancel()
+                    return
+                }
             } catch {
                 logger.error("prepareActiveEngine: prepare() failed on first attempt: \(error.localizedDescription, privacy: .public)")
                 try? await Task.sleep(for: .seconds(1))
+                guard !isShuttingDown else { return }
                 do {
                     try await activeEngine.prepare()
+                    guard !isShuttingDown else {
+                        await activeEngine.cancel()
+                        return
+                    }
                 } catch {
                     logger.error("prepareActiveEngine: prepare() failed on retry: \(error.localizedDescription, privacy: .public)")
                     enginePreparationError = error.localizedDescription
@@ -338,6 +358,7 @@ final class AppState {
         // clears without waiting for settings to reopen.
         if settings.engineChoice == .appleSpeech {
             appleSpeechInstalledLanguages = await AppleSpeechEngine.installedLanguages()
+            guard !isShuttingDown else { return }
         }
         isPreparingEngine = false
     }
@@ -402,6 +423,7 @@ final class AppState {
     }
 
     func applyInputSourceProfile(for inputSourceID: String, showLoadingOverlay: Bool = false) async {
+        guard !isShuttingDown else { return }
         // Looked up (and, for Apple Speech, awaited) before the idle guard so
         // no suspension point lands between the guard and the settings
         // writes below — an in-flight recording-start guard check must never
@@ -410,6 +432,7 @@ final class AppState {
         let installedAppleSpeechLanguages = mapping?.engine == .appleSpeech
             ? await AppleSpeechEngine.installedLanguages()
             : []
+        guard !isShuttingDown else { return }
         guard status == .idle else { return }
         if mapping?.engine == .appleSpeech {
             appleSpeechInstalledLanguages = installedAppleSpeechLanguages
@@ -567,6 +590,7 @@ final class AppState {
     // MARK: - Dictation Flow
 
     func startDictation(mode: HotkeyMode? = nil) async {
+        guard !isShuttingDown else { return }
         logger.info("startDictation: entry, status=\(String(describing: self.status), privacy: .public), isTransitioning=\(self.isTransitioning, privacy: .public), engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public)")
         if case .error = status {
             status = .idle
