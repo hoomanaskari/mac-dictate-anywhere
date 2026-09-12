@@ -776,7 +776,10 @@ final class AppState {
             }
 
             do {
-                let startTask = Task { try await engine.startRecording(deviceID: candidateID) }
+                let startTask = Task {
+                    try Task.checkCancellation()
+                    try await engine.startRecording(deviceID: candidateID)
+                }
                 recordingStartTask = startTask
                 try await startTask.value
                 recordingStartTask = nil

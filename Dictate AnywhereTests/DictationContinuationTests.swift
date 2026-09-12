@@ -363,6 +363,26 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(engine.events, ["start", "cancel"])
         XCTAssertEqual(app.status, .idle)
     }
+
+    func testShutdownPreventsQueuedMicrophoneStartup() async throws {
+        let engineChoice = Settings.shared.engineChoice
+        defer { Settings.shared.engineChoice = engineChoice }
+        Settings.shared.engineChoice = .appleSpeech
+        let engine = ContinuationTestEngine()
+        let engineCancelled = expectation(description: "engine cancelled")
+        engine.onCancel = { engineCancelled.fulfill() }
+        let app = app(engine: engine)
+        engine.onSetSessionContextualVocabulary = { [weak app] in
+            engine.onSetSessionContextualVocabulary = nil
+            Task { await app?.shutdown() }
+        }
+
+        await app.startDictation()
+        await fulfillment(of: [engineCancelled], timeout: 1)
+
+        XCTAssertEqual(engine.events, ["cancel"])
+        XCTAssertEqual(app.status, .idle)
+    }
 }
 
 @MainActor
@@ -381,6 +401,7 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     var onRestore: (() -> Void)?
     var onStart: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onSetSessionContextualVocabulary: (() -> Void)?
     var suspendRestore = false
     var suspendStart = false
     private var pendingStop: CheckedContinuation<String, Never>?
@@ -388,6 +409,9 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     private var pendingStart: CheckedContinuation<Void, Never>?
     func levelSamples(count: Int) -> [Float] { [] }
     func prepare() async throws { isReady = true }
+    func setSessionContextualVocabulary(_ vocabulary: [String]) {
+        onSetSessionContextualVocabulary?()
+    }
     func startRecording(deviceID: AudioDeviceID?) async throws {
         events.append("start")
         if suspendStart {
