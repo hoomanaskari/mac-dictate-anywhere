@@ -297,6 +297,92 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(engine.events, ["restore", "start"])
         await app.cancelDictation()
     }
+
+    func testShutdownDoesNotDeliverPendingRecognition() async throws {
+        let entry = try await savedSession()
+        let engine = ContinuationTestEngine()
+        var delivered: [String] = []
+        let app = app(engine: engine) { delivered.append($0); return .success }
+        await app.continueCancelledDictation(entry)
+        let recognitionBegan = expectation(description: "recognition began")
+        engine.onStop = { recognitionBegan.fulfill() }
+
+        let stopping = Task { await app.stopDictation() }
+        await fulfillment(of: [recognitionBegan], timeout: 1)
+        let processingCancelled = expectation(description: "processing cancelled")
+        engine.onStopCancellation = { processingCancelled.fulfill() }
+        let shuttingDown = Task { await app.shutdown() }
+        await fulfillment(of: [processingCancelled], timeout: 1)
+        engine.finishPendingStop()
+        await stopping.value
+        await shuttingDown.value
+
+        XCTAssertTrue(delivered.isEmpty)
+        XCTAssertTrue(Settings.shared.transcriptHistory.isEmpty)
+    }
+
+    func testShutdownPreventsPendingContinuationFromStartingMicrophone() async throws {
+        let entry = try await savedSession()
+        let engine = ContinuationTestEngine()
+        engine.suspendRestore = true
+        let app = app(engine: engine)
+        let restorationBegan = expectation(description: "restoration began")
+        engine.onRestore = { restorationBegan.fulfill() }
+
+        let continuing = Task { await app.continueCancelledDictation(entry) }
+        await fulfillment(of: [restorationBegan], timeout: 1)
+        await app.shutdown()
+        engine.finishPendingRestore()
+        await continuing.value
+
+        XCTAssertEqual(engine.events, ["restore", "cancel"])
+        XCTAssertEqual(app.status, .idle)
+        XCTAssertNoThrow(try store.remove(id: entry.id))
+    }
+
+    func testShutdownDrainsPendingMicrophoneStartup() async throws {
+        let engineChoice = Settings.shared.engineChoice
+        defer { Settings.shared.engineChoice = engineChoice }
+        Settings.shared.engineChoice = .appleSpeech
+        let engine = ContinuationTestEngine()
+        engine.suspendStart = true
+        let app = app(engine: engine)
+        let startupBegan = expectation(description: "microphone startup began")
+        engine.onStart = { startupBegan.fulfill() }
+
+        let starting = Task { await app.startDictation() }
+        await fulfillment(of: [startupBegan], timeout: 1)
+        let engineCancelled = expectation(description: "engine cancelled")
+        engine.onCancel = { engineCancelled.fulfill() }
+        let shuttingDown = Task { await app.shutdown() }
+        await fulfillment(of: [engineCancelled], timeout: 1)
+        engine.finishPendingStart()
+        await starting.value
+        await shuttingDown.value
+
+        XCTAssertEqual(engine.events, ["start", "cancel"])
+        XCTAssertEqual(app.status, .idle)
+    }
+
+    func testShutdownPreventsQueuedMicrophoneStartup() async throws {
+        let engineChoice = Settings.shared.engineChoice
+        defer { Settings.shared.engineChoice = engineChoice }
+        Settings.shared.engineChoice = .appleSpeech
+        let engine = ContinuationTestEngine()
+        let engineCancelled = expectation(description: "engine cancelled")
+        engine.onCancel = { engineCancelled.fulfill() }
+        let app = app(engine: engine)
+        engine.onSetSessionContextualVocabulary = { [weak app] in
+            engine.onSetSessionContextualVocabulary = nil
+            Task { await app?.shutdown() }
+        }
+
+        await app.startDictation()
+        await fulfillment(of: [engineCancelled], timeout: 1)
+
+        XCTAssertEqual(engine.events, ["cancel"])
+        XCTAssertEqual(app.status, .idle)
+    }
 }
 
 @MainActor
@@ -311,30 +397,69 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     var restoreFails = false
     var startFails = false
     var onStop: (() -> Void)?
+    var onStopCancellation: (() -> Void)?
+    var onRestore: (() -> Void)?
+    var onStart: (() -> Void)?
+    var onCancel: (() -> Void)?
+    var onSetSessionContextualVocabulary: (() -> Void)?
+    var suspendRestore = false
+    var suspendStart = false
     private var pendingStop: CheckedContinuation<String, Never>?
+    private var pendingRestore: CheckedContinuation<String, Never>?
+    private var pendingStart: CheckedContinuation<Void, Never>?
     func levelSamples(count: Int) -> [Float] { [] }
     func prepare() async throws { isReady = true }
+    func setSessionContextualVocabulary(_ vocabulary: [String]) {
+        onSetSessionContextualVocabulary?()
+    }
     func startRecording(deviceID: AudioDeviceID?) async throws {
         events.append("start")
+        if suspendStart {
+            await withCheckedContinuation { continuation in
+                pendingStart = continuation
+                onStart?()
+            }
+        }
         if startFails { throw TranscriptionError.engineNotReady }
         recoveryCapture?.append(Array(repeating: 0.5, count: 16_000))
     }
     func stopRecording() async -> String {
         events.append("stop")
         guard onStop != nil else { return stoppedText }
-        return await withCheckedContinuation { continuation in
-            pendingStop = continuation
-            onStop?()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingStop = continuation
+                onStop?()
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.onStopCancellation?() }
         }
     }
     func finishPendingStop() {
         pendingStop?.resume(returning: stoppedText)
         pendingStop = nil
     }
-    func cancel() async { events.append("cancel") }
+    func finishPendingStart() {
+        pendingStart?.resume()
+        pendingStart = nil
+    }
+    func finishPendingRestore() {
+        pendingRestore?.resume(returning: restoredText)
+        pendingRestore = nil
+    }
+    func cancel() async {
+        events.append("cancel")
+        onCancel?()
+    }
     func transcribeRecording(at url: URL) async throws -> String {
         events.append("restore")
         if restoreFails { throw TranscriptionError.engineNotReady }
+        if suspendRestore {
+            return await withCheckedContinuation { continuation in
+                pendingRestore = continuation
+                onRestore?()
+            }
+        }
         return restoredText
     }
 }
