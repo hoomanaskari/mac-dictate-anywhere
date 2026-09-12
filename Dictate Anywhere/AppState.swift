@@ -116,6 +116,7 @@ final class AppState {
     private var sessionEngine: TranscriptionEngine?
     private var sessionHotkeyMode: HotkeyMode?
     private var activeRecordingStartupID: UUID?
+    private var recordingStartTask: Task<Void, Error>?
     private var startupTask: Task<Void, Never>?
     private var hasStarted = false
     private var isShuttingDown = false
@@ -242,6 +243,8 @@ final class AppState {
         inputSourceApplyTask?.cancel()
         inputSourceApplyTask = nil
         activeRecordingStartupID = nil
+        let recordingStartTask = recordingStartTask
+        recordingStartTask?.cancel()
         processingTask?.cancel()
         stopAudioLevelPolling()
         inputSourceMonitor.stopMonitoring()
@@ -255,6 +258,10 @@ final class AppState {
 
         let engine = sessionEngine ?? activeEngine
         await engine.cancel()
+        if let recordingStartTask {
+            _ = try? await recordingStartTask.value
+        }
+        self.recordingStartTask = nil
         if engine !== parakeetEngine { await parakeetEngine.cancel() }
         if engine !== appleSpeechEngine { await appleSpeechEngine.cancel() }
         await appleSpeechEngine.invalidatePreparedSession()
@@ -769,7 +776,10 @@ final class AppState {
             }
 
             do {
-                try await engine.startRecording(deviceID: candidateID)
+                let startTask = Task { try await engine.startRecording(deviceID: candidateID) }
+                recordingStartTask = startTask
+                try await startTask.value
+                recordingStartTask = nil
                 guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
                 didStart = true
                 logger.info(
@@ -777,6 +787,7 @@ final class AppState {
                 )
                 break
             } catch {
+                recordingStartTask = nil
                 guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
                 lastStartError = error
                 logger.error(

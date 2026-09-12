@@ -336,6 +336,33 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(engine.events, ["restore", "cancel"])
         XCTAssertEqual(app.status, .idle)
     }
+
+    func testShutdownDrainsPendingMicrophoneStartup() async throws {
+        let engineChoice = Settings.shared.engineChoice
+        defer { Settings.shared.engineChoice = engineChoice }
+        Settings.shared.engineChoice = .appleSpeech
+        let engine = ContinuationTestEngine()
+        engine.suspendStart = true
+        let app = app(engine: engine)
+        let startupBegan = expectation(description: "microphone startup began")
+        engine.onStart = { startupBegan.fulfill() }
+
+        let starting = Task { await app.startDictation() }
+        await fulfillment(of: [startupBegan], timeout: 1)
+        var shutdownCompleted = false
+        let shuttingDown = Task {
+            await app.shutdown()
+            shutdownCompleted = true
+        }
+        await Task.yield()
+        XCTAssertFalse(shutdownCompleted)
+        engine.finishPendingStart()
+        await starting.value
+        await shuttingDown.value
+
+        XCTAssertEqual(engine.events, ["start", "cancel"])
+        XCTAssertEqual(app.status, .idle)
+    }
 }
 
 @MainActor
@@ -351,13 +378,22 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     var startFails = false
     var onStop: (() -> Void)?
     var onRestore: (() -> Void)?
+    var onStart: (() -> Void)?
     var suspendRestore = false
+    var suspendStart = false
     private var pendingStop: CheckedContinuation<String, Never>?
     private var pendingRestore: CheckedContinuation<String, Never>?
+    private var pendingStart: CheckedContinuation<Void, Never>?
     func levelSamples(count: Int) -> [Float] { [] }
     func prepare() async throws { isReady = true }
     func startRecording(deviceID: AudioDeviceID?) async throws {
         events.append("start")
+        if suspendStart {
+            await withCheckedContinuation { continuation in
+                pendingStart = continuation
+                onStart?()
+            }
+        }
         if startFails { throw TranscriptionError.engineNotReady }
         recoveryCapture?.append(Array(repeating: 0.5, count: 16_000))
     }
@@ -372,6 +408,10 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     func finishPendingStop() {
         pendingStop?.resume(returning: stoppedText)
         pendingStop = nil
+    }
+    func finishPendingStart() {
+        pendingStart?.resume()
+        pendingStart = nil
     }
     func finishPendingRestore() {
         pendingRestore?.resume(returning: restoredText)
