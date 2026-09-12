@@ -1254,7 +1254,10 @@ final class AppState {
             if !engine.isReady { try await engine.prepare() }
             let restored = try await restoredTranscript(for: saved, engine: engine)
             try Task.checkCancellation()
-            guard !isShuttingDown else { return }
+            guard !isShuttingDown else {
+                recoveryStore.release(id: saved.id)
+                return
+            }
             guard !restored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw NSError(domain: "DictationRecovery", code: 2, userInfo: [NSLocalizedDescriptionKey:
                     "No speech was restored. Try Recover text with a different speech model."])
@@ -1268,7 +1271,10 @@ final class AppState {
             await captureInsertionTargetAppAndContext(target: target, useFrontmost: false)
             await reactivateInsertionTargetIfNeeded()
             try Task.checkCancellation()
-            guard !isShuttingDown else { return }
+            guard !isShuttingDown else {
+                recoveryStore.release(id: saved.id)
+                return
+            }
             recoveringEntryID = nil
             await beginRecording(engine: engine, mode: .handsFreeToggle)
         } catch {

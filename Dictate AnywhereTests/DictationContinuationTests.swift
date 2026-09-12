@@ -309,8 +309,10 @@ final class DictationContinuationTests: XCTestCase {
 
         let stopping = Task { await app.stopDictation() }
         await fulfillment(of: [recognitionBegan], timeout: 1)
+        let processingCancelled = expectation(description: "processing cancelled")
+        engine.onStopCancellation = { processingCancelled.fulfill() }
         let shuttingDown = Task { await app.shutdown() }
-        await Task.yield()
+        await fulfillment(of: [processingCancelled], timeout: 1)
         engine.finishPendingStop()
         await stopping.value
         await shuttingDown.value
@@ -335,6 +337,7 @@ final class DictationContinuationTests: XCTestCase {
 
         XCTAssertEqual(engine.events, ["restore", "cancel"])
         XCTAssertEqual(app.status, .idle)
+        XCTAssertNoThrow(try store.remove(id: entry.id))
     }
 
     func testShutdownDrainsPendingMicrophoneStartup() async throws {
@@ -349,13 +352,10 @@ final class DictationContinuationTests: XCTestCase {
 
         let starting = Task { await app.startDictation() }
         await fulfillment(of: [startupBegan], timeout: 1)
-        var shutdownCompleted = false
-        let shuttingDown = Task {
-            await app.shutdown()
-            shutdownCompleted = true
-        }
-        await Task.yield()
-        XCTAssertFalse(shutdownCompleted)
+        let engineCancelled = expectation(description: "engine cancelled")
+        engine.onCancel = { engineCancelled.fulfill() }
+        let shuttingDown = Task { await app.shutdown() }
+        await fulfillment(of: [engineCancelled], timeout: 1)
         engine.finishPendingStart()
         await starting.value
         await shuttingDown.value
@@ -377,8 +377,10 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     var restoreFails = false
     var startFails = false
     var onStop: (() -> Void)?
+    var onStopCancellation: (() -> Void)?
     var onRestore: (() -> Void)?
     var onStart: (() -> Void)?
+    var onCancel: (() -> Void)?
     var suspendRestore = false
     var suspendStart = false
     private var pendingStop: CheckedContinuation<String, Never>?
@@ -400,9 +402,13 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     func stopRecording() async -> String {
         events.append("stop")
         guard onStop != nil else { return stoppedText }
-        return await withCheckedContinuation { continuation in
-            pendingStop = continuation
-            onStop?()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                pendingStop = continuation
+                onStop?()
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.onStopCancellation?() }
         }
     }
     func finishPendingStop() {
@@ -417,7 +423,10 @@ private final class ContinuationTestEngine: TranscriptionEngine {
         pendingRestore?.resume(returning: restoredText)
         pendingRestore = nil
     }
-    func cancel() async { events.append("cancel") }
+    func cancel() async {
+        events.append("cancel")
+        onCancel?()
+    }
     func transcribeRecording(at url: URL) async throws -> String {
         events.append("restore")
         if restoreFails { throw TranscriptionError.engineNotReady }
