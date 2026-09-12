@@ -241,15 +241,43 @@ final class AppState {
         startupTask = nil
         inputSourceApplyTask?.cancel()
         inputSourceApplyTask = nil
+        activeRecordingStartupID = nil
+        processingTask?.cancel()
         stopAudioLevelPolling()
         inputSourceMonitor.stopMonitoring()
         hotkeyService.stopMonitoring()
         permissions.stopPolling()
 
-        await parakeetEngine.cancel()
-        await appleSpeechEngine.cancel()
+        // A cancelled finish task must unwind before its engine can be unloaded.
+        await processingTask?.value
+        processingTask = nil
+        processingOperationID = nil
+
+        let engine = sessionEngine ?? activeEngine
+        await engine.cancel()
+        if engine !== parakeetEngine { await parakeetEngine.cancel() }
+        if engine !== appleSpeechEngine { await appleSpeechEngine.cancel() }
         await appleSpeechEngine.invalidatePreparedSession()
 
+        recoveryCapture = nil
+        completedRecognitionTranscript = nil
+        engine.recoveryCapture = nil
+        engine.setSessionContextualVocabulary([])
+        clearEndOfUtteranceHandler(for: engine)
+        sessionEngine = nil
+        sessionHotkeyMode = nil
+        continuingEntryID = nil
+        recoveringEntryID = nil
+        transcriptPrefix = ""
+        previousRecordingDuration = 0
+        continuationTargetBundleIdentifier = nil
+        insertionTargetApp = nil
+        sessionDictationContext = nil
+        currentTranscript = ""
+        isDeliveringTranscript = false
+        isCancelling = false
+        isTransitioning = false
+        status = .idle
         volumeController.restoreMicrophoneVolume()
         volumeController.restoreAfterRecording()
         overlay.hide(afterDelay: 0)
@@ -612,12 +640,14 @@ final class AppState {
             permissions.micGranted = true
             return // The permission gesture must never become a recording gesture.
         }
+        guard !isShuttingDown else { return }
         if settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
             // Backstop: the eager pre-warm usually already did this; going
             // through the queue serializes against an apply still in flight.
             await enqueueInputSourceProfileApply(for: inputSourceID, showLoadingOverlay: true).value
         }
+        guard !isShuttingDown else { return }
         let engine = activeEngine
         switch settings.engineChoice {
         case .parakeet:
@@ -652,11 +682,14 @@ final class AppState {
                 return
             }
         }
+        guard !isShuttingDown else { return }
         await captureInsertionTargetAppAndContext()
+        guard !isShuttingDown else { return }
         await beginRecording(engine: engine, mode: mode)
     }
 
     private func beginRecording(engine: TranscriptionEngine, mode: HotkeyMode?) async {
+        guard !isShuttingDown else { return }
         engine.setSessionContextualVocabulary(sessionDictationContext?.lexicalHints ?? [])
 
         isTransitioning = true
@@ -726,25 +759,25 @@ final class AppState {
             : nil
         var didStart = false
         for (index, candidateID) in startCandidates.enumerated() {
-            guard activeRecordingStartupID == recordingStartupID else { return }
+            guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
             if index > 0 {
                 logger.warning(
                     "startDictation: retrying startRecording attempt \(index + 1, privacy: .public) with deviceID=\(candidateID.map { String($0) } ?? "nil", privacy: .public)"
                 )
                 try? await Task.sleep(for: .milliseconds(220))
-                guard activeRecordingStartupID == recordingStartupID else { return }
+                guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
             }
 
             do {
                 try await engine.startRecording(deviceID: candidateID)
-                guard activeRecordingStartupID == recordingStartupID else { return }
+                guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
                 didStart = true
                 logger.info(
                     "startDictation: startRecording succeeded on attempt \(index + 1, privacy: .public), deviceID=\(candidateID.map { String($0) } ?? "nil", privacy: .public)"
                 )
                 break
             } catch {
-                guard activeRecordingStartupID == recordingStartupID else { return }
+                guard !isShuttingDown, activeRecordingStartupID == recordingStartupID else { return }
                 lastStartError = error
                 logger.error(
                     "startDictation: startRecording attempt \(index + 1, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
@@ -752,6 +785,7 @@ final class AppState {
             }
         }
 
+        guard !isShuttingDown else { return }
         guard didStart else {
             let wasContinuing = continuingEntryID != nil
             await discardSessionRecovery()
@@ -781,6 +815,7 @@ final class AppState {
         }
 
         // Show overlay only after mic is confirmed active
+        guard !isShuttingDown else { return }
         overlay.show(state: .listening(level: 0, transcript: currentTranscript))
 
         // Start audio level polling
@@ -1184,7 +1219,7 @@ final class AppState {
     }
 
     func continueCancelledDictation(_ entry: CancelledDictation) async {
-        guard status == .idle, !isTransitioning else { return }
+        guard !isShuttingDown, status == .idle, !isTransitioning else { return }
         isTransitioning = true
         defer { if status != .recording { isTransitioning = false } }
         if !permissions.micGranted {
@@ -1208,6 +1243,7 @@ final class AppState {
             if !engine.isReady { try await engine.prepare() }
             let restored = try await restoredTranscript(for: saved, engine: engine)
             try Task.checkCancellation()
+            guard !isShuttingDown else { return }
             guard !restored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw NSError(domain: "DictationRecovery", code: 2, userInfo: [NSLocalizedDescriptionKey:
                     "No speech was restored. Try Recover text with a different speech model."])
@@ -1221,6 +1257,7 @@ final class AppState {
             await captureInsertionTargetAppAndContext(target: target, useFrontmost: false)
             await reactivateInsertionTargetIfNeeded()
             try Task.checkCancellation()
+            guard !isShuttingDown else { return }
             recoveringEntryID = nil
             await beginRecording(engine: engine, mode: .handsFreeToggle)
         } catch {

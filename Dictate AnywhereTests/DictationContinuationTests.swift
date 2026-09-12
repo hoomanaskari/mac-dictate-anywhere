@@ -297,6 +297,45 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(engine.events, ["restore", "start"])
         await app.cancelDictation()
     }
+
+    func testShutdownDoesNotDeliverPendingRecognition() async throws {
+        let entry = try await savedSession()
+        let engine = ContinuationTestEngine()
+        var delivered: [String] = []
+        let app = app(engine: engine) { delivered.append($0); return .success }
+        await app.continueCancelledDictation(entry)
+        let recognitionBegan = expectation(description: "recognition began")
+        engine.onStop = { recognitionBegan.fulfill() }
+
+        let stopping = Task { await app.stopDictation() }
+        await fulfillment(of: [recognitionBegan], timeout: 1)
+        let shuttingDown = Task { await app.shutdown() }
+        await Task.yield()
+        engine.finishPendingStop()
+        await stopping.value
+        await shuttingDown.value
+
+        XCTAssertTrue(delivered.isEmpty)
+        XCTAssertTrue(Settings.shared.transcriptHistory.isEmpty)
+    }
+
+    func testShutdownPreventsPendingContinuationFromStartingMicrophone() async throws {
+        let entry = try await savedSession()
+        let engine = ContinuationTestEngine()
+        engine.suspendRestore = true
+        let app = app(engine: engine)
+        let restorationBegan = expectation(description: "restoration began")
+        engine.onRestore = { restorationBegan.fulfill() }
+
+        let continuing = Task { await app.continueCancelledDictation(entry) }
+        await fulfillment(of: [restorationBegan], timeout: 1)
+        await app.shutdown()
+        engine.finishPendingRestore()
+        await continuing.value
+
+        XCTAssertEqual(engine.events, ["restore", "cancel"])
+        XCTAssertEqual(app.status, .idle)
+    }
 }
 
 @MainActor
@@ -311,7 +350,10 @@ private final class ContinuationTestEngine: TranscriptionEngine {
     var restoreFails = false
     var startFails = false
     var onStop: (() -> Void)?
+    var onRestore: (() -> Void)?
+    var suspendRestore = false
     private var pendingStop: CheckedContinuation<String, Never>?
+    private var pendingRestore: CheckedContinuation<String, Never>?
     func levelSamples(count: Int) -> [Float] { [] }
     func prepare() async throws { isReady = true }
     func startRecording(deviceID: AudioDeviceID?) async throws {
@@ -331,10 +373,20 @@ private final class ContinuationTestEngine: TranscriptionEngine {
         pendingStop?.resume(returning: stoppedText)
         pendingStop = nil
     }
+    func finishPendingRestore() {
+        pendingRestore?.resume(returning: restoredText)
+        pendingRestore = nil
+    }
     func cancel() async { events.append("cancel") }
     func transcribeRecording(at url: URL) async throws -> String {
         events.append("restore")
         if restoreFails { throw TranscriptionError.engineNotReady }
+        if suspendRestore {
+            return await withCheckedContinuation { continuation in
+                pendingRestore = continuation
+                onRestore?()
+            }
+        }
         return restoredText
     }
 }
