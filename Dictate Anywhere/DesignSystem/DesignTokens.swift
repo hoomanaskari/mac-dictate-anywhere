@@ -128,7 +128,7 @@ enum DS {
 extension Color {
     /// Creates a color from a 24-bit RGB hex value, e.g. `Color(hex: 0xDE6A3B)`.
     /// Fixed appearance: identical in light and dark mode. Reserved for
-    /// colors that are intentionally constant (overlay pill, status accents).
+    /// colors that are intentionally constant (the always-dark overlay pill).
     init(hex: UInt32, opacity: Double = 1) {
         self.init(
             .sRGB,
