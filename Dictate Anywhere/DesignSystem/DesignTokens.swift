@@ -8,16 +8,17 @@ enum DS {
 
     enum Colors {
         /// Single source: the asset catalog's AccentColor (Xcode-editable).
-        /// Accent-deep is derived from it at runtime; soft/panel-text keep
-        /// the derived light variant and pair it with a fixed dark companion,
-        /// so changing AccentColor still re-themes light mode.
+        /// Accent-deep/soft/panel-text keep the derived light variant and
+        /// pair it with a fixed dark companion, so changing AccentColor
+        /// still re-themes light mode. Dark companions are lightened for
+        /// contrast on dark surfaces (e.g. destructive 2.8:1 → 5.1:1).
         ///
         /// Surface/text tokens are light/dark pairs: the light hex preserves
         /// the design.pen palette exactly, the dark hex is its warm-dark
         /// companion. They follow the system appearance automatically, so no
         /// call site needs a `@Environment(\.colorScheme)` branch.
         static let accent = Color("AccentColor", bundle: .main)
-        static let accentDeep = derivedAccent(saturation: 1.071, brightness: 0.883)
+        static let accentDeep = Color(light: derivedAccent(saturation: 1.071, brightness: 0.883), dark: 0xE8834F)
         static let accentSoft = Color(light: derivedAccent(saturation: 0.192, fixedBrightness: 0.973), dark: 0x3A2620)
         static let bgCard = Color(light: 0xFFFFFF, dark: 0x292420)
         static let bgInset = Color(light: 0xF6F0E6, dark: 0x201B15)
@@ -26,14 +27,14 @@ enum DS {
         static let border = Color(light: 0xE8DFCF, dark: 0x3A332A)
         static let borderSoft = Color(light: 0xF1EADD, dark: 0x2E2822)
         static let ink = Color(light: 0x2B2620, dark: 0xF2EAE0)
-        static let success = Color(hex: 0x5E9E6F)
+        static let success = Color(light: 0x5E9E6F, dark: 0x7ABF8A)
         static let successSoft = Color(light: 0xE3EFE4, dark: 0x223528)
         static let textSecondary = Color(light: 0x8D8171, dark: 0xA79A8A)
 
         // Derived colors used by specific design components.
         static let successText = Color(light: 0x3D7A4C, dark: 0x8FD0A2)
         static let panelText = Color(light: derivedAccent(saturation: 0.967, brightness: 0.621), dark: 0xE8B48E)
-        static let destructive = Color(hex: 0xC0392B)
+        static let destructive = Color(light: 0xC0392B, dark: 0xE5735C)
         static let toggleOff = Color(light: 0xDED4C2, dark: 0x4A4238)
         static let sliderTrackRest = Color(light: 0xE9DFCC, dark: 0x3D362C)
         static let addButtonFill = Color(light: 0xF1E9DB, dark: 0x2C271F)

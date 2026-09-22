@@ -413,4 +413,41 @@ final class SettingsLogicTests: XCTestCase {
         XCTAssertEqual(settings.transcriptPostProcessingMode, .none)
         XCTAssertFalse(settings.pendingVocabularyModeRestore)
     }
+
+    // MARK: - Theme mode
+
+    func testThemeModeCasesAndDisplayNames() {
+        XCTAssertEqual(ThemeMode.allCases, [.system, .light, .dark])
+        XCTAssertEqual(ThemeMode.system.displayName, "System")
+        XCTAssertEqual(ThemeMode.light.displayName, "Light")
+        XCTAssertEqual(ThemeMode.dark.displayName, "Dark")
+        XCTAssertEqual(ThemeMode(rawValue: "system"), .system)
+        XCTAssertNil(ThemeMode(rawValue: "neon"))
+    }
+
+    func testThemeModeMapsToAppearance() {
+        XCTAssertNil(ThemeMode.system.nsAppearance)
+        XCTAssertEqual(ThemeMode.light.nsAppearance?.name, .aqua)
+        XCTAssertEqual(ThemeMode.dark.nsAppearance?.name, .darkAqua)
+    }
+
+    func testThemeModeAppliesAppAppearance() {
+        let settings = Settings.shared
+        let savedTheme = settings.themeMode
+        let savedAppearance = NSApp.appearance
+        defer {
+            settings.themeMode = savedTheme
+            NSApp.appearance = savedAppearance
+        }
+
+        settings.themeMode = .dark
+        XCTAssertEqual(settings.themeMode, .dark)
+        XCTAssertEqual(NSApp.appearance?.name, .darkAqua)
+
+        settings.themeMode = .light
+        XCTAssertEqual(NSApp.appearance?.name, .aqua)
+
+        settings.themeMode = .system
+        XCTAssertNil(NSApp.appearance)
+    }
 }

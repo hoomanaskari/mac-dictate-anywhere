@@ -18,7 +18,7 @@ struct SettingsView: View {
         DSPage {
             DSSectionHeader(
                 title: "General",
-                subtitle: "How Dictate Anywhere starts, sounds, and listens."
+                subtitle: "How Dictate Anywhere starts, looks, sounds, and listens."
             )
 
             DSSection(overline: "Startup") {
@@ -32,6 +32,19 @@ struct SettingsView: View {
                     DSDropdown(
                         selection: $settings.appAppearanceMode,
                         options: AppAppearanceMode.allCases,
+                        title: \.displayName
+                    )
+                }
+            }
+
+            DSSection(overline: "Display") {
+                DSDetailRow(
+                    label: "Theme",
+                    caption: "System follows your Mac's appearance setting."
+                ) {
+                    DSDropdown(
+                        selection: $settings.themeMode,
+                        options: ThemeMode.allCases,
                         title: \.displayName
                     )
                 }

@@ -139,9 +139,10 @@ final class DesignSystemTests: XCTestCase {
         let pairs: [Color] = [
             DS.Colors.bgWindow, DS.Colors.bgSidebar, DS.Colors.bgCard, DS.Colors.bgInset,
             DS.Colors.border, DS.Colors.borderSoft, DS.Colors.ink, DS.Colors.textSecondary,
-            DS.Colors.successSoft, DS.Colors.successText, DS.Colors.toggleOff,
+            DS.Colors.success, DS.Colors.successSoft, DS.Colors.successText, DS.Colors.toggleOff,
             DS.Colors.sliderTrackRest, DS.Colors.addButtonFill, DS.Colors.overlayPreviewFill,
-            DS.Colors.accentSoft, DS.Colors.panelText,
+            DS.Colors.accentSoft, DS.Colors.accentDeep, DS.Colors.panelText,
+            DS.Colors.destructive,
         ]
         for token in pairs {
             let light = components(token, appearance: .aqua)
@@ -165,6 +166,45 @@ final class DesignSystemTests: XCTestCase {
         let dark = components(DS.Colors.footerCardFill, appearance: .darkAqua)
         XCTAssertEqual(light.a, 0.5, accuracy: 0.01)
         XCTAssertEqual(dark.a, 0.08, accuracy: 0.01)
+    }
+
+    // MARK: - Contrast gates (WCAG AA on real pairs)
+
+    private func relativeLuminance(_ c: (r: Double, g: Double, b: Double, a: Double)) -> Double {
+        let linearize = { (v: Double) in v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        return 0.2126 * linearize(c.r) + 0.7152 * linearize(c.g) + 0.0722 * linearize(c.b)
+    }
+
+    private func contrastRatio(_ foreground: Color, _ background: Color, appearance: NSAppearance.Name) -> Double {
+        let l1 = relativeLuminance(components(foreground, appearance: appearance))
+        let l2 = relativeLuminance(components(background, appearance: appearance))
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+    }
+
+    func testDarkBodyTextContrastMeetsAA() {
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .darkAqua), 7)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgCard, appearance: .darkAqua), 7)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgWindow, appearance: .darkAqua), 4.5)
+    }
+
+    func testDarkTintedPairContrastMeetsAA() {
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.panelText, DS.Colors.accentSoft, appearance: .darkAqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.successText, DS.Colors.successSoft, appearance: .darkAqua), 4.5)
+    }
+
+    func testDarkAccentContrastMeetsAA() {
+        // Accents lightened for dark surfaces: destructive was 2.8:1 reused.
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.destructive, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 3)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.success, DS.Colors.bgCard, appearance: .darkAqua), 3)
+    }
+
+    func testLightBodyTextContrastBaseline() {
+        // Locks the shipped light palette: body text is AAA-comfortable;
+        // secondary copy sits at large-text/UI contrast (light hexes frozen).
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .aqua), 7)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 3)
     }
     func testFontFamiliesMatchDesign() {
         XCTAssertEqual(DS.Fonts.displayFamily, "Fraunces")

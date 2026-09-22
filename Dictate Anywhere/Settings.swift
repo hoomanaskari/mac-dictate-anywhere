@@ -76,6 +76,31 @@ enum AppAppearanceMode: String, CaseIterable {
     }
 }
 
+// MARK: - Theme Mode
+
+enum ThemeMode: String, CaseIterable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+
+    nonisolated var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    /// App-wide appearance. `nil` follows the system setting.
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 // MARK: - Transcription Engine Choice
 
 nonisolated enum TranscriptionEngineCapability: Hashable, Sendable {
@@ -923,6 +948,7 @@ final class Settings {
         static let showTextPreview = "showTextPreview"
         static let launchAtLogin = "launchAtLogin"
         static let appAppearanceMode = "appAppearanceMode"
+        static let themeMode = "themeMode"
         static let selectedMicrophoneUID = "selectedMicrophoneUID"
         static let userHasChosenEngine = "userHasChosenEngine"
         static let legacyAppleSpeechMigrationPending = "legacyAppleSpeechMigrationPending"
@@ -1506,6 +1532,15 @@ final class Settings {
         }
     }
 
+    /// Light/dark theme override. Applied app-wide via `NSApp.appearance`;
+    /// `.system` clears the override so macOS drives the appearance.
+    var themeMode: ThemeMode {
+        didSet {
+            UserDefaults.standard.set(themeMode.rawValue, forKey: Keys.themeMode)
+            NSApp.appearance = themeMode.nsAppearance
+        }
+    }
+
     // MARK: - Initialization
 
     private init() {
@@ -1753,6 +1788,9 @@ final class Settings {
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         let appearStr = defaults.string(forKey: Keys.appAppearanceMode) ?? AppAppearanceMode.menuBarOnly.rawValue
         appAppearanceMode = AppAppearanceMode(rawValue: appearStr) ?? .menuBarOnly
+        let themeStr = defaults.string(forKey: Keys.themeMode) ?? ThemeMode.system.rawValue
+        themeMode = ThemeMode(rawValue: themeStr) ?? .system
+        NSApp.appearance = themeMode.nsAppearance
 
         // Mandarin model coercion: reading `self` properties requires all stored
         // properties to be initialized first, so these run last even though they
