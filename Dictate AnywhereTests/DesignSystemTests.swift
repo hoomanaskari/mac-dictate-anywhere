@@ -7,6 +7,11 @@ final class DesignSystemTests: XCTestCase {
     // MARK: - Color(hex:)
 
     private func components(_ color: Color) -> (r: Double, g: Double, b: Double, a: Double) {
+        // Pin light appearance: tokens are dynamic, and the suite must assert
+        // the design.pen light palette regardless of the machine's setting.
+        let previous = NSAppearance.current
+        NSAppearance.current = NSAppearance(named: .aqua) ?? previous
+        defer { NSAppearance.current = previous }
         let ns = NSColor(color).usingColorSpace(.sRGB)!
         return (ns.redComponent, ns.greenComponent, ns.blueComponent, ns.alphaComponent)
     }
@@ -90,6 +95,77 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertEqual(c.b, Double(0x20) / 255, accuracy: 0.001)
     }
 
+    // MARK: - Dark scheme (system appearance)
+
+    private func components(_ color: Color, appearance: NSAppearance.Name) -> (r: Double, g: Double, b: Double, a: Double) {
+        let previous = NSAppearance.current
+        NSAppearance.current = NSAppearance(named: appearance) ?? previous
+        defer { NSAppearance.current = previous }
+        let ns = NSColor(color).usingColorSpace(.sRGB)!
+        return (ns.redComponent, ns.greenComponent, ns.blueComponent, ns.alphaComponent)
+    }
+
+    private func XCTAssertHex(
+        _ c: (r: Double, g: Double, b: Double, a: Double),
+        _ hex: UInt32,
+        accuracy: Double = 0.005,
+        _ message: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(c.r, Double((hex >> 16) & 0xFF) / 255, accuracy: accuracy, message, file: file, line: line)
+        XCTAssertEqual(c.g, Double((hex >> 8) & 0xFF) / 255, accuracy: accuracy, message, file: file, line: line)
+        XCTAssertEqual(c.b, Double(hex & 0xFF) / 255, accuracy: accuracy, message, file: file, line: line)
+    }
+
+    func testSurfaceTokensResolveLightHexUnderAqua() {
+        XCTAssertHex(components(DS.Colors.bgWindow, appearance: .aqua), 0xFAF5EC)
+        XCTAssertHex(components(DS.Colors.bgSidebar, appearance: .aqua), 0xF3ECDF)
+        XCTAssertHex(components(DS.Colors.bgCard, appearance: .aqua), 0xFFFFFF)
+        XCTAssertHex(components(DS.Colors.ink, appearance: .aqua), 0x2B2620)
+    }
+
+    func testSurfaceTokensResolveDarkHexUnderDarkAqua() {
+        XCTAssertHex(components(DS.Colors.bgWindow, appearance: .darkAqua), 0x1E1A15)
+        XCTAssertHex(components(DS.Colors.bgSidebar, appearance: .darkAqua), 0x171310)
+        XCTAssertHex(components(DS.Colors.bgCard, appearance: .darkAqua), 0x292420)
+        XCTAssertHex(components(DS.Colors.bgInset, appearance: .darkAqua), 0x201B15)
+        XCTAssertHex(components(DS.Colors.ink, appearance: .darkAqua), 0xF2EAE0)
+        XCTAssertHex(components(DS.Colors.textSecondary, appearance: .darkAqua), 0xA79A8A)
+        XCTAssertHex(components(DS.Colors.border, appearance: .darkAqua), 0x3A332A)
+    }
+
+    func testDarkSchemeDiffersFromLight() {
+        let pairs: [Color] = [
+            DS.Colors.bgWindow, DS.Colors.bgSidebar, DS.Colors.bgCard, DS.Colors.bgInset,
+            DS.Colors.border, DS.Colors.borderSoft, DS.Colors.ink, DS.Colors.textSecondary,
+            DS.Colors.successSoft, DS.Colors.successText, DS.Colors.toggleOff,
+            DS.Colors.sliderTrackRest, DS.Colors.addButtonFill, DS.Colors.overlayPreviewFill,
+            DS.Colors.accentSoft, DS.Colors.panelText,
+        ]
+        for token in pairs {
+            let light = components(token, appearance: .aqua)
+            let dark = components(token, appearance: .darkAqua)
+            let delta = abs(light.r - dark.r) + abs(light.g - dark.g) + abs(light.b - dark.b)
+            XCTAssertGreaterThan(delta, 0.05, "token must adapt to dark appearance")
+        }
+    }
+
+    func testFixedTokensStayConstantAcrossAppearances() {
+        // The overlay pill previews the always-dark dictation overlay.
+        let light = components(DS.Colors.waveformPillFill, appearance: .aqua)
+        let dark = components(DS.Colors.waveformPillFill, appearance: .darkAqua)
+        XCTAssertEqual(light.r, dark.r, accuracy: 0.001)
+        XCTAssertEqual(light.g, dark.g, accuracy: 0.001)
+        XCTAssertEqual(light.b, dark.b, accuracy: 0.001)
+    }
+
+    func testFooterCardFillAdaptsAlpha() {
+        let light = components(DS.Colors.footerCardFill, appearance: .aqua)
+        let dark = components(DS.Colors.footerCardFill, appearance: .darkAqua)
+        XCTAssertEqual(light.a, 0.5, accuracy: 0.01)
+        XCTAssertEqual(dark.a, 0.08, accuracy: 0.01)
+    }
     func testFontFamiliesMatchDesign() {
         XCTAssertEqual(DS.Fonts.displayFamily, "Fraunces")
         XCTAssertEqual(DS.Fonts.uiFamily, "Inter")

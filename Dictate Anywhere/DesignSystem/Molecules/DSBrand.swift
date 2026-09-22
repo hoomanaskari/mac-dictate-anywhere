@@ -91,7 +91,7 @@ struct DSNavItem: View {
             .background {
                 if isSelected {
                     RoundedRectangle(cornerRadius: DS.Radius.control)
-                        .fill(.white)
+                        .fill(DS.Colors.bgCard)
                         .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1)
                 }
             }

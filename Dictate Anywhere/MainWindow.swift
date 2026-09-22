@@ -129,7 +129,6 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(DS.Colors.bgWindow)
-        .preferredColorScheme(.light)
         .alert("Dictation recovery", isPresented: Binding(
             get: { appState.recoveryStore.errorMessage != nil },
             set: { if !$0 { appState.recoveryStore.errorMessage = nil } }
