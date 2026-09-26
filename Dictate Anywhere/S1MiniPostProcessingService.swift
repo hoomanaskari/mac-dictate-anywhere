@@ -219,39 +219,35 @@ actor S1MiniInferenceEngine {
         transcript: String,
         modelURL: URL
     ) throws -> String {
+        let trace = PerfTrace.begin("cleanup.generate")
+        defer { trace.end() }
         let model = try loadModelIfNeeded(from: modelURL)
         guard let vocabulary = llama_model_get_vocab(model) else {
             throw S1MiniServiceError.modelLoadFailed
         }
 
-        let transcriptTokenCount = try tokenize(
-            transcript,
-            vocabulary: vocabulary,
-            addSpecial: false,
-            parseSpecial: false
-        ).count
-        guard transcriptTokenCount <= S1MiniModelSpec.maximumTranscriptTokens else {
-            throw S1MiniServiceError.transcriptTooLong(
-                actual: transcriptTokenCount,
-                maximum: S1MiniModelSpec.maximumTranscriptTokens
-            )
-        }
-
-        var promptTokens = try tokenize(
-            prompt,
-            vocabulary: vocabulary,
-            addSpecial: false,
-            parseSpecial: true
+        let (transcriptTokenCount, initialPromptTokens) = try tokenizeInputs(
+            transcript: transcript,
+            prompt: prompt,
+            vocabulary: vocabulary
         )
+        var promptTokens = initialPromptTokens
         let maximumOutputTokens = min(
             1_024,
             max(32, Int(ceil(Double(transcriptTokenCount) * 1.3)) + 32)
         )
+        trace.recordCounts([
+            "input_tokens": transcriptTokenCount,
+            "prompt_tokens": promptTokens.count
+        ])
         // Keep the documented llama.cpp context size. Reducing Qwen3's context
         // dynamically changes logits enough for S1-mini to emit EOS on valid
         // short transcripts.
         let contextSize = 4_096
 
+        // Context allocation plus prompt evaluation: the remaining timed
+        // portion of generate() besides model load, tokenize, and decode.
+        let promptEvalTrace = PerfTrace.begin("cleanup.promptEval")
         var contextParameters = llama_context_default_params()
         contextParameters.n_ctx = UInt32(contextSize)
         contextParameters.n_batch = 2_048
@@ -267,6 +263,7 @@ actor S1MiniInferenceEngine {
         contextParameters.n_threads_batch = threadCount
 
         guard let context = llama_init_from_model(model, contextParameters) else {
+            promptEvalTrace.end()
             throw S1MiniServiceError.contextCreationFailed
         }
         defer { llama_free(context) }
@@ -278,16 +275,75 @@ actor S1MiniInferenceEngine {
             )
         }
         guard promptStatus == 0 else {
+            promptEvalTrace.end()
             throw S1MiniServiceError.promptEvaluationFailed(promptStatus)
         }
+        promptEvalTrace.end()
 
+        let (output, outputTokenCount) = try sampleOutput(
+            context: context,
+            vocabulary: vocabulary,
+            maximumOutputTokens: maximumOutputTokens
+        )
+        trace.recordCounts(["output_tokens": outputTokenCount, "output_bytes": output.count])
+
+        let decoded = String(decoding: output, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        logger.info(
+            "generate: promptTokens=\(promptTokens.count, privacy: .public), inputTokens=\(transcriptTokenCount, privacy: .public), outputChars=\(decoded.count, privacy: .public)"
+        )
+        return decoded
+    }
+
+    /// Tokenizes the transcript (for the length guard) and the prompt.
+    /// Traced separately so future work can distinguish tokenizer cost
+    /// from context setup, prompt evaluation, and sampling.
+    private func tokenizeInputs(
+        transcript: String,
+        prompt: String,
+        vocabulary: OpaquePointer
+    ) throws -> (transcriptTokenCount: Int, promptTokens: [llama_token]) {
+        let trace = PerfTrace.begin("cleanup.tokenize")
+        defer { trace.end() }
+        let transcriptTokenCount = try tokenize(
+            transcript,
+            vocabulary: vocabulary,
+            addSpecial: false,
+            parseSpecial: false
+        ).count
+        guard transcriptTokenCount <= S1MiniModelSpec.maximumTranscriptTokens else {
+            throw S1MiniServiceError.transcriptTooLong(
+                actual: transcriptTokenCount,
+                maximum: S1MiniModelSpec.maximumTranscriptTokens
+            )
+        }
+        let promptTokens = try tokenize(
+            prompt,
+            vocabulary: vocabulary,
+            addSpecial: false,
+            parseSpecial: true
+        )
+        return (transcriptTokenCount, promptTokens)
+    }
+
+    /// Runs the autoregressive sampling loop. Traced separately so future
+    /// work can derive per-token timings from the existing token counts.
+    private func sampleOutput(
+        context: OpaquePointer,
+        vocabulary: OpaquePointer,
+        maximumOutputTokens: Int
+    ) throws -> (Data, Int) {
+        let trace = PerfTrace.begin("cleanup.decode")
+        defer { trace.end() }
         var output = Data()
+        var outputTokenCount = 0
         for _ in 0..<maximumOutputTokens {
             try Task.checkCancellation()
             let token = try greedyToken(context: context, vocabulary: vocabulary)
             if llama_vocab_is_eog(vocabulary, token) {
                 break
             }
+            outputTokenCount += 1
             output.append(try piece(for: token, vocabulary: vocabulary))
 
             var nextToken = token
@@ -299,16 +355,13 @@ actor S1MiniInferenceEngine {
                 throw S1MiniServiceError.tokenEvaluationFailed(tokenStatus)
             }
         }
-
-        let decoded = String(decoding: output, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        logger.info(
-            "generate: promptTokens=\(promptTokens.count, privacy: .public), inputTokens=\(transcriptTokenCount, privacy: .public), outputChars=\(decoded.count, privacy: .public)"
-        )
-        return decoded
+        trace.recordCounts(["output_tokens": outputTokenCount])
+        return (output, outputTokenCount)
     }
 
     private func loadModelIfNeeded(from url: URL) throws -> OpaquePointer {
+        let trace = PerfTrace.begin("cleanup.modelLoad")
+        defer { trace.end() }
         let path = url.standardizedFileURL.path
         guard FileManager.default.fileExists(atPath: path) else {
             throw S1MiniServiceError.modelNotDownloaded
@@ -441,6 +494,8 @@ enum S1MiniPostProcessingService {
         contextSetting: S1MiniContextSetting,
         context: DictationPostProcessingContext?
     ) async throws -> String {
+        let trace = PerfTrace.begin("cleanup.request")
+        defer { trace.end() }
         let resolvedContext = contextSetting.resolved(for: context)
         let prompt = S1MiniPromptBuilder.prompt(
             transcript: text,
@@ -471,6 +526,8 @@ enum S1MiniPostProcessingService {
     }
 
     static func unload() async {
+        let trace = PerfTrace.begin("cleanup.unload")
+        defer { trace.end() }
         await S1MiniInferenceEngine.shared.unload()
     }
 }

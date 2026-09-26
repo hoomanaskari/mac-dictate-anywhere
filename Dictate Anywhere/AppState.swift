@@ -81,6 +81,8 @@ final class AppState {
     private var continuationTargetBundleIdentifier: String?
     private let engineOverride: TranscriptionEngine?
     private let transcriptDeliveryOverride: ((String) async -> TextInsertionResult)?
+    private let inputSourceIDOverride: (() -> String?)?
+    private let profileModelAvailableOverride: ((ParakeetModelChoice) -> Bool)?
 
     var canCancelDictation: Bool {
         (status == .recording || status == .processing)
@@ -158,7 +160,9 @@ final class AppState {
         recoveryStore: DictationRecoveryStore? = nil,
         engine: TranscriptionEngine? = nil,
         transcriptDelivery: ((String) async -> TextInsertionResult)? = nil,
-        contextCapture: (@Sendable (pid_t?) async -> DictationContext?)? = nil
+        contextCapture: (@Sendable (pid_t?) async -> DictationContext?)? = nil,
+        inputSourceID: (() -> String?)? = nil,
+        profileModelAvailable: ((ParakeetModelChoice) -> Bool)? = nil
     ) {
         self.permissions = permissions ?? Permissions()
         self.microphonePermissionRequester = microphonePermissionRequester
@@ -166,6 +170,8 @@ final class AppState {
         self.engineOverride = engine
         self.transcriptDeliveryOverride = transcriptDelivery
         self.contextCaptureOverride = contextCapture
+        self.inputSourceIDOverride = inputSourceID
+        self.profileModelAvailableOverride = profileModelAvailable
         setupHotkeyCallbacks()
         setupPermissionCallbacks()
         setupInputSourceCallbacks()
@@ -245,6 +251,8 @@ final class AppState {
 
     /// Stops process-lifetime services before AppKit tears down the process.
     func shutdown() async {
+        let trace = PerfTrace.begin("app.shutdown")
+        defer { trace.end() }
         guard !isShuttingDown else { return }
         isShuttingDown = true
         invalidateContextCapture()
@@ -302,18 +310,24 @@ final class AppState {
     }
 
     private func runStartupSequence() async {
-        await permissions.check()
+        let trace = PerfTrace.begin("app.startup")
+        defer { trace.end() }
+        await PerfTrace.measure("app.permissionCheck") { await permissions.check() }
         guard !isShuttingDown else { return }
         updateAccessibilityIntegration(granted: permissions.accessibilityGranted, promptIfNeeded: true)
         await prepareActiveEngine()
         guard !isShuttingDown else { return }
-        await refreshAppleSpeechAssetState()
+        await PerfTrace.measure("app.appleSpeechAssetRefresh") {
+            await refreshAppleSpeechAssetState()
+        }
         guard !isShuttingDown else { return }
         inputSourceMonitor.startMonitoring()
         if settings.engineChoice != .assemblyAI,
            settings.inputSourceAutoSwitchEnabled,
            let inputSourceID = inputSourceMonitor.currentInputSourceID() {
-            await enqueueInputSourceProfileApply(for: inputSourceID).value
+            await PerfTrace.measure("app.inputSourceApply") {
+                await enqueueInputSourceProfileApply(for: inputSourceID).value
+            }
         }
     }
 
@@ -340,6 +354,8 @@ final class AppState {
     // MARK: - Engine Lifecycle
 
     func prepareActiveEngine() async {
+        let trace = PerfTrace.begin("stt.prepare")
+        defer { trace.end() }
         guard !isShuttingDown else { return }
         logger.info("prepareActiveEngine: called, engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public), status=\(String(describing: self.status), privacy: .public)")
         if case .recording = status { return }
@@ -413,6 +429,8 @@ final class AppState {
     }
 
     func handleParakeetModelSelectionChange(userInitiated: Bool) async {
+        let trace = PerfTrace.begin("stt.modelSwitch")
+        defer { trace.end() }
         guard status == .idle else { return }
         settings.engineChoice = .parakeet
         settings.userHasChosenEngine = userInitiated
@@ -421,6 +439,8 @@ final class AppState {
     }
 
     func handleEngineSelectionChange(_ choice: TranscriptionEngineChoice) async {
+        let trace = PerfTrace.begin("stt.modelSwitch")
+        defer { trace.end() }
         guard status == .idle else { return }
         guard availableEngineChoices.contains(choice) else { return }
         guard choice != .appleSpeech || AppleSpeechEngine.isSupported else { return }
@@ -438,6 +458,8 @@ final class AppState {
     }
 
     func handleAppleSpeechLanguageChange(_ language: SupportedLanguage) async {
+        let trace = PerfTrace.begin("stt.modelSwitch")
+        defer { trace.end() }
         guard status == .idle, settings.engineChoice == .appleSpeech else { return }
         guard appleSpeechSupportedLanguages.contains(language) else { return }
         settings.appleSpeechLanguage = language
@@ -500,7 +522,10 @@ final class AppState {
             appleSpeechSupported: AppleSpeechEngine.isSupported,
             // Availability = on disk AND runnable by this process (FluidAudio
             // hard-fails Nemotron multilingual under Rosetta/x86_64).
-            isModelDownloaded: { parakeetEngine.checkModelOnDisk(for: $0) && $0.isAvailableOnThisMac },
+            isModelDownloaded: { [self] in
+                profileModelAvailableOverride?($0)
+                    ?? (parakeetEngine.checkModelOnDisk(for: $0) && $0.isAvailableOnThisMac)
+            },
             isAppleSpeechAssetInstalled: { installedAppleSpeechLanguages.contains($0) }
         )
 
@@ -581,6 +606,8 @@ final class AppState {
     // MARK: - Ollama Model Management
 
     func startOllamaModelDownload(_ model: String) async {
+        let trace = PerfTrace.begin("cleanup.modelDownload")
+        defer { trace.end() }
         guard ollamaDownloadState == nil, ollamaDeletingModel == nil else { return }
 
         let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -646,6 +673,65 @@ final class AppState {
 
     // MARK: - Dictation Flow
 
+    private func beginPerformanceSession(mode: HotkeyMode?) {
+        PerfTrace.setSessionMetadata(
+            performanceConfigurationLabels().merging([
+                "session_id": UUID().uuidString,
+                "audio_tap_buffer_frames": "4096",
+                "hotkey_mode": mode?.rawValue ?? "none"
+            ]) { _, session in session }
+        )
+    }
+
+    private func performanceConfigurationLabels() -> [String: String] {
+        let engine = settings.engineChoice
+        let model: String
+        let language: String
+        switch engine {
+        case .parakeet:
+            model = settings.parakeetModelChoice.rawValue
+            language = settings.selectedLanguage.rawValue
+        case .appleSpeech:
+            model = settings.appleSpeechLanguage.rawValue
+            language = settings.appleSpeechLanguage.rawValue
+        case .assemblyAI:
+            model = "assemblyAI"
+            language = settings.assemblyAILanguage.rawValue
+        }
+
+        return [
+            "engine": engine.rawValue,
+            "model": model,
+            "language": language,
+            "eou_enabled": String(engine == .parakeet
+                && settings.parakeetModelChoice.supportsEndOfUtterance
+                && settings.autoStopAfterSpeechEndsEnabled),
+            "cleanup_mode": settings.transcriptPostProcessingMode.rawValue,
+            "s1_mini_enabled": String(settings.transcriptPostProcessingMode == .s1Mini),
+            "filler_removal_enabled": String(settings.isFillerWordRemovalEnabled
+                && !settings.fillerWordsToRemove.isEmpty),
+            "context_awareness_enabled": String(settings.dictationContextAwarenessEnabled),
+            "audio_mute_enabled": String(settings.muteSystemAudioDuringRecordingEnabled),
+            "microphone_boost_enabled": String(settings.boostMicrophoneVolumeEnabled),
+            "input_auto_switch_enabled": String(settings.inputSourceAutoSwitchEnabled),
+            "custom_vocabulary_enabled": String(!settings.customVocabulary.isEmpty)
+        ]
+    }
+
+    private func updatePerformanceConfigurationLabels() {
+        PerfTrace.updateSessionMetadata(performanceConfigurationLabels())
+    }
+
+    private func updatePerformanceContextLabels() {
+        let context = sessionDictationContext
+        PerfTrace.updateSessionMetadata([
+            "context_category": context?.category.rawValue ?? "none",
+            "context_excluded": String(context?.isContextExcluded ?? false),
+            "secure_field": String(context?.isSecureField ?? false),
+            "text_position_snapshot": String(context?.hasTextPositionSnapshot ?? false)
+        ])
+    }
+
     func startDictation(mode: HotkeyMode? = nil) async {
         guard !isShuttingDown else { return }
         logger.info("startDictation: entry, status=\(String(describing: self.status), privacy: .public), isTransitioning=\(self.isTransitioning, privacy: .public), engineChoice=\(String(describing: self.settings.engineChoice), privacy: .public)")
@@ -670,12 +756,25 @@ final class AppState {
             return // The permission gesture must never become a recording gesture.
         }
         guard !isShuttingDown else { return }
+        beginPerformanceSession(mode: mode)
+        let requestTrace = PerfTrace.begin("dictation.requestToRecording")
+        var requestCompleted = false
+        defer {
+            if !requestCompleted {
+                requestTrace.end(outcome: "aborted")
+                PerfTrace.clearSessionMetadata()
+            }
+        }
         if settings.engineChoice != .assemblyAI,
            settings.inputSourceAutoSwitchEnabled,
-           let inputSourceID = inputSourceMonitor.currentInputSourceID() {
+           let inputSourceID = inputSourceIDOverride?() ?? inputSourceMonitor.currentInputSourceID() {
             // Backstop: the eager pre-warm usually already did this; going
             // through the queue serializes against an apply still in flight.
-            await enqueueInputSourceProfileApply(for: inputSourceID, showLoadingOverlay: true).value
+            await PerfTrace.measure("dictation.inputSourceApply") {
+                await enqueueInputSourceProfileApply(for: inputSourceID, showLoadingOverlay: true).value
+            }
+            updatePerformanceConfigurationLabels()
+            requestTrace.refreshSessionMetadata()
         }
         guard !isShuttingDown else { return }
         let engine = activeEngine
@@ -688,11 +787,16 @@ final class AppState {
                 return
             }
 
-            if !(await parakeetEngine.refreshSelectedModelReadiness()) {
-                await prepareActiveEngine()
+            var modelReady = true
+            if engineOverride == nil {
+                modelReady = await parakeetEngine.refreshSelectedModelReadiness()
+                if !modelReady {
+                    await prepareActiveEngine()
+                    modelReady = await parakeetEngine.refreshSelectedModelReadiness()
+                }
             }
 
-            guard await parakeetEngine.refreshSelectedModelReadiness(), engine.isReady else {
+            guard modelReady, engine.isReady else {
                 logger.warning("startDictation: FluidAudio engine not ready, aborting")
                 if settings.legacyAppleSpeechMigrationPending && !parakeetEngine.checkModelOnDisk() {
                     showLegacyAppleSpeechUnavailableAlert()
@@ -721,11 +825,27 @@ final class AppState {
         }
         guard !isShuttingDown else { return }
         captureInsertionTargetAppAndContext(engine: engine)
+        updatePerformanceContextLabels()
         guard !isShuttingDown else { return }
-        await beginRecording(engine: engine, mode: mode)
+        await beginRecording(engine: engine, mode: mode, requestTrace: requestTrace) {
+            requestCompleted = true
+        }
     }
 
-    private func beginRecording(engine: TranscriptionEngine, mode: HotkeyMode?) async {
+    private func beginRecording(
+        engine: TranscriptionEngine,
+        mode: HotkeyMode?,
+        requestTrace: PerfInterval? = nil,
+        onCompleted: () -> Void = {}
+    ) async {
+        let trace = PerfTrace.begin("dictation.start")
+        var completed = false
+        defer {
+            if !completed {
+                trace.end(outcome: "aborted")
+                PerfTrace.clearSessionMetadata()
+            }
+        }
         guard !isShuttingDown else { return }
         engine.setSessionContextualVocabulary(sessionDictationContext?.lexicalHints ?? [])
         engine.setSessionDictationContext(sessionDictationContext)
@@ -872,6 +992,10 @@ final class AppState {
 
         activeRecordingStartupID = nil
         isTransitioning = false
+        trace.end(outcome: "completed")
+        requestTrace?.end(outcome: "completed")
+        completed = true
+        onCompleted()
 
         // If the user released a hold-to-record key while we were starting up, stop now.
         if pendingHoldRelease {
@@ -897,6 +1021,11 @@ final class AppState {
     }
 
     private func finishDictation() async {
+        let trace = PerfTrace.begin("dictation.stopToInsertion")
+        defer {
+            trace.end(outcome: Task.isCancelled ? "cancelled" : "aborted")
+            PerfTrace.clearSessionMetadata()
+        }
         stopAudioLevelPolling()
 
         // Show processing overlay
@@ -922,6 +1051,7 @@ final class AppState {
             ? assemblyAIEngine.lastInsertionPlan : nil
         let preserveModelFormatting = usesAssemblyAI && assemblyAIEngine.lastResultWasPolished
         if let error = engine.lastTranscriptionError {
+            trace.end(outcome: "failed")
             await handleTranscriptionFailure(error, engine: engine)
             return
         }
@@ -942,6 +1072,7 @@ final class AppState {
 
         // AssemblyAI already returns the user-selected polished or verbatim
         // result. Local engines retain the existing filler/live-preview path.
+        let normalizeTrace = PerfTrace.begin("transcript.normalize")
         let finalText: String
         if usesAssemblyAI {
             finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -951,8 +1082,10 @@ final class AppState {
                 in: .whitespacesAndNewlines)
             finalText = liveFallback.count > cleaned.count ? liveFallback : cleaned
         }
+        normalizeTrace.end()
 
         guard !finalText.isEmpty else {
+            trace.end(outcome: "noText")
             currentTranscript = ""
             volumeController.restoreMicrophoneVolume()
             // Restore recording audio state (brief pause lets BT audio routing settle)
@@ -1094,6 +1227,7 @@ final class AppState {
         }
 
         guard !Task.isCancelled else { return }
+        let historyTrace = PerfTrace.begin("transcript.history")
         if postProcessingMode != .none,
            postProcessingMode != .fluidAudioVocabulary {
             processedText = normalizePostProcessedTranscript(processedText)
@@ -1102,7 +1236,7 @@ final class AppState {
             "postProcessing: completed changed=\(processedText != finalText, privacy: .public), outputChars=\(processedText.count, privacy: .public)"
         )
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else { historyTrace.end(); return }
         // Delivery is committed from this point; cancellation must never race a paste.
         isDeliveringTranscript = true
         updateCancellationAvailability()
@@ -1110,8 +1244,10 @@ final class AppState {
         lastTranscript = processedText
         Self.lastTranscriptForMenuBar = processedText
         settings.addTranscriptHistoryEntry(processedText, rawText: rawTranscript)
+        historyTrace.end()
 
         // Insert text
+        let insertionOrchestrationTrace = PerfTrace.begin("insertion.orchestration")
         NotificationCenter.default.post(name: .dismissMenusForPaste, object: nil)
         await reactivateInsertionTargetIfNeeded()
         let insertionContext = await insertionContextForDelivery()
@@ -1134,11 +1270,23 @@ final class AppState {
                 preserveModelFormatting: preserveModelFormatting
             )
         }
+        switch result {
+        case .success:
+            insertionOrchestrationTrace.end(outcome: "success")
+            trace.end(outcome: "success")
+        case .copiedOnly:
+            insertionOrchestrationTrace.end(outcome: "copiedOnly")
+            trace.end(outcome: "copiedOnly")
+        case .failed:
+            insertionOrchestrationTrace.end(outcome: "failed")
+            trace.end(outcome: "failed")
+        }
         insertionTargetApp = nil
         sessionDictationContext = nil
 
         // Restore mic volume and recording audio state after text insertion.
         // gives Bluetooth audio routing time to settle back to playback mode.
+        let teardownTrace = PerfTrace.begin("dictation.teardown")
         volumeController.restoreMicrophoneVolume()
         if settings.muteSystemAudioDuringRecordingEnabled {
             try? await Task.sleep(for: .milliseconds(200))
@@ -1158,6 +1306,7 @@ final class AppState {
         await discardSessionRecovery(completed: true)
         sessionEngine = nil
         status = .idle
+        teardownTrace.end()
     }
 
     private func handleTranscriptionFailure(_ message: String, engine: TranscriptionEngine) async {
@@ -1206,6 +1355,11 @@ final class AppState {
 
     func cancelDictation() async {
         guard canCancelDictation else { return }
+        let trace = PerfTrace.begin("dictation.cancel")
+        defer {
+            trace.end()
+            PerfTrace.clearSessionMetadata()
+        }
 
         isCancelling = true
         invalidateContextCapture()
@@ -1309,6 +1463,8 @@ final class AppState {
 
     func recoverCancelledDictation(_ entry: CancelledDictation) async {
         guard status == .idle, !isTransitioning else { return }
+        let trace = PerfTrace.begin("recovery.transcribe")
+        defer { trace.end() }
         do {
             try recoveryStore.reload()
             guard recoveryStore.entries.contains(where: { $0.id == entry.id }) else { return }
@@ -1357,6 +1513,8 @@ final class AppState {
 
     func continueCancelledDictation(_ entry: CancelledDictation) async {
         guard !isShuttingDown, status == .idle, !isTransitioning else { return }
+        let trace = PerfTrace.begin("recovery.continue")
+        defer { trace.end() }
         isTransitioning = true
         defer { if status != .recording { isTransitioning = false } }
         if !permissions.micGranted {
@@ -1402,6 +1560,8 @@ final class AppState {
                 return
             }
             recoveringEntryID = nil
+            beginPerformanceSession(mode: .handsFreeToggle)
+            updatePerformanceContextLabels()
             await beginRecording(engine: engine, mode: .handsFreeToggle)
         } catch {
             invalidateContextCapture()
@@ -1427,6 +1587,8 @@ final class AppState {
         target: NSRunningApplication? = nil,
         useFrontmost: Bool = true
     ) {
+        let trace = PerfTrace.begin("dictation.capture")
+        defer { trace.end() }
         invalidateContextCapture()
         sessionDictationContext = nil
         let currentPID = ProcessInfo.processInfo.processIdentifier
@@ -1481,6 +1643,7 @@ final class AppState {
                 guard let self, !Task.isCancelled, !self.isShuttingDown,
                       self.contextCaptureID == id else { return }
                 self.sessionDictationContext = context
+                self.updatePerformanceContextLabels()
                 engine.setSessionDictationContext(context)
                 await engine.updateSessionContextualVocabulary(context?.lexicalHints ?? [])
                 self.logger.info("contextCapture: completed alongside recording in \(String(describing: started.duration(to: .now)), privacy: .public)")
@@ -1501,6 +1664,8 @@ final class AppState {
         for mode: TranscriptPostProcessingMode,
         isConfiguredServerLocal: Bool = false
     ) -> DictationPostProcessingContext? {
+        let trace = PerfTrace.begin("cleanup.context")
+        defer { trace.end() }
         let support = mode.dictationContextSupport(
             isConfiguredServerLocal: isConfiguredServerLocal
         )
@@ -1512,6 +1677,8 @@ final class AppState {
     }
 
     private func reactivateInsertionTargetIfNeeded() async {
+        let trace = PerfTrace.begin("insertion.targetActivation")
+        defer { trace.end() }
         guard let app = insertionTargetApp, !app.isTerminated else { return }
         if app.activate() {
             try? await Task.sleep(for: .milliseconds(120))
@@ -1522,6 +1689,8 @@ final class AppState {
     /// starts. Retry only missing snapshots after the original app is active;
     /// successful start-of-session snapshots remain the source of truth.
     private func insertionContextForDelivery() async -> DictationContext? {
+        let trace = PerfTrace.begin("dictation.context")
+        defer { trace.end() }
         guard let captured = sessionDictationContext,
               !captured.hasTextPositionSnapshot,
               !captured.isSecureField,
@@ -1558,9 +1727,14 @@ final class AppState {
         audioLevelTask = Task { [weak self] in
             var displayTranscript = self?.transcriptPrefix ?? ""
             var transcriptPollTick = 0
+            var levelPollCount = 0
             var lastTranscriptLength = 0
             while !Task.isCancelled {
                 guard let self, self.status == .recording else { break }
+
+                levelPollCount += 1
+                let levelPollTrace = levelPollCount.isMultiple(of: 30)
+                    ? PerfTrace.begin("audio.levelPoll") : nil
 
                 // Pull level samples from the lock-protected buffer (thread-safe)
                 let samples = engine.levelSamples(count: 1600)
@@ -1580,6 +1754,7 @@ final class AppState {
                 }
 
                 self.overlay.show(state: .listening(level: level, transcript: displayTranscript))
+                levelPollTrace?.end()
                 try? await Task.sleep(for: .milliseconds(33))
             }
         }
@@ -1594,12 +1769,14 @@ final class AppState {
     private func configureEndOfUtteranceHandler(for engine: TranscriptionEngine) {
         guard let parakeet = engine as? ParakeetEngine else { return }
         parakeet.endOfUtteranceHandler = { [weak self] in
+            PerfTrace.event("eou.detected")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard self.settings.autoStopAfterSpeechEndsEnabled else { return }
                 guard self.settings.parakeetModelChoice.supportsEndOfUtterance else { return }
                 guard self.sessionHotkeyMode == .handsFreeToggle else { return }
                 guard self.status == .recording, !self.isTransitioning else { return }
+                PerfTrace.event("eou.stop")
                 await self.stopDictation()
             }
         }

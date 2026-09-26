@@ -18,10 +18,26 @@ cat > "$MOCK_BIN/rm" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$RM_LOG"
 EOF
-chmod +x "$MOCK_BIN/pgrep" "$MOCK_BIN/rm"
+cat > "$MOCK_BIN/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$XCODEBUILD_ARGS_LOG"
+EOF
+cat > "$MOCK_BIN/uname" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-m" ]]; then
+  printf '%s\n' "$MOCK_HOST_ARCH"
+else
+  /usr/bin/uname "$@"
+fi
+EOF
+cat > "$MOCK_BIN/open" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$MOCK_BIN/pgrep" "$MOCK_BIN/rm" "$MOCK_BIN/xcodebuild" "$MOCK_BIN/uname" "$MOCK_BIN/open"
 
 PATH="$MOCK_BIN:$PATH"
-export HOME="$TEST_HOME" PATH RM_LOG
+export HOME="$TEST_HOME" PATH RM_LOG XCODEBUILD_ARGS_LOG="$TEST_ROOT/xcodebuild-args.log"
 
 unset DERIVED_DATA_PATH
 default_path="$HOME/Library/Developer/Xcode/DerivedData/DictateAnywhereDev"
@@ -71,4 +87,21 @@ if [[ "$(wc -l < "$RM_LOG" | tr -d ' ')" != "1" ]]; then
   exit 1
 fi
 
+executable="$default_path/Build/Products/Debug/Dictate Anywhere Dev.app/Contents/MacOS/Dictate Anywhere Dev"
+mkdir -p "$(dirname "$executable")"
+touch "$executable"
+chmod +x "$executable"
+
+for host_arch in arm64 x86_64; do
+  for command in build launch test benchmark check; do
+    MOCK_HOST_ARCH="$host_arch" "$SCRIPT" "$command" >/dev/null
+    if ! /usr/bin/grep -Fxq 'platform=macOS' "$XCODEBUILD_ARGS_LOG" || \
+       /usr/bin/grep -Eq 'arch=|^ARCHS=' "$XCODEBUILD_ARGS_LOG"; then
+      printf 'FAIL: %s did not select a native macOS destination on %s\n' "$command" "$host_arch" >&2
+      exit 1
+    fi
+  done
+done
+
+printf 'Development script architecture selection tests passed.\n'
 printf 'Development script clean safety tests passed.\n'

@@ -39,9 +39,10 @@ final class ModelSwitchBenchmarkTests: XCTestCase {
         settings.engineChoice = .parakeet
 
         let candidates: [ParakeetModelChoice] = [
-            .englishOnly, .senseVoice, .englishOnly, .nemotronMultilingual, .senseVoice,
+            .englishOnly, .parakeetEou320, .senseVoice, .nemotron1120,
+            .nemotronMultilingual, .englishOnly, .parakeetEou320,
         ]
-        let sequence = candidates.filter { engine.checkModelOnDisk(for: $0) }
+        let sequence = candidates.filter { $0.isAvailableOnThisMac && engine.checkModelOnDisk(for: $0) }
         try XCTSkipUnless(
             Set(sequence).count >= 2,
             "Need at least two downloaded models among \(candidates.map(\.rawValue))"

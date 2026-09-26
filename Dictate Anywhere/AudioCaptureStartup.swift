@@ -74,30 +74,34 @@ nonisolated func startAudioCaptureOffMainActor(
 ) async throws -> AudioCaptureController {
     let factory = AudioCaptureFactoryBox(makeController: makeController)
 
-    return try await withCheckedThrowingContinuation { continuation in
-        let resolution = AudioCaptureStartupResolution(continuation: continuation)
+    return try await PerfTrace.measure("audio.controllerWait") {
+        try await withCheckedThrowingContinuation { continuation in
+            let resolution = AudioCaptureStartupResolution(continuation: continuation)
 
-        let registered = cancellation.register {
-            resolution.resume(with: .failure(CancellationError()))
-        }
-        guard registered else {
-            resolution.resume(with: .failure(CancellationError()))
-            return
-        }
-
-        queue.async {
-            do {
-                let controller = try factory.makeController()
-                if !resolution.resume(with: .success(controller)) {
-                    controller.stop()
-                }
-            } catch {
-                resolution.resume(with: .failure(error))
+            let registered = cancellation.register {
+                resolution.resume(with: .failure(CancellationError()))
             }
-        }
+            guard registered else {
+                resolution.resume(with: .failure(CancellationError()))
+                return
+            }
 
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
-            resolution.resume(with: .failure(TranscriptionError.audioEngineSetupTimedOut))
+            queue.async {
+                do {
+                    let controller = try PerfTrace.measure("audio.controllerCreate") {
+                        try factory.makeController()
+                    }
+                    if !resolution.resume(with: .success(controller)) {
+                        controller.stop()
+                    }
+                } catch {
+                    resolution.resume(with: .failure(error))
+                }
+            }
+
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
+                resolution.resume(with: .failure(TranscriptionError.audioEngineSetupTimedOut))
+            }
         }
     }
 }

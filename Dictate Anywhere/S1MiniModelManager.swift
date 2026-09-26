@@ -261,6 +261,8 @@ final class S1MiniModelManager {
     }
 
     func validatedModelURL() async throws -> URL {
+        let trace = PerfTrace.begin("cleanup.validate")
+        defer { trace.end() }
         guard Self.hasNonEmptyFile(at: licenseURL) else {
             isModelDownloaded = false
             throw S1MiniModelManagerError.missingLicense
@@ -276,6 +278,8 @@ final class S1MiniModelManager {
     }
 
     func downloadModel() async throws {
+        let trace = PerfTrace.begin("cleanup.modelDownload")
+        defer { trace.end() }
         guard !isBusy else { throw S1MiniModelManagerError.downloadInProgress }
 
         if let existingURL = try? await validatedModelURL() {

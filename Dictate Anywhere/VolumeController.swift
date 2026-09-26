@@ -23,6 +23,8 @@ final class VolumeController {
 
     /// Saves current audio state and mutes system output for recording.
     func adjustForRecording() {
+        let trace = PerfTrace.begin("audio.systemMute")
+        defer { trace.end() }
         guard savedOutputMuteState == nil else { return }
 
         guard let outputID = getDefaultOutputDeviceID() else { return }
@@ -34,6 +36,8 @@ final class VolumeController {
     /// Saves current mic volume and boosts it to 80% for recording.
     /// - Parameter deviceID: Specific device to boost; falls back to system default if nil.
     func boostMicrophoneVolume(deviceID: AudioDeviceID? = nil) {
+        let trace = PerfTrace.begin("audio.microphoneBoost")
+        defer { trace.end() }
         guard savedInputVolume == nil else { return }
         guard let inputID = deviceID ?? getDefaultInputDeviceID() else { return }
         guard let currentVolume = getVolume(deviceID: inputID, scope: kAudioDevicePropertyScopeInput) else { return }
@@ -47,6 +51,8 @@ final class VolumeController {
 
     /// Restores mic volume to its previous level.
     func restoreMicrophoneVolume() {
+        let trace = PerfTrace.begin("audio.microphoneRestore")
+        defer { trace.end() }
         guard let state = savedInputVolume else { return }
         if let currentInputID = getDefaultInputDeviceID(), currentInputID == state.deviceID {
             _ = setVolume(deviceID: state.deviceID, scope: kAudioDevicePropertyScopeInput, volume: state.previousVolume)
@@ -56,6 +62,8 @@ final class VolumeController {
 
     /// Restores saved audio state after recording.
     func restoreAfterRecording() {
+        let trace = PerfTrace.begin("audio.systemRestore")
+        defer { trace.end() }
         if let outputMuteState = savedOutputMuteState {
             restoreOutputMute(state: outputMuteState)
         }

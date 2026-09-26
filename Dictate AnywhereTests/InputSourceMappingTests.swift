@@ -1,4 +1,5 @@
 import XCTest
+import CoreAudio
 @testable import Dictate_Anywhere
 
 final class InputSourceMappingTests: XCTestCase {
@@ -231,4 +232,97 @@ final class InputSourceMappingTests: XCTestCase {
         settings.removeInputSourceMapping(id: mapping.id)
         XCTAssertTrue(settings.inputSourceMappings.isEmpty)
     }
+
+    #if DEBUG
+    @MainActor
+    func testRecordingTraceUsesResolvedInputSourceProfileWithoutChangingSession() async throws {
+        try XCTSkipUnless(PerfTrace.isEnabled, "Requires enabled trace emission")
+        let settings = Settings.shared
+        let sound = settings.soundEffectsEnabled
+        let boost = settings.boostMicrophoneVolumeEnabled
+        let mute = settings.muteSystemAudioDuringRecordingEnabled
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profile-trace-\(UUID())")
+        defer {
+            PerfTrace.onIntervalCompleted = nil
+            settings.soundEffectsEnabled = sound
+            settings.boostMicrophoneVolumeEnabled = boost
+            settings.muteSystemAudioDuringRecordingEnabled = mute
+            try? FileManager.default.removeItem(at: directory)
+        }
+        settings.soundEffectsEnabled = false
+        settings.boostMicrophoneVolumeEnabled = false
+        settings.muteSystemAudioDuringRecordingEnabled = false
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .none
+        settings.inputSourceAutoSwitchEnabled = true
+        settings.inputSourceMappings = [makeMapping(source: "profile-test", model: .multilingual, language: .german)]
+
+        let records = ProfileTraceRecords()
+        PerfTrace.onIntervalCompleted = { name, _, metadata in
+            records.append(name: name, metadata: metadata)
+        }
+        let engine = ProfileTraceEngine()
+        let app = AppState(
+            permissions: Permissions(statusProvider: { (true, false) }),
+            recoveryStore: DictationRecoveryStore(directory: directory),
+            engine: engine,
+            contextCapture: { _ in nil },
+            inputSourceID: { "profile-test" },
+            profileModelAvailable: { _ in true }
+        )
+        app.permissions.micGranted = true
+        await app.startDictation()
+        XCTAssertEqual(app.status, .recording)
+        let source = try XCTUnwrap(records.metadata(for: "dictation.inputSourceApply"))
+        let request = try XCTUnwrap(records.metadata(for: "dictation.requestToRecording"))
+        let start = try XCTUnwrap(records.metadata(for: "dictation.start"))
+        XCTAssertTrue(source.contains("language=en"), source)
+        XCTAssertTrue(request.contains("language=de"), request)
+        XCTAssertTrue(start.contains("language=de"), start)
+        XCTAssertTrue(request.contains("model=multilingual"), request)
+        let id = try XCTUnwrap(request.split(separator: " ").first { $0.hasPrefix("session_id=") })
+        XCTAssertTrue(source.contains(id), source)
+        XCTAssertTrue(start.contains(id), start)
+        await app.cancelDictation()
+        PerfTrace.begin("test.profileAfterSuccess").end()
+        XCTAssertEqual(records.metadata(for: "test.profileAfterSuccess"), "session_id=none")
+        engine.isReady = false
+        await app.startDictation()
+        PerfTrace.begin("test.profileAfterAbort").end()
+        XCTAssertEqual(records.metadata(for: "test.profileAfterAbort"), "session_id=none")
+        await app.shutdown()
+    }
+    #endif
 }
+
+#if DEBUG
+private final class ProfileTraceRecords: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(String, String)] = []
+
+    func append(name: String, metadata: String) {
+        lock.withLock { entries.append((name, metadata)) }
+    }
+
+    func metadata(for name: String) -> String? {
+        lock.withLock { entries.first { $0.0 == name }?.1 }
+    }
+}
+
+@MainActor
+private final class ProfileTraceEngine: TranscriptionEngine {
+    var recoveryCapture: RecoveryAudioCapture?
+    var isReady = true
+    var currentTranscript = ""
+    var audioSamples: [Float] = []
+    func levelSamples(count: Int) -> [Float] { [] }
+    func prepare() async throws {}
+    func startRecording(deviceID: AudioDeviceID?) async throws {}
+    func stopAudioCapture() async {}
+    func stopRecording() async -> String { "" }
+    func cancel() async {}
+    func transcribeRecording(at url: URL) async throws -> String { "" }
+}
+#endif

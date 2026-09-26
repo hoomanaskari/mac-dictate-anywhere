@@ -140,12 +140,14 @@ APP_NOTARY_ZIP="$TEMP_DIR/DictateAnywhere-notary.zip"
 
 log "Archiving signed app"
 rm -rf "$ARCHIVE_PATH"
+# Only the distributed archive defaults tracing off; local Release benchmarks stay instrumented.
 xcodebuild \
   -project "$PROJECT_PATH" \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
   -destination "generic/platform=macOS" \
   -archivePath "$ARCHIVE_PATH" \
+  SWIFT_ACTIVE_COMPILATION_CONDITIONS="DISTRIBUTION_BUILD" \
   archive
 
 log "Preparing dist folder"

@@ -491,6 +491,8 @@ enum DictationContextCapture {
         appName: String,
         rules: [DictationAppRule]
     ) -> DictationContext {
+        let trace = PerfTrace.begin("dictation.contextCapture")
+        defer { trace.end() }
         let preliminaryClassification = DictationContextClassifier.classification(
             bundleIdentifier: bundleIdentifier,
             documentURL: nil,

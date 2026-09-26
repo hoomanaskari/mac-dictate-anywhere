@@ -205,6 +205,8 @@ If you only want to run the app locally, you do not need the release packaging s
 
 For local development, use `scripts/dev.sh` with the shared **Dictate Anywhere** scheme. The workflow defaults to the **Debug** configuration, stable DerivedData, and the isolated `Dictate Anywhere Dev.app` so local permissions do not affect Release builds.
 
+For an end-to-end Instruments or unified-log profile, use the [performance tracing map](docs/performance-tracing.md). For repeatable offline measurements, see the [benchmark guide](docs/performance-benchmarking.md).
+
 Create the ignored local signing override when needed:
 
 ```bash

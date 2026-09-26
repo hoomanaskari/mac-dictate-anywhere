@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !Self.isRunningTests else { return }
         guard enforceSingleInstance() else { return }
+        let trace = PerfTrace.begin("app.launch")
+        defer { trace.end() }
         NSApp.disableRelaunchOnLogin()
         FluidAudioDebugLogFilter.installIfNeeded()
         setupMenuBar()
@@ -71,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // llama.cpp's Metal backend must release its model buffers before AppKit
         // begins process teardown, including Sparkle's update-and-relaunch path.
         Task { [weak self] in
+            let trace = PerfTrace.begin("app.terminate")
+            defer { trace.end() }
             await self?.appState.shutdown()
             await S1MiniPostProcessingService.unload()
             sender.reply(toApplicationShouldTerminate: true)

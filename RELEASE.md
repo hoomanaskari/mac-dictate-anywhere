@@ -85,6 +85,11 @@ cp scripts/release-macos.template.sh scripts/release-macos.sh
 chmod +x scripts/release-macos.sh
 ```
 
+If `scripts/release-macos.sh` already exists, compare its archive command with
+the current template before packaging. The script is ignored and does not
+update automatically; it must pass `DISTRIBUTION_BUILD` to default performance
+tracing off in the distributed app. Local Release benchmarks remain traced.
+
 Then run it:
 
 ```bash

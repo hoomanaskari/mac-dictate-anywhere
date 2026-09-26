@@ -72,6 +72,9 @@ final class AppleSpeechEngine: TranscriptionEngine {
 
     private let stateLock = NSLock()
     private var transcript = ""
+    /// One-shot guard for the `stt.firstPartial` trace event. Guarded by
+    /// `stateLock` because live transcript callbacks arrive off the main actor.
+    private var firstPartialEmitted = false
     private var levelSampleBuffer: [Float] = []
     private var audioCaptureController: AudioCaptureController?
     var recoveryCapture: RecoveryAudioCapture?
@@ -113,6 +116,8 @@ final class AppleSpeechEngine: TranscriptionEngine {
     }
 
     func prepare() async throws {
+        let trace = PerfTrace.begin("stt.enginePrepare")
+        defer { trace.end() }
         guard Self.isSupported else {
             isReady = false
             throw TranscriptionError.appleSpeechUnavailable
@@ -129,8 +134,9 @@ final class AppleSpeechEngine: TranscriptionEngine {
             let session = try await AppleSpeechSession(
                 requestedLocale: Self.locale(for: language),
                 contextualVocabulary: vocabulary,
-                onTranscript: { [weak self] text in
+                onTranscript: { [weak self] text, isPartial in
                     self?.setTranscript(text)
+                    if isPartial { self?.markFirstPartialIfNeeded(text: text) }
                 }
             )
             preparedSession = session
@@ -149,6 +155,8 @@ final class AppleSpeechEngine: TranscriptionEngine {
     }
 
     func startRecording(deviceID: AudioDeviceID?) async throws {
+        let trace = PerfTrace.begin("audio.startup")
+        defer { trace.end() }
         guard Self.isSupported else {
             throw TranscriptionError.appleSpeechUnavailable
         }
@@ -178,12 +186,15 @@ final class AppleSpeechEngine: TranscriptionEngine {
 
         stateLock.withLock {
             transcript = ""
+            firstPartialEmitted = false
             levelSampleBuffer.removeAll(keepingCapacity: true)
         }
         let usesExplicitMicrophoneSelection = Settings.shared.selectedMicrophoneUID != nil
 
         do {
-            try await session.start()
+            try await PerfTrace.measure("stt.appleSpeechSessionStart") {
+                try await session.start()
+            }
             // Context may have arrived while the recognizer was preparing.
             if preparedVocabulary != appleContextualVocabulary() {
                 await updateSessionContextualVocabulary(sessionContextualVocabulary)
@@ -224,16 +235,33 @@ final class AppleSpeechEngine: TranscriptionEngine {
         }
     }
 
+    #if DEBUG
+    func installAudioCaptureControllerForTesting(_ controller: AudioCaptureController) {
+        audioCaptureController = controller
+    }
+    #endif
+
     func stopAudioCapture() {
-        audioCaptureController?.stop()
+        stopAudioCapture(outcome: "completed")
+    }
+
+    private func stopAudioCapture(outcome: StaticString) {
+        guard let captureController = audioCaptureController else { return }
         audioCaptureController = nil
+        let trace = PerfTrace.begin("audio.teardown")
+        captureController.stop()
+        trace.end(outcome: outcome)
     }
 
     func stopRecording() async -> String {
+        let trace = PerfTrace.begin("stt.stopToFinal")
+        defer { trace.end() }
         stopAudioCapture()
 
         guard let session = activeSession else { return currentTranscript }
-        let finalTranscript = await session.finish()
+        let finalTranscript = await PerfTrace.measure("stt.finalize") {
+            await session.finish()
+        }
         activeSession = nil
         setTranscript(finalTranscript)
         logger.info("Apple Speech recording finished with \(finalTranscript.count, privacy: .public) characters")
@@ -243,21 +271,23 @@ final class AppleSpeechEngine: TranscriptionEngine {
     func cancel() async {
         audioCaptureStartupCancellation?.cancel()
         audioCaptureStartupCancellation = nil
-        audioCaptureController?.stop()
-        audioCaptureController = nil
+        stopAudioCapture(outcome: "cancelled")
         await activeSession?.cancel()
         activeSession = nil
         setTranscript("")
         stateLock.withLock {
+            firstPartialEmitted = false
             levelSampleBuffer.removeAll(keepingCapacity: false)
         }
     }
 
     func transcribeRecording(at url: URL) async throws -> String {
+        let trace = PerfTrace.begin("stt.transcribe")
+        defer { trace.end() }
         guard #available(macOS 26.0, *), Self.isSupported else { throw TranscriptionError.appleSpeechUnavailable }
         let session = try await AppleSpeechSession(
             requestedLocale: Self.locale(for: Settings.shared.appleSpeechLanguage),
-            contextualVocabulary: appleContextualVocabulary(), onTranscript: { _ in }
+            contextualVocabulary: appleContextualVocabulary(), onTranscript: { _, _ in }
         )
         return try await session.transcribeFile(at: url)
     }
@@ -335,6 +365,21 @@ final class AppleSpeechEngine: TranscriptionEngine {
         }
     }
 
+    /// Emits the one-shot `stt.firstPartial` event for live transcript text.
+    /// Only live callbacks emit: a final-only result (stop path) leaves the
+    /// event absent, which itself reports that no live partial appeared.
+    private func markFirstPartialIfNeeded(text: String) {
+        let shouldEmit = stateLock.withLock { () -> Bool in
+            guard !firstPartialEmitted,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            firstPartialEmitted = true
+            return true
+        }
+        if shouldEmit {
+            PerfTrace.event("stt.firstPartial")
+        }
+    }
+
     static func locale(for language: SupportedLanguage) -> Locale {
         locale(forLanguageCode: language.rawValue)
     }
@@ -373,7 +418,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
     static func makeInstalledLivePreviewSession(
         languageCode: String,
         contextualVocabulary: [String],
-        onTranscript: @escaping @Sendable (String) -> Void
+        onTranscript: @escaping @Sendable (String, Bool) -> Void
     ) async throws -> (any AppleSpeechSessionProtocol)? {
         guard #available(macOS 26.0, *), Self.isSupported else { return nil }
         let requestedLocale = locale(forLanguageCode: languageCode)
@@ -401,10 +446,14 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
     private let transcriber: SpeechTranscriber
     private let analyzer: SpeechAnalyzer
     private let analyzerFormat: AVAudioFormat
-    private let onTranscript: @Sendable (String) -> Void
+    private let onTranscript: @Sendable (String, Bool) -> Void
     private let inputStream: AsyncStream<AnalyzerInput>
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
     private let conversionLock = NSLock()
+    private var inputBufferCount = 0
+    private var convertedBufferCount = 0
+    private var inputSampleCount = 0
+    private var rejectedInputBufferCount = 0
     private var analysisTask: Task<CMTime?, Error>?
     private var resultTask: Task<String, Error>?
 
@@ -412,7 +461,7 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
         requestedLocale: Locale,
         contextualVocabulary: [String],
         allowsAssetInstallation: Bool = true,
-        onTranscript: @escaping @Sendable (String) -> Void
+        onTranscript: @escaping @Sendable (String, Bool) -> Void
     ) async throws {
         guard let locale = await SpeechTranscriber.supportedLocale(
             equivalentTo: requestedLocale
@@ -425,7 +474,9 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
             guard allowsAssetInstallation else {
                 throw TranscriptionError.appleSpeechLanguageUnsupported
             }
-            try await installationRequest.downloadAndInstall()
+            try await PerfTrace.measure("stt.appleSpeechAssetInstall") {
+                try await installationRequest.downloadAndInstall()
+            }
         }
 
         guard let sourceFormat = AVAudioFormat(
@@ -447,7 +498,9 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
             context.contextualStrings[.general] = contextualVocabulary
             try await analyzer.setContext(context)
         }
-        try await analyzer.prepareToAnalyze(in: analyzerFormat)
+        try await PerfTrace.measure("stt.appleSpeechAnalyzerPrepare") {
+            try await analyzer.prepareToAnalyze(in: analyzerFormat)
+        }
 
         let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
         self.transcriber = transcriber
@@ -483,7 +536,10 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
                 } else {
                     volatile = text
                 }
-                onTranscript(finalized + volatile)
+                onTranscript(
+                    finalized + volatile,
+                    !result.isFinal && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
             }
             return finalized + volatile
         }
@@ -520,19 +576,41 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
 
     func append(samples: [Float]) {
         guard !samples.isEmpty else { return }
+        var countedInput = false
         do {
             let sourceBuffer = try makePCMBuffer(from: samples)
             let buffer = try conversionLock.withLock {
-                try convertIfNeeded(sourceBuffer)
+                inputBufferCount += 1
+                inputSampleCount += samples.count
+                countedInput = true
+                let converted = try convertIfNeeded(sourceBuffer)
+                if sourceBuffer.format != analyzerFormat { convertedBufferCount += 1 }
+                return converted
             }
-            inputContinuation.yield(AnalyzerInput(buffer: buffer))
+            if case .enqueued = inputContinuation.yield(AnalyzerInput(buffer: buffer)) {
+                // The unbounded stream accepted this buffer.
+            } else {
+                conversionLock.withLock { rejectedInputBufferCount += 1 }
+            }
         } catch {
+            conversionLock.withLock {
+                if !countedInput {
+                    inputBufferCount += 1
+                    inputSampleCount += samples.count
+                }
+                rejectedInputBufferCount += 1
+            }
             inputContinuation.finish()
         }
     }
 
     func finish() async -> String {
         inputContinuation.finish()
+        let counts = conversionLock.withLock {
+            ["input_buffers": inputBufferCount, "converted_buffers": convertedBufferCount,
+             "rejected_input_buffers": rejectedInputBufferCount, "input_samples": inputSampleCount]
+        }
+        PerfTrace.event("stt.appleSpeechInputSummary", counts: counts)
         do {
             let lastSample = try await analysisTask?.value
             if let lastSample {

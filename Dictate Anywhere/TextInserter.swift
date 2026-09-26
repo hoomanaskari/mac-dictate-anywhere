@@ -33,22 +33,27 @@ final class TextInserter {
         modelInsertionPlan: ModelInsertionPlan? = nil,
         preserveModelFormatting: Bool = false
     ) async -> TextInsertionResult {
+        let trace = PerfTrace.begin("insertion.deliver")
+        var deliverOutcome: StaticString = "failed"
+        defer { trace.end(outcome: deliverOutcome) }
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         let targetApplication = targetProcessIdentifier.flatMap {
             NSRunningApplication(processIdentifier: $0)
         } ?? frontmostApplication
         let resolvedTargetProcessIdentifier = targetApplication?.processIdentifier
         let targetBundleIdentifier = targetApplication?.bundleIdentifier
-        let insertionText = preparedTextForInsertion(
-            text,
-            targetBundleIdentifier: targetBundleIdentifier,
-            targetProcessIdentifier: resolvedTargetProcessIdentifier,
-            context: context,
-            style: style,
-            knownTerms: knownTerms,
-            modelInsertionPlan: modelInsertionPlan,
-            preserveModelFormatting: preserveModelFormatting
-        )
+        let insertionText = PerfTrace.measure("insertion.prepare") {
+            preparedTextForInsertion(
+                text,
+                targetBundleIdentifier: targetBundleIdentifier,
+                targetProcessIdentifier: resolvedTargetProcessIdentifier,
+                context: context,
+                style: style,
+                knownTerms: knownTerms,
+                modelInsertionPlan: modelInsertionPlan,
+                preserveModelFormatting: preserveModelFormatting
+            )
+        }
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere", category: "TextInsertion")
         logger.info("insertionFormatting: model=\(preserveModelFormatting) explicitSpacing=\(modelInsertionPlan != nil) inputUpper=\(text.first(where: \.isLetter)?.isUppercase == true) outputUpper=\(insertionText.first(where: \.isLetter)?.isUppercase == true) leadingSpace=\(insertionText.hasPrefix(" ")) trailingSpace=\(insertionText.hasSuffix(" "))")
         guard !insertionText.isEmpty else { return .failed }
@@ -57,12 +62,14 @@ final class TextInserter {
         guard await copyToClipboard(insertionText) else { return .failed }
         guard pasteAutomatically else {
             resetPendingSeparator()
+            deliverOutcome = "copiedOnly"
             return .copiedOnly
         }
 
         // Check accessibility permission
         guard hasAccessibilityPermission(promptIfNeeded: true) else {
             resetPendingSeparator()
+            deliverOutcome = "copiedOnly"
             return .copiedOnly
         }
 
@@ -75,6 +82,8 @@ final class TextInserter {
         var listEdit: (AXUIElement, PlainTextListEdit)?
         if let context, context.processIdentifier == resolvedTargetProcessIdentifier,
            PlainTextListEdit.needsRenumbering(insertion: insertionText, context: context) {
+            let listEditTrace = PerfTrace.begin("insertion.listEdit")
+            defer { listEditTrace.end() }
             guard let pid = resolvedTargetProcessIdentifier,
                   let element = Self.focusedTextElement(processIdentifier: pid),
                   Self.processIdentifier(of: element) == resolvedTargetProcessIdentifier,
@@ -84,6 +93,7 @@ final class TextInserter {
                   Self.snapshotMatches(value: value, range: range, context: context) else {
                 logger.info("plainListEdit: live snapshot unavailable or changed")
                 resetPendingSeparator()
+                deliverOutcome = "copiedOnly"
                 return .copiedOnly
             }
             if let edit = PlainTextListEdit.prepare(value: value,
@@ -94,6 +104,7 @@ final class TextInserter {
                       Self.textValue(of: element) == value,
                       selectedTextRange(in: element).map({ $0.location == range.location && $0.length == range.length }) == true else {
                     _ = await copyToClipboard(insertionText)
+                    deliverOutcome = "copiedOnly"
                     return .copiedOnly
                 }
                 let didSelect = Self.setSelection(edit.range, in: element)
@@ -110,6 +121,7 @@ final class TextInserter {
                     logger.info("plainListEdit: selection verification failed, set=\(didSelect)")
                     _ = Self.setSelection(NSRange(location: range.location, length: range.length), in: element)
                     _ = await copyToClipboard(insertionText)
+                    deliverOutcome = "copiedOnly"
                     return .copiedOnly
                 }
                 listEdit = (element, edit)
@@ -120,6 +132,7 @@ final class TextInserter {
         if await simulatePasteWithAppleScript() {
             await finishListEdit(listEdit, insertionText: insertionText)
             prepareForNextInsertion(targetBundleIdentifier: targetBundleIdentifier)
+            deliverOutcome = "success"
             return .success
         }
 
@@ -128,6 +141,7 @@ final class TextInserter {
             try? await Task.sleep(for: .milliseconds(100))
             await finishListEdit(listEdit, insertionText: insertionText)
             prepareForNextInsertion(targetBundleIdentifier: targetBundleIdentifier)
+            deliverOutcome = "success"
             return .success
         }
 
@@ -136,11 +150,14 @@ final class TextInserter {
             _ = await copyToClipboard(insertionText)
         }
         resetPendingSeparator()
+        deliverOutcome = "copiedOnly"
         return .copiedOnly
     }
 
     private func finishListEdit(_ pending: (AXUIElement, PlainTextListEdit)?, insertionText: String) async {
         guard let (element, edit) = pending else { return }
+        let trace = PerfTrace.begin("insertion.listEditVerify")
+        defer { trace.end() }
         for _ in 0..<10 {
             if Self.textValue(of: element) == edit.expectedValue {
                 // Leave the cursor after the new items, not after old neighbors.
@@ -716,6 +733,8 @@ final class TextInserter {
     }
 
     private func copyToClipboard(_ text: String) async -> Bool {
+        let trace = PerfTrace.begin("insertion.clipboard")
+        defer { trace.end() }
         let pasteboard = NSPasteboard.general
 
         for _ in 0..<3 {
@@ -741,6 +760,8 @@ final class TextInserter {
     }
 
     private func simulatePasteWithCGEvent() -> Bool {
+        let trace = PerfTrace.begin("insertion.pasteEvent")
+        defer { trace.end() }
         let vKeyCode: CGKeyCode = 9
         guard let source = CGEventSource(stateID: .hidSystemState) else { return false }
 
@@ -759,7 +780,9 @@ final class TextInserter {
     }
 
     private func simulatePasteWithAppleScript() async -> Bool {
-        await withCheckedContinuation { continuation in
+        let trace = PerfTrace.begin("insertion.pasteScript")
+        defer { trace.end() }
+        return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let script = """
                 tell application "System Events"
@@ -767,7 +790,10 @@ final class TextInserter {
                 end tell
                 """
                 var error: NSDictionary?
-                if let scriptObject = NSAppleScript(source: script) {
+                let createTrace = PerfTrace.begin("insertion.pasteScriptCreate")
+                let scriptObject = NSAppleScript(source: script)
+                createTrace.end(outcome: scriptObject == nil ? "failed" : "success")
+                if let scriptObject {
                     scriptObject.executeAndReturnError(&error)
                     continuation.resume(returning: error == nil)
                 } else {

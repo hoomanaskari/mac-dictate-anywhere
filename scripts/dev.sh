@@ -23,6 +23,9 @@ Commands:
   launch  Build and launch the canonical Debug app
   test [OPTIONS]
           Build and run the project tests
+  benchmark
+          Run repeatable ASR and synthetic pipeline benchmarks
+          Accepts --configuration Debug|Release and --release
   check   Validate the Xcode project and Debug scheme
   clean   Stop the app and remove project DerivedData
   stop    Stop the running canonical app
@@ -119,6 +122,7 @@ configure_xcodebuild_args() {
     -scheme "$SCHEME"
     -configuration "$CONFIGURATION"
     -derivedDataPath "$DERIVED_DATA_PATH"
+    -destination 'platform=macOS'
   )
 
   if [[ "$CONFIGURATION" == "Debug" && -f "$SIGNING_CONFIG_PATH" ]]; then
@@ -140,7 +144,9 @@ run_tests() {
   printf 'Testing %s (%s)\n' "$SCHEME" "$CONFIGURATION"
   rm -rf "$RESULT_BUNDLE_PATH"
   set +e
-  xcodebuild "${xcodebuild_args[@]}" -resultBundlePath "$RESULT_BUNDLE_PATH" test
+  xcodebuild "${xcodebuild_args[@]}" \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="DEBUG PIPELINE_BENCHMARK_OPTIMIZED" \
+    -resultBundlePath "$RESULT_BUNDLE_PATH" test
   local test_status=$?
   set -e
   local report_status=0
@@ -152,6 +158,49 @@ run_tests() {
       "$report_status" "$test_status" >&2
   fi
   return "$test_status"
+}
+
+run_benchmark() {
+  local benchmark_conditions="PIPELINE_BENCHMARK PIPELINE_BENCHMARK_OPTIMIZED"
+  local -a benchmark_xcodebuild_args=("${xcodebuild_args[@]}")
+  # Keep nonempty for macOS's Bash 3.2 with `set -u` array expansion.
+  local -a benchmark_test_environment=("TEST_RUNNER_PIPELINE_BENCHMARK=1")
+  local name
+  # xcodebuild does not pass ordinary shell variables to its test host. Xcode
+  # strips TEST_RUNNER_ and forwards only these explicitly opted-in settings.
+  for name in DICTATE_ANYWHERE_PERF_TRACE PIPELINE_BENCHMARK_ITERATIONS \
+    PIPELINE_BENCHMARK_MODEL PIPELINE_BENCHMARK_AUDIO_PATH \
+    PIPELINE_BENCHMARK_REFERENCE_PATH PIPELINE_BENCHMARK_MAX_WER \
+    S1_MINI_MODEL_PATH RUN_MODEL_SWITCH_BENCHMARK; do
+    if [[ -n "${!name:-}" ]]; then
+      benchmark_test_environment+=("TEST_RUNNER_${name}=${!name}")
+    fi
+  done
+  [[ "$CONFIGURATION" == "Debug" ]] && benchmark_conditions="DEBUG $benchmark_conditions"
+  if [[ "$CONFIGURATION" == "Release" ]]; then
+    # Testable Release products use the local development team, not the
+    # distribution identity used by normal Release builds.
+    [[ -f "$SIGNING_CONFIG_PATH" ]] || fail "Release benchmarks require local Team ID signing: run scripts/dev.sh signing TEAM_ID"
+    benchmark_xcodebuild_args+=(
+      -xcconfig "$SIGNING_CONFIG_PATH"
+      CODE_SIGN_STYLE=Automatic
+      CODE_SIGN_IDENTITY="Apple Development"
+      ENABLE_TESTABILITY=YES
+      CODE_COVERAGE_ENABLED=NO
+    )
+  fi
+  rm -rf "$RESULT_BUNDLE_PATH"
+  env "${benchmark_test_environment[@]}" xcodebuild "${benchmark_xcodebuild_args[@]}" \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="$benchmark_conditions" \
+    -enableCodeCoverage NO \
+    -only-testing:"Dictate AnywhereTests/RecoveryASRSmokeTests/testRepeatableOfflineASRBenchmark" \
+    -only-testing:"Dictate AnywhereTests/RecoveryASRSmokeTests/testInstalledMandarinASRBenchmark" \
+    -only-testing:"Dictate AnywhereTests/RecoveryASRSmokeTests/testUserSuppliedSpeechFixtureBenchmark" \
+    -only-testing:"Dictate AnywhereTests/RecoveryASRSmokeTests/testNonStreamingPendingAudioWorkBenchmark" \
+    -only-testing:"Dictate AnywhereTests/PipelinePerformanceBenchmarkTests" \
+    -only-testing:"Dictate AnywhereTests/PipelineWorkloadBenchmarkTests" \
+    -only-testing:"Dictate AnywhereTests/ModelSwitchBenchmarkTests/testModelSwitchTimings" \
+    -resultBundlePath "$RESULT_BUNDLE_PATH" test
 }
 
 report_test_results() {
@@ -334,7 +383,7 @@ if [[ "$command" == "signing" ]]; then
 fi
 
 case "$command" in
-  build|test)
+  build|test|benchmark)
     parse_configuration_options "${@:2}"
     ;;
   launch|check|clean|stop)
@@ -354,6 +403,7 @@ case "$command" in
   build) require_command xcodebuild; build ;;
   launch) launch ;;
   test) require_command xcodebuild; run_tests ;;
+  benchmark) require_command xcodebuild; run_benchmark ;;
   check) require_command xcodebuild; check; validate_lifecycle_contract ;;
   clean) validate_clean_path; stop; rm -rf -- "$HOME/Library/Developer/Xcode/DerivedData/DictateAnywhereDev"; printf 'Removed DerivedData: %s\n' "$DEFAULT_DERIVED_DATA_PATH" ;;
   stop) stop ;;

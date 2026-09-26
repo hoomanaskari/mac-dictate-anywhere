@@ -405,6 +405,41 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(engine.events, ["cancel"])
         XCTAssertEqual(app.status, .idle)
     }
+
+    func testHoldReleaseDuringMicrophoneStartupStopsAfterCapture() async throws {
+        let engineChoice = Settings.shared.engineChoice
+        defer { Settings.shared.engineChoice = engineChoice }
+        Settings.shared.engineChoice = .appleSpeech
+        let engine = ContinuationTestEngine()
+        engine.suspendStart = true
+        let app = app(engine: engine)
+        let startupBegan = expectation(description: "microphone startup began")
+        let stopBegan = expectation(description: "recording stopped after startup")
+        engine.onStart = { startupBegan.fulfill() }
+        engine.onStop = { stopBegan.fulfill() }
+        let binding = HotkeyBinding(
+            id: UUID(), keyCode: nil,
+            modifiersRawValue: HotkeyModifiers([.function]).rawValue,
+            displayName: "fn", mode: .holdToRecord
+        )
+
+        app.hotkeyService.onKeyDown?(binding)
+        await fulfillment(of: [startupBegan], timeout: 1)
+        app.hotkeyService.onKeyUp?(binding)
+        for _ in 0..<100 where app.isHoldToRecordKeyDown {
+            await Task.yield()
+        }
+        XCTAssertFalse(app.isHoldToRecordKeyDown)
+        engine.finishPendingStart()
+        await fulfillment(of: [stopBegan], timeout: 1)
+        engine.finishPendingStop()
+        for _ in 0..<100 where app.status != .idle {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(engine.events, ["start", "stop"])
+        XCTAssertEqual(app.status, .idle)
+    }
 }
 
 @MainActor

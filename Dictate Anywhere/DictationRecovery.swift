@@ -112,6 +112,8 @@ final class DictationRecoveryStore {
     isolated deinit { expiryTask?.cancel() }
 
     func reload(now: Date = Date()) throws {
+        let trace = PerfTrace.begin("recovery.reload")
+        defer { trace.end() }
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.path) else { entries = []; return }
         let files = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
@@ -137,6 +139,8 @@ final class DictationRecoveryStore {
     }
 
     func beginCapture() throws -> RecoveryAudioCapture {
+        let trace = PerfTrace.begin("recovery.captureStart")
+        defer { trace.end() }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         var excludedDirectory = directory
@@ -155,6 +159,8 @@ final class DictationRecoveryStore {
         transcriptPrefix: String? = nil, previousDuration: TimeInterval = 0,
         targetBundleIdentifier: String? = nil, now: Date = Date()
     ) async throws -> CancelledDictation? {
+        let trace = PerfTrace.begin("recovery.preserve")
+        defer { trace.end() }
         let result = await capture.finish()
         activeCaptureIDs.remove(capture.id)
         guard result.sampleCount > 0 || !preview.isEmpty || completedTranscript?.isEmpty == false
@@ -180,6 +186,8 @@ final class DictationRecoveryStore {
     }
 
     func discard(_ capture: RecoveryAudioCapture) async throws {
+        let trace = PerfTrace.begin("recovery.discard")
+        defer { trace.end() }
         _ = await capture.finish()
         activeCaptureIDs.remove(capture.id)
         try remove(id: capture.id)
