@@ -39,8 +39,6 @@ enum DS {
         static let sliderTrackRest = Color(light: 0xE9DFCC, dark: 0x3D362C)
         static let addButtonFill = Color(light: 0xF1E9DB, dark: 0x2C271F)
         static let overlayPreviewFill = Color(light: 0xF3ECDE, dark: 0x231E18)
-        static let waveformPillFill = Color(hex: 0x2B2620)
-        static let waveformBarInactive = Color(hex: 0x6E655A)
         static let keycapShadow = Color(light: 0xE0D5C0, dark: 0x000000)
         static let footerCardFill = Color(dynamicWhiteLightAlpha: 0.5, darkAlpha: 0.08)
 

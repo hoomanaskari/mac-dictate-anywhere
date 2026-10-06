@@ -54,6 +54,7 @@ final class OverlayModel {
 
 struct OverlayContent: View {
     let model: OverlayModel
+    var settings: Settings = .shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -61,28 +62,12 @@ struct OverlayContent: View {
     private var isVisible: Bool { model.isVisible }
 
     private var showTextPreview: Bool {
-        Settings.shared.showTextPreview
+        settings.showTextPreview
     }
 
-    private var overlayTextColor: Color {
-        if colorScheme == .dark {
-            if #available(macOS 26, *) { return .white.opacity(0.95) }
-            return .white
-        }
-
-        if #available(macOS 26, *) { return .black.opacity(0.88) }
-        return .black
-    }
-
-    private var overlaySecondaryTextColor: Color {
-        if colorScheme == .dark {
-            if #available(macOS 26, *) { return .white.opacity(0.82) }
-            return .white.opacity(0.85)
-        }
-
-        if #available(macOS 26, *) { return .black.opacity(0.72) }
-        return .black.opacity(0.78)
-    }
+    private var palette: OverlayPalette { OverlayPalette(scheme: colorScheme) }
+    private var overlayTextColor: Color { palette.text }
+    private var overlaySecondaryTextColor: Color { palette.text }
 
     private var stateCategory: String {
         switch state {
@@ -161,7 +146,7 @@ struct OverlayContent: View {
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stateCategory)
         }
         .frame(width: pillWidth, height: pillHeight)
-        .modifier(GlassPillModifier(isCircular: isCircularStatusState))
+        .modifier(OverlaySurfaceModifier(isCircular: isCircularStatusState))
         .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82), value: isCircularStatusState)
     }
 
@@ -182,13 +167,13 @@ struct OverlayContent: View {
                 ProcessingStatusView(tint: overlayTextColor)
 
             case .success:
-                SuccessStatusView()
+                SuccessStatusView(tint: palette.success)
 
             case .copiedOnly:
                 HStack(spacing: OverlayMetrics.size(10)) {
                     Image(systemName: "doc.on.clipboard.fill")
                         .font(.system(size: OverlayMetrics.type(16)))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(palette.accent)
                     Text("Press ⌘V")
                         .font(.system(size: OverlayMetrics.type(12), weight: .medium))
                         .foregroundStyle(overlayTextColor.opacity(0.9))
@@ -277,7 +262,7 @@ enum OverlayPreviewText {
     }
 }
 
-// MARK: - Glass pill background
+// MARK: - Preview surface
 
 struct CancellationProgressView: View {
     let progress: Double
@@ -296,9 +281,10 @@ struct CancellationProgressView: View {
     }
 }
 
-private struct GlassPillModifier: ViewModifier {
+private struct OverlaySurfaceModifier: ViewModifier {
     let isCircular: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         if isCircular {
@@ -313,19 +299,12 @@ private struct GlassPillModifier: ViewModifier {
 
     @ViewBuilder
     private func decorated<S: Shape>(content: Content, shape: S) -> some View {
-        if #available(macOS 26, *) {
-            let tint = colorScheme == .dark ? Color.black.opacity(0.30) : Color.black.opacity(0.24)
-            let stroke = colorScheme == .dark ? Color.white.opacity(0.25) : Color.white.opacity(0.18)
-            content
-                .glassEffect(.regular.tint(tint), in: shape)
-                .overlay(shape.stroke(stroke, lineWidth: 1))
-        } else {
-            content
-                .background(shape.fill(Color.black.opacity(0.85)))
-                .clipShape(shape)
-                .overlay(shape.stroke(.white.opacity(0.15), lineWidth: 1))
-                .shadow(color: .black.opacity(0.3), radius: OverlayMetrics.size(12), x: 0, y: OverlayMetrics.size(4))
-        }
+        let palette = OverlayPalette(scheme: colorScheme)
+        content
+            .background(palette.surface, in: shape)
+            .clipShape(shape)
+            .overlay(shape.stroke(palette.border, lineWidth: contrast == .increased ? 2 : 1))
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.14), radius: 10, x: 0, y: 4)
     }
 }
 
@@ -373,6 +352,7 @@ private struct ProcessingStatusView: View {
 }
 
 private struct SuccessStatusView: View {
+    let tint: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRevealed = false
 
@@ -383,24 +363,24 @@ private struct SuccessStatusView: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(tint.opacity(0.12), lineWidth: 1)
 
             Circle()
-                .stroke(Color.green.opacity(0.42), lineWidth: 1)
+                .stroke(tint.opacity(0.42), lineWidth: 1)
                 .scaleEffect(isRevealed ? 1.28 : 0.72)
                 .opacity(isRevealed ? 0 : 0.8)
 
             Circle()
                 .trim(from: 0, to: isRevealed ? 1 : 0.12)
                 .stroke(
-                    Color.green.opacity(0.9),
+                    tint.opacity(0.9),
                     style: StrokeStyle(lineWidth: 1.4, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
 
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: OverlayMetrics.type(18)))
-                .foregroundStyle(.green)
+                .foregroundStyle(tint)
                 .scaleEffect(isRevealed ? 1 : 0.72)
                 .opacity(isRevealed ? 1 : 0)
         }

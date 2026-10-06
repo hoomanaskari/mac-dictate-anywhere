@@ -20,30 +20,24 @@ struct TextOverlayView: View {
             )
 
             DSSection(overline: "Overlay") {
-                VStack(spacing: 14) {
-                    DSWaveformPill(showsTextPreview: settings.showTextPreview)
-                    Text(settings.showTextPreview
-                         ? "Example live text above the waveform"
-                         : "Waveform-only preview")
-                        .font(DS.Fonts.ui(12))
-                        .foregroundStyle(DS.Colors.textSecondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 36)
-                .padding(.horizontal, 24)
-                .background(DS.Colors.overlayPreviewFill)
-                .clipShape(
-                    .rect(
-                        topLeadingRadius: DS.Radius.card,
-                        bottomLeadingRadius: 0,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: DS.Radius.card
+                OverlaySettingsPreview(settings: settings)
+
+                DSDetailRow(
+                    label: "Preview theme",
+                    caption: "System follows your Mac, independently of the app theme."
+                ) {
+                    DSDropdown(
+                        selection: $settings.overlayThemeMode,
+                        options: ThemeMode.allCases,
+                        title: \.displayName,
+                        accessibilityName: "Preview theme"
                     )
-                )
+                }
+                DSDivider()
 
                 DSStackedRow(
                     label: "Show text preview in overlay",
-                    caption: "When enabled, live transcription text appears next to the waveform.",
+                    caption: "When enabled, live transcription text appears above the waveform.",
                     isOn: $settings.showTextPreview
                 )
             }

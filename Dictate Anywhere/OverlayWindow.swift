@@ -19,6 +19,7 @@ final class OverlayWindow {
     private let bottomMargin: CGFloat = OverlayMetrics.size(24)
     private let canvasWidth: CGFloat = OverlayMetrics.size(320)
     private let canvasHeight: CGFloat = OverlayMetrics.size(200)
+    @ObservationIgnored private var preferenceObserver: NSObjectProtocol?
 
     @ObservationIgnored private let screenSession: OverlayScreenSession
 
@@ -26,6 +27,15 @@ final class OverlayWindow {
 
     init(screenResolver: OverlayScreenResolving = SystemOverlayScreenResolver()) {
         screenSession = OverlayScreenSession(resolver: screenResolver)
+        preferenceObserver = NotificationCenter.default.addObserver(
+            forName: .overlayPreferencesChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyAppearance() }
+        }
+    }
+
+    deinit {
+        if let preferenceObserver { NotificationCenter.default.removeObserver(preferenceObserver) }
     }
 
     // MARK: - Public
@@ -117,6 +127,7 @@ final class OverlayWindow {
             window?.contentView = hostingView
         }
 
+        applyAppearance()
         model.updateState(state)
         if !model.isVisible { model.isVisible = true }
 
@@ -150,6 +161,11 @@ final class OverlayWindow {
                 self.window?.orderOut(nil)
             }
         }
+    }
+
+    private func applyAppearance() {
+        let scheme = Settings.shared.overlayThemeMode.overlayColorScheme
+        window?.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
     }
 
     private func createWindow() -> NSWindow {

@@ -12,10 +12,8 @@ struct WaveformView: View {
     let audioLevel: Float
 
     private let idleAmplitude: CGFloat = 0.12
-    private var waveColor: Color {
-        if #available(macOS 26, *) { return .primary }
-        return .white
-    }
+    @Environment(\.colorScheme) private var colorScheme
+    private var waveColor: Color { OverlayPalette(scheme: colorScheme).accent }
 
     private struct WaveLayer {
         let frequencyMultiplier: Double
