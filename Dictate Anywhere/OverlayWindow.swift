@@ -17,8 +17,8 @@ final class OverlayWindow {
     private var hideTask: Task<Void, Never>?
     private let model = OverlayModel()
     private let bottomMargin: CGFloat = OverlayMetrics.size(24)
-    private let canvasWidth: CGFloat = OverlayMetrics.size(320)
-    private let canvasHeight: CGFloat = OverlayMetrics.size(200)
+    private var canvasWidth: CGFloat { Settings.shared.overlaySize.canvasSize.width }
+    private var canvasHeight: CGFloat { Settings.shared.overlaySize.canvasSize.height }
     @ObservationIgnored private var preferenceObserver: NSObjectProtocol?
 
     @ObservationIgnored private let screenSession: OverlayScreenSession
@@ -30,7 +30,10 @@ final class OverlayWindow {
         preferenceObserver = NotificationCenter.default.addObserver(
             forName: .overlayPreferencesChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyAppearance() }
+            MainActor.assumeIsolated {
+                self?.applyAppearance()
+                if self?.model.isVisible == true { self?.positionWindow() }
+            }
         }
     }
 
@@ -129,10 +132,11 @@ final class OverlayWindow {
 
         applyAppearance()
         model.updateState(state)
+        let needsPresentation = !model.isVisible || window?.isVisible != true
         if !model.isVisible { model.isVisible = true }
 
         positionWindow()
-        window?.orderFrontRegardless()
+        if needsPresentation { window?.orderFrontRegardless() }
     }
 
     private func beginSessionImpl(targetProcessIdentifier: pid_t?) {
@@ -165,7 +169,8 @@ final class OverlayWindow {
 
     private func applyAppearance() {
         let scheme = Settings.shared.overlayThemeMode.overlayColorScheme
-        window?.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+        let name: NSAppearance.Name = scheme == .dark ? .darkAqua : .aqua
+        if window?.appearance?.name != name { window?.appearance = NSAppearance(named: name) }
     }
 
     private func createWindow() -> NSWindow {

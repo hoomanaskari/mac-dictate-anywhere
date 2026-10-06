@@ -22,11 +22,19 @@ final class OverlayContentTests: XCTestCase {
         }
     }
 
+    func testEveryReadingSizeBoundsLongUnicodePreviews() {
+        let transcript = String(repeating: "👩🏽‍💻 这是听写文本 Café e\u{301} ", count: 1_000)
+        for size in OverlaySize.allCases {
+            let text = OverlayPreviewText.trimmed(transcript, maximumCharacters: size.characterLimit)
+            XCTAssertEqual(text, "…" + String(transcript.suffix(size.characterLimit)))
+        }
+    }
+
     func testLevelOnlyUpdatesDoNotInvalidateTranscriptContent() {
         let model = OverlayModel()
         let transcript = String(repeating: "Long dictation preview. ", count: 1_000)
         model.updateListening(level: 0, transcript: transcript)
-        let content = ListeningOverlayContent(model: model, showTextPreview: true, textColor: .white)
+        let content = OverlayTranscriptContent(model: model, size: .comfortable, textColor: .white)
         let changes = observe { _ = content.body }
 
         for update in 0..<600 {
@@ -52,7 +60,7 @@ final class OverlayContentTests: XCTestCase {
     func testPreviewObservesCorrectionsClearingAndResumedText() {
         let model = OverlayModel()
         model.updateListening(level: 0.4, transcript: "first")
-        let content = ListeningOverlayContent(model: model, showTextPreview: true, textColor: .white)
+        let content = OverlayTranscriptContent(model: model, size: .comfortable, textColor: .white)
         for transcript in ["other", "", "resumed"] {
             let changes = observe { _ = content.body }
             model.updateListening(level: 0.4, transcript: transcript)

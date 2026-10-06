@@ -22,6 +22,8 @@ struct TextOverlayView: View {
             DSSection(overline: "Overlay") {
                 OverlaySettingsPreview(settings: settings)
 
+                OverlaySizeControl(settings: settings)
+                DSDivider()
                 DSDetailRow(
                     label: "Preview theme",
                     caption: "System follows your Mac, independently of the app theme."

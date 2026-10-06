@@ -55,204 +55,52 @@ final class OverlayModel {
 struct OverlayContent: View {
     let model: OverlayModel
     var settings: Settings = .shared
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var state: OverlayState { model.overlayState }
-    private var isVisible: Bool { model.isVisible }
-
-    private var showTextPreview: Bool {
-        settings.showTextPreview
-    }
-
-    private var palette: OverlayPalette { OverlayPalette(scheme: colorScheme) }
-    private var overlayTextColor: Color { palette.text }
-    private var overlaySecondaryTextColor: Color { palette.text }
-
-    private var stateCategory: String {
-        switch state {
-        case .listening: "listening"
-        case .processing: "processing"
-        case .success: "success"
-        case .copiedOnly: "copiedOnly"
-        case .preparingModel: "preparingModel"
-        }
-    }
-
-    private var statusCircleDiameter: CGFloat {
-        OverlayMetrics.size(48)
-    }
-
-    private var isCircularStatusState: Bool {
-        if model.cancellationProgress != nil { return false }
-        switch state {
-        case .processing, .success:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private var statusBottomInset: CGFloat {
-        isCircularStatusState ? 1 : 0
-    }
-
-    private var pillWidth: CGFloat {
-        if model.cancellationProgress != nil { return OverlayMetrics.size(260) }
-        switch state {
-        case .listening:
-            return showTextPreview ? OverlayMetrics.size(260) : OverlayMetrics.size(130)
-        case .processing, .success:
-            return statusCircleDiameter
-        case .copiedOnly:
-            return OverlayMetrics.size(130)
-        case .preparingModel:
-            return OverlayMetrics.size(240)
-        }
-    }
-
-    private var pillHeight: CGFloat {
-        if model.cancellationProgress != nil { return OverlayMetrics.size(64) }
-        switch state {
-        case .listening:
-            return showTextPreview ? OverlayMetrics.size(124) : OverlayMetrics.size(44)
-        case .processing, .success:
-            return statusCircleDiameter
-        case .copiedOnly:
-            return OverlayMetrics.size(44)
-        case .preparingModel:
-            return OverlayMetrics.size(44)
-        }
-    }
 
     var body: some View {
         VStack {
             Spacer()
-
-            pill
-                .scaleEffect(isVisible ? 1.0 : 0.95)
-                .opacity(isVisible ? 1.0 : 0)
-                .padding(.bottom, statusBottomInset)
-                .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: isVisible)
+            OverlayPill(model: model, settings: settings)
+                .scaleEffect(model.isVisible ? 1 : 0.95)
+                .opacity(model.isVisible ? 1 : 0)
+                .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: model.isVisible)
         }
-        .frame(width: OverlayMetrics.size(320), height: OverlayMetrics.size(200))
-    }
-
-    private var pill: some View {
-        VStack(spacing: 0) {
-            pillContent
-                .id(stateCategory)
-                .transition(reduceMotion ? .identity : .opacity)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stateCategory)
-        }
-        .frame(width: pillWidth, height: pillHeight)
-        .modifier(OverlaySurfaceModifier(isCircular: isCircularStatusState))
-        .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82), value: isCircularStatusState)
-    }
-
-    @ViewBuilder
-    private var pillContent: some View {
-        if let progress = model.cancellationProgress {
-            CancellationProgressView(progress: progress, tint: overlayTextColor)
-        } else {
-            switch state {
-            case .listening:
-                ListeningOverlayContent(
-                    model: model,
-                    showTextPreview: showTextPreview,
-                    textColor: overlaySecondaryTextColor
-                )
-
-            case .processing:
-                ProcessingStatusView(tint: overlayTextColor)
-
-            case .success:
-                SuccessStatusView(tint: palette.success)
-
-            case .copiedOnly:
-                HStack(spacing: OverlayMetrics.size(10)) {
-                    Image(systemName: "doc.on.clipboard.fill")
-                        .font(.system(size: OverlayMetrics.type(16)))
-                        .foregroundStyle(palette.accent)
-                    Text("Press ⌘V")
-                        .font(.system(size: OverlayMetrics.type(12), weight: .medium))
-                        .foregroundStyle(overlayTextColor.opacity(0.9))
-                }
-
-            case .preparingModel(let name):
-                HStack(spacing: OverlayMetrics.size(10)) {
-                    ProcessingStatusView(tint: overlayTextColor)
-                    Text("Loading \(name)…")
-                        .font(.system(size: OverlayMetrics.type(12), weight: .medium))
-                        .foregroundStyle(overlayTextColor.opacity(0.9))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, OverlayMetrics.size(14))
-            }
-        }
+        .frame(width: settings.overlaySize.canvasSize.width, height: settings.overlaySize.canvasSize.height)
     }
 }
 
-/// Transcript observation is independent of the waveform level.
+/// Audio updates stay in the waveform; only transcript changes touch text layout.
 struct ListeningOverlayContent: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let model: OverlayModel
     let showTextPreview: Bool
     let textColor: Color
+    var size: OverlaySize = .comfortable
 
     var body: some View {
-        if showTextPreview && !model.transcript.isEmpty {
-            let previewText = OverlayPreviewText.trimmed(model.transcript)
-            VStack(spacing: OverlayMetrics.size(6)) {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(previewText)
-                            .font(.system(size: OverlayMetrics.type(13), weight: .light))
-                            .foregroundStyle(textColor)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .id("transcript")
-                    }
-                    .frame(height: OverlayMetrics.size(66))
-                    .onChange(of: previewText) { _, _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) {
-                            proxy.scrollTo("transcript", anchor: .bottom)
-                        }
-                    }
-                }
-                .padding(.horizontal, OverlayMetrics.size(16))
-                .padding(.top, OverlayMetrics.size(10))
-
-                OverlayWaveformContent(model: model)
-                    .padding(.horizontal, OverlayMetrics.size(16))
-                    .padding(.bottom, OverlayMetrics.size(8))
+        VStack(spacing: 8) {
+            if showTextPreview {
+                OverlayTranscriptContent(model: model, size: size, textColor: textColor)
             }
-        } else if showTextPreview {
-            VStack {
-                Spacer()
-                OverlayWaveformContent(model: model)
-                    .padding(.horizontal, OverlayMetrics.size(16))
-                    .padding(.bottom, OverlayMetrics.size(8))
-            }
-        } else {
-            OverlayWaveformContent(model: model)
-                .padding(.horizontal, OverlayMetrics.size(20))
+            OverlayWaveformContent(model: model, height: size.waveformHeight)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 
 struct OverlayWaveformContent: View {
     let model: OverlayModel
+    var height: CGFloat = 22
 
     var body: some View {
-        WaveformView(audioLevel: model.audioLevel)
+        WaveformView(audioLevel: model.audioLevel, height: height, isActive: model.isVisible)
     }
 }
 
 enum OverlayPreviewText {
     static let maximumCharacters = Int(320 * OverlayMetrics.footprintScale)
 
-    static func trimmed(_ transcript: String) -> String {
+    static func trimmed(_ transcript: String, maximumCharacters: Int = maximumCharacters) -> String {
         guard let start = transcript.index(
             transcript.endIndex,
             offsetBy: -maximumCharacters,
@@ -281,7 +129,7 @@ struct CancellationProgressView: View {
     }
 }
 
-private struct OverlaySurfaceModifier: ViewModifier {
+struct OverlaySurfaceModifier: ViewModifier {
     let isCircular: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -308,7 +156,7 @@ private struct OverlaySurfaceModifier: ViewModifier {
     }
 }
 
-private struct ProcessingStatusView: View {
+struct ProcessingStatusView: View {
     let tint: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAnimating = false
@@ -339,6 +187,7 @@ private struct ProcessingStatusView: View {
                 .frame(width: centerDotSize, height: centerDotSize)
         }
         .frame(width: ringSize, height: ringSize)
+        .accessibilityLabel("Processing dictation")
         .onAppear {
             guard !reduceMotion, !isAnimating else { return }
             withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
@@ -351,7 +200,7 @@ private struct ProcessingStatusView: View {
     }
 }
 
-private struct SuccessStatusView: View {
+struct SuccessStatusView: View {
     let tint: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRevealed = false
@@ -385,6 +234,7 @@ private struct SuccessStatusView: View {
                 .opacity(isRevealed ? 1 : 0)
         }
         .frame(width: ringSize, height: ringSize)
+        .accessibilityLabel("Dictation inserted")
         .onAppear {
             isRevealed = false
             withAnimation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.72)) {
