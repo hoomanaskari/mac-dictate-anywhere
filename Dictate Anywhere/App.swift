@@ -23,6 +23,13 @@ struct DictateAnywhereApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Dictate Anywhere", action: appDelegate.showMainWindow)
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.appState.selectedPage = .settings
+                    appDelegate.showMainWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
 #if !DEBUG
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesView(updater: appDelegate.softwareUpdater)

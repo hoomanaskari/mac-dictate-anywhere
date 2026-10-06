@@ -117,6 +117,8 @@ enum DS {
     // MARK: - Layout metrics
 
     enum Metrics {
+        /// Caps reading lines on large displays while leaving controls ample room.
+        static let readableContentWidth: CGFloat = 820
         static let sidebarWidth: CGFloat = 264
         static let windowWidth: CGFloat = 1120
         static let windowHeight: CGFloat = 780

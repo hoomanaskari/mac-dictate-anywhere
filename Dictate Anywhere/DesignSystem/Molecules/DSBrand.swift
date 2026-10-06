@@ -71,6 +71,8 @@ struct DSFooterCard: View {
 
 /// Molecule: sidebar navigation item.
 struct DSNavItem: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var isHovered = false
     let title: String
     let systemImage: String
     let isSelected: Bool
@@ -91,15 +93,20 @@ struct DSNavItem: View {
             .padding(.vertical, 9)
             .padding(.horizontal, 10)
             .background {
-                if isSelected {
+                RoundedRectangle(cornerRadius: DS.Radius.control)
+                    .fill(isSelected ? DS.Colors.bgCard : isHovered ? DS.Colors.borderSoft : .clear)
+                    .shadow(color: Color.black.opacity(isSelected ? 0.08 : 0), radius: 3, x: 0, y: 1)
+            }
+            .overlay {
+                if isSelected && contrast == .increased {
                     RoundedRectangle(cornerRadius: DS.Radius.control)
-                        .fill(DS.Colors.bgCard)
-                        .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1)
+                        .strokeBorder(DS.Colors.ink, lineWidth: 1)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: DS.Radius.control))
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

@@ -14,12 +14,8 @@ struct TranscriptHistoryView: View {
     @State private var searchText = ""
     @State private var showClearAllConfirm = false
 
-    /// Matches the design's "Jul 15, 2026 · 5:54 PM" stamp.
-    static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d, yyyy · h:mm a"
-        return formatter
-    }()
+    /// Uses the Mac's date order and preferred 12- or 24-hour clock.
+    static let timestampFormat = Date.FormatStyle(date: .abbreviated, time: .shortened)
 
     static func filteredEntries(
         _ entries: [TranscriptHistoryEntry],
@@ -76,7 +72,7 @@ struct TranscriptHistoryView: View {
                         DSDivider()
                         HStack(alignment: .top, spacing: 16) {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("Cancelled · \(Self.dateFormatter.string(from: entry.createdAt))")
+                                Text("Cancelled · \(entry.createdAt.formatted(Self.timestampFormat))")
                                     .font(DS.Fonts.ui(12, .semibold))
                                     .foregroundStyle(DS.Colors.ink)
                                 Text(entry.preview.isEmpty ? "Audio saved for recovery" : entry.preview)
@@ -108,19 +104,19 @@ struct TranscriptHistoryView: View {
                                     }
                                 }
                                 .buttonStyle(.dsPrimary)
-                                .accessibilityLabel("\(continueTitle) cancelled session from \(Self.dateFormatter.string(from: entry.createdAt))")
+                                .accessibilityLabel("\(continueTitle) cancelled session from \(entry.createdAt.formatted(Self.timestampFormat))")
                                 .disabled(appState.continuingEntryID == entry.id
                                           ? !appState.canStopDictation : appState.status != .idle)
                                 Button(recoverTitle) {
                                     Task { await appState.recoverCancelledDictation(entry) }
                                 }
                                 .buttonStyle(.dsSecondary)
-                                .accessibilityLabel("\(recoverTitle) from cancelled session on \(Self.dateFormatter.string(from: entry.createdAt))")
+                                .accessibilityLabel("\(recoverTitle) from cancelled session on \(entry.createdAt.formatted(Self.timestampFormat))")
                                 .disabled(appState.status != .idle)
                             }
                             DSIconButton(
                                 systemImage: "trash",
-                                accessibilityLabel: "Delete cancelled session from \(Self.dateFormatter.string(from: entry.createdAt))"
+                                accessibilityLabel: "Delete cancelled session from \(entry.createdAt.formatted(Self.timestampFormat))"
                             ) {
                                 do { try appState.recoveryStore.remove(id: entry.id) }
                                 catch { appState.recoveryStore.errorMessage = error.localizedDescription }
@@ -145,15 +141,17 @@ struct TranscriptHistoryView: View {
                 }
             } else if !entries.isEmpty {
                 DSCard {
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                        if index > 0 {
-                            DSDivider()
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 {
+                                DSDivider()
+                            }
+                            TranscriptHistoryRow(
+                                entry: entry,
+                                onCopy: copyToPasteboard,
+                                onDelete: { settings.removeTranscriptHistoryEntry(id: entry.id) }
+                            )
                         }
-                        TranscriptHistoryRow(
-                            entry: entry,
-                            onCopy: copyToPasteboard,
-                            onDelete: { settings.removeTranscriptHistoryEntry(id: entry.id) }
-                        )
                     }
                 }
             }
@@ -192,7 +190,7 @@ private struct TranscriptHistoryRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(TranscriptHistoryView.dateFormatter.string(from: entry.createdAt))
+                Text(entry.createdAt.formatted(TranscriptHistoryView.timestampFormat))
                     .font(DS.Fonts.ui(11.5, .semibold))
                     .tracking(0.2)
                     .foregroundStyle(DS.Colors.textSecondary)
@@ -201,7 +199,7 @@ private struct TranscriptHistoryRow: View {
                     .lineSpacing(13.5 * 0.55 - 4)
                     .foregroundStyle(DS.Colors.ink)
                     .textSelection(.enabled)
-                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if let rawText = entry.rawText {
                     DisclosureGroup("Raw transcript") {
@@ -219,7 +217,7 @@ private struct TranscriptHistoryRow: View {
                             }
                             .accessibilityLabel(copiedKind == .raw
                                 ? "Copied raw transcript"
-                                : "Copy raw transcript from \(TranscriptHistoryView.dateFormatter.string(from: entry.createdAt))")
+                                : "Copy raw transcript from \(entry.createdAt.formatted(TranscriptHistoryView.timestampFormat))")
                         }
                         .padding(.top, 6)
                     }
@@ -236,10 +234,10 @@ private struct TranscriptHistoryRow: View {
                 }
                 .accessibilityLabel(copiedKind == .transcript
                     ? "Copied transcript"
-                    : "Copy transcript from \(TranscriptHistoryView.dateFormatter.string(from: entry.createdAt))")
+                    : "Copy transcript from \(entry.createdAt.formatted(TranscriptHistoryView.timestampFormat))")
                 DSIconButton(
                     systemImage: "trash",
-                    accessibilityLabel: "Delete transcript from \(TranscriptHistoryView.dateFormatter.string(from: entry.createdAt))",
+                    accessibilityLabel: "Delete transcript from \(entry.createdAt.formatted(TranscriptHistoryView.timestampFormat))",
                     action: onDelete
                 )
                 .help("Delete transcript")
