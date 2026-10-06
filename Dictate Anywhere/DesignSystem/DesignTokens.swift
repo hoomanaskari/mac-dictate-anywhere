@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Design tokens mirroring the variables defined in `design.pen`.
+/// Shared visual tokens for readable light and dark macOS interfaces.
 /// Atomic design level: foundation.
 enum DS {
     // MARK: - Colors (design.pen variables)
@@ -13,12 +13,12 @@ enum DS {
         /// still re-themes light mode. Dark companions are lightened for
         /// contrast on dark surfaces (e.g. destructive 2.8:1 → 5.1:1).
         ///
-        /// Surface/text tokens are light/dark pairs: the light hex preserves
-        /// the design.pen palette exactly, the dark hex is its warm-dark
-        /// companion. They follow the system appearance automatically, so no
-        /// call site needs a `@Environment(\.colorScheme)` branch.
+        /// Surface/text tokens are light/dark pairs with warm neutral
+        /// surfaces and readable secondary text in both appearances. They
+        /// follow the system appearance automatically, so no call site needs
+        /// a `@Environment(\.colorScheme)` branch.
         static let accent = Color("AccentColor", bundle: .main)
-        static let accentDeep = Color(light: derivedAccent(saturation: 1.071, brightness: 0.883), dark: 0xE8834F)
+        static let accentDeep = Color(light: derivedAccent(saturation: 1.071, brightness: 0.70), dark: 0xE8834F)
         static let accentSoft = Color(light: derivedAccent(saturation: 0.192, fixedBrightness: 0.973), dark: 0x3A2620)
         static let bgCard = Color(light: 0xFFFFFF, dark: 0x292420)
         static let bgInset = Color(light: 0xF6F0E6, dark: 0x201B15)
@@ -29,7 +29,7 @@ enum DS {
         static let ink = Color(light: 0x2B2620, dark: 0xF2EAE0)
         static let success = Color(light: 0x5E9E6F, dark: 0x7ABF8A)
         static let successSoft = Color(light: 0xE3EFE4, dark: 0x223528)
-        static let textSecondary = Color(light: 0x8D8171, dark: 0xA79A8A)
+        static let textSecondary = Color(light: 0x6B6258, dark: 0xB8AD9F)
 
         // Derived colors used by specific design components.
         static let successText = Color(light: 0x3D7A4C, dark: 0x8FD0A2)
@@ -52,9 +52,8 @@ enum DS {
             return (h, s, b)
         }
 
-        /// Builds an accent variant by scaling saturation/brightness of the
-        /// base accent. Multipliers reproduce the design.pen palette exactly
-        /// when AccentColor is the default #DE6A3B.
+        /// Builds an accent variant by scaling the catalog color. Text
+        /// variants use a deeper tone to stay readable on light surfaces.
         static func derivedAccent(
             saturation saturationScale: CGFloat,
             brightness brightnessScale: CGFloat = 1,

@@ -43,7 +43,7 @@ struct ShortcutRecorderView: View {
             if isRecording {
                 Text("Press any key combo…")
                     .font(DS.Fonts.ui(13, .medium))
-                    .foregroundStyle(DS.Colors.accent)
+                    .foregroundStyle(DS.Colors.accentDeep)
             } else if displayName.isEmpty {
                 Text("Not set")
                     .font(DS.Fonts.ui(13, .medium))

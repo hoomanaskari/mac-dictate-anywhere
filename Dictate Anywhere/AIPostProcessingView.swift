@@ -851,7 +851,7 @@ struct AIPostProcessingView: View {
                     destination: URL(string: "https://huggingface.co/superwhisper/s1-mini")!
                 )
                 .font(DS.Fonts.ui(12.5, .medium))
-                .foregroundStyle(DS.Colors.accent)
+                .foregroundStyle(DS.Colors.accentDeep)
             }
         }
 
@@ -1291,7 +1291,7 @@ struct AIPostProcessingView: View {
         cardPadded {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "shippingbox")
-                    .foregroundStyle(DS.Colors.accent)
+                    .foregroundStyle(DS.Colors.accentDeep)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Not installed")
@@ -1820,7 +1820,7 @@ private struct OpenRouterModelMatchesView: View {
                     if isSelected {
                         Text("Selected")
                             .font(DS.Fonts.ui(12, .semibold))
-                            .foregroundStyle(DS.Colors.accent)
+                            .foregroundStyle(DS.Colors.accentDeep)
                     }
                 }
                 .contentShape(Rectangle())

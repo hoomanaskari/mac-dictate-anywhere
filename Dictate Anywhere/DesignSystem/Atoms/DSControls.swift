@@ -180,6 +180,7 @@ struct DSDropdownLabel: View {
 
 /// Atom: bordered search field (History page).
 struct DSSearchField: View {
+    @Environment(\.colorSchemeContrast) private var contrast
     let placeholder: String
     @Binding var text: String
     let accessibilityName: String
@@ -214,12 +215,20 @@ struct DSSearchField: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
         .background(DS.Colors.bgCard, in: RoundedRectangle(cornerRadius: DS.Radius.panel))
-        .overlay(RoundedRectangle(cornerRadius: DS.Radius.panel).strokeBorder(DS.Colors.border, lineWidth: 1))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.panel)
+                .strokeBorder(
+                    fieldIsFocused ? DS.Colors.accentDeep : contrast == .increased ? DS.Colors.textSecondary : DS.Colors.border,
+                    lineWidth: fieldIsFocused ? 2 : 1
+                )
+        }
     }
 }
 
 /// Atom: bordered single-line text field styled like the design's inset controls.
 struct DSTextField: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    @FocusState private var fieldIsFocused: Bool
     let placeholder: String
     @Binding var text: String
     var isSecure: Bool = false
@@ -236,11 +245,18 @@ struct DSTextField: View {
             }
         }
         .textFieldStyle(.plain)
+        .focused($fieldIsFocused)
         .font(DS.Fonts.ui(13))
         .foregroundStyle(DS.Colors.ink)
         .padding(.vertical, 7)
         .padding(.horizontal, 12)
         .background(DS.Colors.bgCard, in: RoundedRectangle(cornerRadius: DS.Radius.control))
-        .overlay(RoundedRectangle(cornerRadius: DS.Radius.control).strokeBorder(DS.Colors.border, lineWidth: 1))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.control)
+                .strokeBorder(
+                    fieldIsFocused ? DS.Colors.accentDeep : contrast == .increased ? DS.Colors.textSecondary : DS.Colors.border,
+                    lineWidth: fieldIsFocused ? 2 : 1
+                )
+        }
     }
 }

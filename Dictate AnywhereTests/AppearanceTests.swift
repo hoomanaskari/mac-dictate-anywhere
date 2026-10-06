@@ -40,15 +40,18 @@ final class AppearanceTests: XCTestCase {
     func testDarkAccentContrastMeetsAA() {
         // Accents lightened for dark surfaces: destructive was 2.8:1 reused.
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.destructive, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 3)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .darkAqua), 4.5)
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.success, DS.Colors.bgCard, appearance: .darkAqua), 3)
     }
 
-    func testLightBodyTextContrastBaseline() {
-        // Locks the shipped light palette: body text is AAA-comfortable;
-        // secondary copy sits at large-text/UI contrast (light hexes frozen).
+    func testLightBodyTextContrastMeetsAA() {
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .aqua), 7)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 3)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgWindow, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgSidebar, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .aqua), 4.5)
     }
 
     func testPreviewPalettesStayReadableInBothThemes() {

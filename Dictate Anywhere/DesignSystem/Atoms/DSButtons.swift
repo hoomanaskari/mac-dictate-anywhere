@@ -117,7 +117,7 @@ struct DSAddButton: View {
                 Text(title)
                     .font(DS.Fonts.ui(13, .semibold))
             }
-            .foregroundStyle(DS.Colors.accent)
+            .foregroundStyle(DS.Colors.accentDeep)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 13)
             .background(DS.Colors.addButtonFill, in: RoundedRectangle(cornerRadius: DS.Radius.card))

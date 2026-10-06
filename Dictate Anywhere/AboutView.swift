@@ -35,7 +35,7 @@ struct AboutView: View {
                         .foregroundStyle(DS.Colors.textSecondary)
                     Link("Pixel Forty Inc.", destination: URL(string: "https://pixelforty.com")!)
                         .font(DS.Fonts.ui(13, .semibold))
-                        .foregroundStyle(DS.Colors.accent)
+                        .foregroundStyle(DS.Colors.accentDeep)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -82,7 +82,7 @@ struct AboutView: View {
             HStack(spacing: 7) {
                 Image(systemName: "heart.fill")
                     .font(.system(size: 12))
-                    .foregroundStyle(DS.Colors.accent)
+                    .foregroundStyle(DS.Colors.accentDeep)
                     .accessibilityHidden(true)
                 Text("Built with the help of the open-source community. Thank you to all contributors.")
                     .font(DS.Fonts.ui(12.5))
@@ -121,7 +121,7 @@ private struct LibraryRow: View {
                         Text(displayURL)
                             .font(DS.Fonts.ui(12.5, .medium))
                     }
-                    .foregroundStyle(DS.Colors.accent)
+                    .foregroundStyle(DS.Colors.accentDeep)
                 }
                 .accessibilityLabel("\(name) project website")
 

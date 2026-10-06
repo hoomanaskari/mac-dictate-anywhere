@@ -31,7 +31,7 @@ struct DSHint: View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(DS.Colors.accent)
+                .foregroundStyle(DS.Colors.accentDeep)
                 .accessibilityHidden(true)
             Text(text)
                 .font(DS.Fonts.ui(12.5))
