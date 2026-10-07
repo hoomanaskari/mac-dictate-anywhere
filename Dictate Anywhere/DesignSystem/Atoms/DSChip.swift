@@ -32,7 +32,7 @@ struct DSChip: View {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : DS.Colors.textSecondary)
+                        .foregroundStyle(isSelected ? DS.Colors.onAccent : DS.Colors.textSecondary)
                         .frame(width: 24, height: 24)
                         .padding(.trailing, 4)
                         .contentShape(Rectangle())
@@ -41,7 +41,7 @@ struct DSChip: View {
                 .accessibilityLabel("Remove \(text)")
             }
         }
-        .background(isSelected ? AnyShapeStyle(DS.Colors.accent) : AnyShapeStyle(DS.Colors.bgInset), in: Capsule())
+        .background(isSelected ? AnyShapeStyle(DS.Colors.accentDeep) : AnyShapeStyle(DS.Colors.bgInset), in: Capsule())
         .overlay(Capsule().strokeBorder(isSelected ? Color.clear : DS.Colors.border, lineWidth: 1))
         .opacity(isEnabled ? 1 : 0.5)
         .help(text)
@@ -50,7 +50,7 @@ struct DSChip: View {
     private var textLabel: some View {
         Text(text)
             .font(DS.Fonts.ui(12, .medium))
-            .foregroundStyle(isSelected ? Color.white : DS.Colors.ink)
+            .foregroundStyle(isSelected ? DS.Colors.onAccent : DS.Colors.ink)
             .lineLimit(1)
             .truncationMode(.tail)
             .frame(maxWidth: 240, alignment: .leading)

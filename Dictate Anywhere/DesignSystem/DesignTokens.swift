@@ -19,6 +19,8 @@ enum DS {
         /// a `@Environment(\.colorScheme)` branch.
         static let accent = Color("AccentColor", bundle: .main)
         static let accentDeep = Color(light: derivedAccent(saturation: 1.071, brightness: 0.70), dark: 0xE8834F)
+        /// Legible labels on the deeper copper used for filled controls.
+        static let onAccent = Color(light: 0xFFFFFF, dark: 0x171310)
         static let accentSoft = Color(light: derivedAccent(saturation: 0.192, fixedBrightness: 0.973), dark: 0x3A2620)
         static let bgCard = Color(light: 0xFFFFFF, dark: 0x292420)
         static let bgInset = Color(light: 0xF6F0E6, dark: 0x201B15)
@@ -107,6 +109,9 @@ enum DS {
         static let rowVertical: CGFloat = 13
         /// Standard row padding: horizontal.
         static let rowHorizontal: CGFloat = 16
+        /// Space between setting descriptions and their trailing controls.
+        static let rowControlGap: CGFloat = 24
+        static let labelToCaption: CGFloat = 4
         /// Content padding for pages: [top, trailing, bottom, leading] = [34, 44, 36, 44].
         static let contentTop: CGFloat = 34
         static let contentHorizontal: CGFloat = 44

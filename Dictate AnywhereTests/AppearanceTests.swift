@@ -64,6 +64,16 @@ final class AppearanceTests: XCTestCase {
         }
     }
 
+    func testFilledControlLabelsMeetAAInBothThemes() {
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(DS.Colors.onAccent, DS.Colors.accentDeep, appearance: appearance),
+                4.5,
+                "Filled action buttons and selected chips need readable labels"
+            )
+        }
+    }
+
     func testBundledFontsAreRegistered() {
         // ATSApplicationFontsPath = "." must register both families in the host app.
         XCTAssertNotNil(NSFont(name: "Fraunces", size: 16), "Fraunces font not registered")
