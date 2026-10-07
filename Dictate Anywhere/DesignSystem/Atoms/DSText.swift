@@ -19,6 +19,7 @@ struct DSDivider: View {
         Rectangle()
             .fill(DS.Colors.borderSoft)
             .frame(height: 1)
+            .accessibilityHidden(true)
     }
 }
 
@@ -28,10 +29,11 @@ struct DSHint: View {
     var icon: String = "lightbulb"
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(DS.Colors.accentDeep)
+                .padding(.top, 2)
                 .accessibilityHidden(true)
             Text(text)
                 .font(DS.Fonts.ui(12.5))

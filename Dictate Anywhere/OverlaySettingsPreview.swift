@@ -11,17 +11,21 @@ struct OverlaySettingsPreview: View {
     var body: some View {
         VStack(spacing: 14) {
             OverlayPill(model: model, settings: settings)
-                .frame(height: settings.showTextPreview ? settings.overlaySize.height : settings.overlaySize.waveformHeight + 20)
+                // Reserve room for every preset so the slider stays put while resizing.
+                .frame(height: OverlaySize.large.height)
                 .environment(\.colorScheme, settings.overlayThemeMode.overlayColorScheme)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Example dictation preview")
             HStack(spacing: 16) {
                 Text("Sample preview")
                     .foregroundStyle(DS.Colors.textSecondary)
-                Button(isPlaying ? "Playing…" : "Replay sample", systemImage: "play.fill", action: replaySample)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(DS.Colors.accentDeep)
+                DSInsetButton(
+                    title: isPlaying ? "Playing…" : "Replay sample",
+                    systemImage: "play.fill",
+                    action: replaySample
+                )
                     .disabled(isPlaying)
+                    .help("Replay a short example of dictation, processing, and completion")
             }
             .font(DS.Fonts.ui(12))
         }
@@ -36,7 +40,10 @@ struct OverlaySettingsPreview: View {
         }
     }
 
-    private func replaySample() { replay += 1 }
+    private func replaySample() {
+        isPlaying = true
+        replay += 1
+    }
 
     private func playSample() async {
         isPlaying = true

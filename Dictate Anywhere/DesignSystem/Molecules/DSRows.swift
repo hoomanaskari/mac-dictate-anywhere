@@ -8,13 +8,15 @@ struct DSInfoRow<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
+        HStack(alignment: .center, spacing: DS.Spacing.rowControlGap) {
             Text(label)
                 .font(DS.Fonts.ui(13.5, labelWeight))
                 .foregroundStyle(labelColor)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             trailing
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, DS.Spacing.rowVertical)
         .padding(.horizontal, DS.Spacing.rowHorizontal)
@@ -39,11 +41,12 @@ struct DSDetailRow<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 24) {
+        VStack(alignment: .leading, spacing: DS.Spacing.labelToCaption) {
+            HStack(alignment: .center, spacing: DS.Spacing.rowControlGap) {
                 Text(label)
                     .font(DS.Fonts.ui(13.5, .medium))
                     .foregroundStyle(DS.Colors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 trailing
             }
@@ -65,22 +68,9 @@ struct DSStackedRow: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(label)
-                    .font(DS.Fonts.ui(13.5, .medium))
-                    .foregroundStyle(DS.Colors.ink)
-                Text(caption)
-                    .font(DS.Fonts.ui(12.5))
-                    .lineSpacing(12.5 * 0.5 - 3)
-                    .foregroundStyle(DS.Colors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
+        DSDetailRow(label: label, caption: caption) {
             DSSwitch(accessibilityName: label, isOn: $isOn)
         }
-        .padding(.vertical, 14)
-        .padding(.horizontal, DS.Spacing.rowHorizontal)
     }
 }
 

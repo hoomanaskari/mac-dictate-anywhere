@@ -42,6 +42,7 @@ struct DSSectionHeader: View {
             Text(subtitle)
                 .font(DS.Fonts.ui(13.5))
                 .foregroundStyle(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
