@@ -15,7 +15,7 @@ final class PrivacyRegressionTests: XCTestCase {
     }
 
     func testFocusChangeDuringScriptPreventsKeyboardFallback() async {
-        for failure in [PasteScriptOutcome.failed, .automationDenied] {
+        for failure in [PasteScriptOutcome.preDispatchFailed, .automationDenied] {
             var focused = true
             var fallback = false
             let result = await TextInserter.deliverToTarget(
@@ -38,10 +38,40 @@ final class PrivacyRegressionTests: XCTestCase {
         XCTAssertFalse(fallback)
     }
 
+    func testAmbiguousAccessibilityActionNeverDispatchesAnotherPaste() async {
+        var fallbackCount = 0
+        let result = await TextInserter.deliverToTarget(
+            isTargetReady: { true },
+            pasteScript: { .possiblyDispatched },
+            pasteEvent: { fallbackCount += 1; return true }
+        )
+        XCTAssertEqual(result, .copiedOnly)
+        XCTAssertEqual(fallbackCount, 0)
+    }
+
+    func testListPasteProofRequiresSameFocusedElementAndExactRange() {
+        let expected = CFRange(location: 24, length: 18)
+        XCTAssertTrue(pasteTargetProofMatches(
+            expected: expected,
+            actual: expected,
+            sameFocusedElement: true
+        ))
+        XCTAssertFalse(pasteTargetProofMatches(
+            expected: expected,
+            actual: CFRange(location: 24, length: 5),
+            sameFocusedElement: true
+        ))
+        XCTAssertFalse(pasteTargetProofMatches(
+            expected: expected,
+            actual: expected,
+            sameFocusedElement: false
+        ))
+    }
+
     func testSameDestinationSupportsFallbackAndSuccessfulScriptDoesNotDoublePaste() async {
         var pastes = 0
         let fallbackResult = await TextInserter.deliverToTarget(
-            isTargetReady: { true }, pasteScript: { .failed },
+            isTargetReady: { true }, pasteScript: { .preDispatchFailed },
             pasteEvent: { pastes += 1; return true }
         )
         XCTAssertEqual(fallbackResult, .success)

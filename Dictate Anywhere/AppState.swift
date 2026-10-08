@@ -2487,6 +2487,7 @@ final class AppState {
         let trace = PerfTrace.begin("insertion.targetActivation")
         defer { trace.end() }
         guard let app = insertionTargetApp, !app.isTerminated else { return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { return }
         guard app.activate() else { return }
         let deadline = ContinuousClock.now + .milliseconds(120)
         while NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
@@ -2511,24 +2512,27 @@ final class AppState {
         }
 
         let processIdentifier = target.processIdentifier
-        let bundleIdentifier = target.bundleIdentifier
-        let appName = target.localizedName ?? bundleIdentifier ?? captured.appName
         let rules = settings.dictationAppRules
         let refreshed = await Task.detached(priority: .userInitiated) {
-            DictationContextCapture.capture(
-                processIdentifier: processIdentifier,
-                bundleIdentifier: bundleIdentifier,
-                appName: appName,
-                rules: rules
-            )
+            DictationContextCapture.refreshCursorSnapshot(for: captured, rules: rules)
         }.value
 
-        guard refreshed.hasTextPositionSnapshot else {
+        guard let refreshed,
+              insertionTargetApp?.processIdentifier == processIdentifier,
+              !target.isTerminated,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier else {
             logger.warning(
                 "textInsertion: target context has no cursor snapshot; using non-contextual insertion"
             )
             return captured
         }
+        guard refreshed.hasTextPositionSnapshot || refreshed.isSecureField || refreshed.isContextExcluded else {
+            logger.warning(
+                "textInsertion: target context has no cursor snapshot; using non-contextual insertion"
+            )
+            return captured
+        }
+        guard !refreshed.isSecureField, !refreshed.isContextExcluded else { return refreshed }
         logger.info("textInsertion: recovered cursor snapshot after target reactivation")
         return refreshed
     }

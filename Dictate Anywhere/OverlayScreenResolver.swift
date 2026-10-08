@@ -38,6 +38,9 @@ struct SystemOverlayScreenResolver: OverlayScreenResolving {
 
     func resolveDisplayID(forApplication processIdentifier: pid_t?) -> CGDirectDisplayID? {
         let screens = NSScreen.screens
+        if screens.count == 1 {
+            return screens[0].displayID
+        }
 
         guard let index = OverlayScreenPicker.pickScreenIndex(
             screenFrames: screens.map(\.frame),

@@ -80,7 +80,7 @@ final class AttentionIssueTests: XCTestCase {
         )
         XCTAssertEqual(
             PasteScriptOutcome.fromAppleScriptError([NSAppleScript.errorNumber: -1728]),
-            .failed
+            .possiblyDispatched
         )
     }
 

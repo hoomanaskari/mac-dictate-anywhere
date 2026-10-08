@@ -8,7 +8,6 @@
 import Foundation
 import AppKit
 import CoreGraphics
-import CoreServices
 import Carbon
 import os
 
@@ -21,16 +20,27 @@ enum TextInsertionResult {
 enum PasteScriptOutcome: Equatable, Sendable {
     case success
     case automationDenied
+    case possiblyDispatched
     case targetUnavailable
-    case failed
+    case preDispatchFailed
 
     static func fromAppleScriptError(_ error: NSDictionary?) -> PasteScriptOutcome {
         guard let error else { return .success }
         if (error[NSAppleScript.errorNumber] as? Int) == Int(errAEEventNotPermitted) {
             return .automationDenied
         }
-        return .failed
+        return .possiblyDispatched
     }
+}
+
+nonisolated func pasteTargetProofMatches(
+    expected: CFRange,
+    actual: CFRange,
+    sameFocusedElement: Bool
+) -> Bool {
+    sameFocusedElement
+        && expected.location == actual.location
+        && expected.length == actual.length
 }
 
 /// Compiles and executes the paste script on one serial queue. The queue owns
@@ -40,27 +50,37 @@ private nonisolated final class PasteScriptRunner: @unchecked Sendable {
         on pasteIntoProcess(targetPID)
             tell application "System Events"
                 set targets to application processes whose unix id is targetPID
-                if (count of targets) is not 1 then return false
+                if (count of targets) is not 1 then return 1
                 tell item 1 of targets
-                    if not frontmost then return false
+                    if not frontmost then return 1
                     -- AX menu clicks are addressed to this process. System Events'
                     -- keystroke command can reach a different app after a focus change.
                     repeat with topItem in menu bar items of menu bar 1
                         repeat with candidate in menu items of menu 1 of topItem
+                            set matchesPaste to false
                             try
                                 if (value of attribute "AXMenuItemCmdChar" of candidate) is "V" and ¬
                                    (value of attribute "AXMenuItemCmdModifiers" of candidate) is 0 and ¬
                                    enabled of candidate then
-                                    click candidate
-                                    return true
+                                    set matchesPaste to true
                                 end if
                             end try
+                            if matchesPaste then
+                                try
+                                    click candidate
+                                    return 0
+                                on error
+                                    -- Once click is attempted, an error cannot
+                                    -- prove the target did not receive Paste.
+                                    return 3
+                                end try
+                            end if
                         end repeat
                     end repeat
-                    error "No enabled Paste menu item" number -1728
+                    return 2
                 end tell
             end tell
-            return true
+            return 1
         end pasteIntoProcess
         """
 
@@ -79,7 +99,7 @@ private nonisolated final class PasteScriptRunner: @unchecked Sendable {
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 guard let script = compiledScript() else {
-                    continuation.resume(returning: .failed)
+                    continuation.resume(returning: .preDispatchFailed)
                     return
                 }
                 var error: NSDictionary?
@@ -93,9 +113,20 @@ private nonisolated final class PasteScriptRunner: @unchecked Sendable {
                 arguments.insert(NSAppleEventDescriptor(int32: targetProcessIdentifier), at: 1)
                 event.setParam(arguments, forKeyword: AEKeyword(keyDirectObject))
                 let result = script.executeAppleEvent(event, error: &error)
-                continuation.resume(returning: error == nil
-                    ? (result.booleanValue ? .success : .targetUnavailable)
-                    : PasteScriptOutcome.fromAppleScriptError(error))
+                if error != nil {
+                    continuation.resume(returning: PasteScriptOutcome.fromAppleScriptError(error))
+                    return
+                }
+                switch result.int32Value {
+                case 0:
+                    continuation.resume(returning: .success)
+                case 1:
+                    continuation.resume(returning: .targetUnavailable)
+                case 2:
+                    continuation.resume(returning: .preDispatchFailed)
+                default:
+                    continuation.resume(returning: .possiblyDispatched)
+                }
             }
         }
     }
@@ -116,10 +147,492 @@ private nonisolated final class PasteScriptRunner: @unchecked Sendable {
     }
 }
 
+/// Performs small, process-addressed Accessibility reads and Paste actions on
+/// one serial worker so synchronous AX IPC never occupies the main actor.
+private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendable {
+    private struct TargetIdentity: Equatable, Sendable {
+        let processIdentifier: pid_t
+        let bundleIdentifier: String?
+        let launchTime: TimeInterval
+    }
+
+    private struct CachedPasteItem {
+        let target: TargetIdentity
+        let element: AXUIElement
+    }
+
+    private struct PasteCandidate {
+        let menuItem: AXUIElement
+        let focusedElement: AXUIElement
+        let selectedRange: CFRange
+    }
+
+    private struct RequiredPasteTarget {
+        let focusedElement: AXUIElement
+        let selection: CFRange
+        let originalValue: String
+    }
+
+    struct PreparedListEdit: @unchecked Sendable {
+        let element: AXUIElement
+        let originalRange: CFRange
+        let originalValue: String
+        let edit: PlainTextListEdit
+    }
+
+    private let queue = DispatchQueue(label: "com.dictate-anywhere.insertion-accessibility", qos: .userInitiated)
+    private let messageTimeout: Float = 0.025
+    private var cachedPasteItem: CachedPasteItem?
+
+    func characterBeforeInsertionPoint(
+        processIdentifier: pid_t,
+        isTargetReady: @escaping @MainActor @Sendable () -> Bool
+    ) async -> String? {
+        guard await MainActor.run(body: isTargetReady) else { return nil }
+        let character: String? = await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: characterBeforeInsertionPointOnQueue(processIdentifier: processIdentifier))
+            }
+        }
+        guard await MainActor.run(body: isTargetReady) else { return nil }
+        return character
+    }
+
+    func prepareListEdit(
+        insertion: String,
+        context: DictationContext,
+        processIdentifier: pid_t,
+        isTargetReady: @escaping @MainActor @Sendable () -> Bool
+    ) async -> PreparedListEdit? {
+        guard await MainActor.run(body: isTargetReady) else { return nil }
+        return await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let deadline = ContinuousClock.now + .milliseconds(350)
+                let application = AXUIElementCreateApplication(processIdentifier)
+                setTimeout(on: application)
+                guard let element = focusedElement(in: application),
+                      self.processIdentifier(of: element) == processIdentifier,
+                      let range = selectedTextRange(in: element), range.location >= 0,
+                      let value = textValue(of: element), (value as NSString).length <= 100_000,
+                      snapshotMatches(value: value, range: range, context: context),
+                      let edit = PlainTextListEdit.prepare(
+                        value: value,
+                        selection: NSRange(location: range.location, length: range.length),
+                        insertion: insertion,
+                        context: context
+                      ),
+                      ContinuousClock.now < deadline else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: PreparedListEdit(
+                    element: element, originalRange: range, originalValue: value, edit: edit
+                ))
+            }
+        }
+    }
+
+    func selectListEdit(_ pending: PreparedListEdit, targetApplication: NSRunningApplication) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let deadline = ContinuousClock.now + .milliseconds(300)
+                guard let application = appFor(pending.element),
+                      targetApplication.isActive, !targetApplication.isTerminated,
+                      focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true,
+                      textValue(of: pending.element) == pending.originalValue,
+                      selectedTextRange(in: pending.element).map({
+                        $0.location == pending.originalRange.location && $0.length == pending.originalRange.length
+                      }) == true,
+                      setSelection(pending.edit.range, in: pending.element) else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                for _ in 0..<8 {
+                    guard ContinuousClock.now < deadline, targetApplication.isActive,
+                          !targetApplication.isTerminated,
+                          focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true else { break }
+                    if selectedTextRange(in: pending.element).map({
+                        $0.location == pending.edit.range.location && $0.length == pending.edit.range.length
+                    }) == true,
+                       textValue(of: pending.element) == pending.originalValue {
+                        continuation.resume(returning: true)
+                        return
+                    }
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+                if targetApplication.isActive, !targetApplication.isTerminated,
+                   focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true,
+                   textValue(of: pending.element) == pending.originalValue,
+                   selectedTextRange(in: pending.element).map({
+                    $0.location == pending.edit.range.location && $0.length == pending.edit.range.length
+                   }) == true {
+                    _ = setSelection(
+                        NSRange(location: pending.originalRange.location, length: pending.originalRange.length),
+                        in: pending.element
+                    )
+                }
+                continuation.resume(returning: false)
+            }
+        }
+    }
+
+    func restoreListEditSelection(_ pending: PreparedListEdit, targetApplication: NSRunningApplication) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async { [self] in
+                if targetApplication.isActive, !targetApplication.isTerminated,
+                   let application = appFor(pending.element),
+                   focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true,
+                   textValue(of: pending.element) == pending.originalValue,
+                   selectedTextRange(in: pending.element).map({
+                    $0.location == pending.edit.range.location && $0.length == pending.edit.range.length
+                   }) == true {
+                    _ = setSelection(
+                        NSRange(location: pending.originalRange.location, length: pending.originalRange.length),
+                        in: pending.element
+                    )
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    func finishListEdit(_ pending: PreparedListEdit, targetApplication: NSRunningApplication) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let deadline = ContinuousClock.now + .milliseconds(500)
+                guard let application = appFor(pending.element) else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                while ContinuousClock.now < deadline, targetApplication.isActive,
+                      !targetApplication.isTerminated,
+                      focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true {
+                    if textValue(of: pending.element) == pending.edit.expectedValue {
+                        if let range = selectedTextRange(in: pending.element), range.length == 0,
+                           range.location == pending.edit.range.location + (pending.edit.replacement as NSString).length,
+                           focusedElement(in: application).map({ CFEqual($0, pending.element) }) == true {
+                            _ = setSelection(NSRange(location: pending.edit.caretLocation, length: 0), in: pending.element)
+                        }
+                        continuation.resume(returning: true)
+                        return
+                    }
+                    Thread.sleep(forTimeInterval: 0.025)
+                }
+                continuation.resume(returning: false)
+            }
+        }
+    }
+
+    private func appFor(_ element: AXUIElement) -> AXUIElement? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success, processIdentifier > 0 else { return nil }
+        let application = AXUIElementCreateApplication(processIdentifier)
+        setTimeout(on: application)
+        return application
+    }
+
+    private func processIdentifier(of element: AXUIElement) -> pid_t? {
+        var processIdentifier: pid_t = 0
+        return AXUIElementGetPid(element, &processIdentifier) == .success ? processIdentifier : nil
+    }
+
+    private func textValue(of element: AXUIElement) -> String? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private func setSelection(_ range: NSRange, in element: AXUIElement) -> Bool {
+        setTimeout(on: element)
+        var range = CFRange(location: range.location, length: range.length)
+        guard let value = AXValueCreate(.cfRange, &range) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success
+    }
+
+    private func snapshotMatches(value: String, range: CFRange, context: DictationContext) -> Bool {
+        let value = value as NSString
+        guard range.length == 0, range.location >= 0, range.location <= value.length,
+              let before = context.textBeforeCursor, let after = context.textAfterCursor,
+              context.selectedText?.isEmpty != false,
+              value.substring(to: range.location).hasSuffix(before),
+              value.substring(from: range.location).hasPrefix(after) else { return false }
+        return true
+    }
+
+    func paste(
+        targetApplication: NSRunningApplication,
+        requiredListEdit: PreparedListEdit? = nil
+    ) async -> PasteScriptOutcome {
+        guard let launchDate = targetApplication.launchDate else { return .preDispatchFailed }
+        let target = TargetIdentity(
+            processIdentifier: targetApplication.processIdentifier,
+            bundleIdentifier: targetApplication.bundleIdentifier,
+            launchTime: launchDate.timeIntervalSince1970
+        )
+        return await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                guard targetApplication.isActive, !targetApplication.isTerminated else {
+                    continuation.resume(returning: .targetUnavailable)
+                    return
+                }
+                let requiredTarget = requiredListEdit.map {
+                    RequiredPasteTarget(
+                        focusedElement: $0.element,
+                        selection: CFRange(location: $0.edit.range.location, length: $0.edit.range.length),
+                        originalValue: $0.originalValue
+                    )
+                }
+                guard let candidate = pasteCandidate(for: target, requiredTarget: requiredTarget) else {
+                    continuation.resume(returning: .preDispatchFailed)
+                    return
+                }
+                guard targetApplication.isActive, !targetApplication.isTerminated else {
+                    continuation.resume(returning: .targetUnavailable)
+                    return
+                }
+                guard cacheStillMatches(candidate.menuItem, target: target),
+                      isPasteMenuItem(candidate.menuItem, target: target),
+                      focusAndSelectionMatch(candidate, processIdentifier: target.processIdentifier),
+                      requiredTarget.map({
+                        pasteTargetProofMatches(
+                            expected: $0.selection,
+                            actual: candidate.selectedRange,
+                            sameFocusedElement: CFEqual(candidate.focusedElement, $0.focusedElement)
+                        ) && textValue(of: $0.focusedElement) == $0.originalValue
+                      }) ?? true else {
+                    invalidate(candidate.menuItem, target: target)
+                    continuation.resume(returning: .preDispatchFailed)
+                    return
+                }
+                guard targetApplication.isActive, !targetApplication.isTerminated else {
+                    invalidate(candidate.menuItem, target: target)
+                    continuation.resume(returning: .targetUnavailable)
+                    return
+                }
+                let result = AXUIElementPerformAction(candidate.menuItem, kAXPressAction as CFString)
+                if result == .success {
+                    continuation.resume(returning: .success)
+                } else {
+                    invalidate(candidate.menuItem, target: target)
+                    // After AXPress is issued, every error is ambiguous: AX
+                    // does not prove that the target app did not handle it.
+                    continuation.resume(returning: .possiblyDispatched)
+                }
+            }
+        }
+    }
+
+    private func pasteCandidate(
+        for target: TargetIdentity,
+        requiredTarget: RequiredPasteTarget? = nil
+    ) -> PasteCandidate? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let application = AXUIElementCreateApplication(target.processIdentifier)
+        setTimeout(on: application)
+        guard let focusedElement = focusedElement(in: application),
+              processIdentifier(of: focusedElement) == target.processIdentifier else { return nil }
+        if let requiredTarget {
+            guard CFEqual(focusedElement, requiredTarget.focusedElement),
+                  let range = selectedTextRange(in: focusedElement),
+                  pasteTargetProofMatches(
+                    expected: requiredTarget.selection,
+                    actual: range,
+                    sameFocusedElement: true
+                  ) else { return nil }
+        }
+        if let cachedPasteItem, cachedPasteItem.target == target,
+           isPasteMenuItem(cachedPasteItem.element, target: target) {
+            return candidate(menuItem: cachedPasteItem.element, capturedFocusedElement: focusedElement,
+                             application: application)
+        }
+        cachedPasteItem = nil
+
+        let deadline = ContinuousClock.now + .milliseconds(300)
+        guard let menuBar = copyElement(kAXMenuBarAttribute as String, from: application),
+              let topLevelItems = childElements(of: menuBar) else { return nil }
+
+        for topLevelItem in topLevelItems.prefix(8) {
+            guard ContinuousClock.now < deadline else { return nil }
+            guard let menuContents = childElements(of: topLevelItem) else { continue }
+            let menuItems: [AXUIElement]
+            if let menu = menuContents.first,
+               ContinuousClock.now < deadline,
+               role(of: menu) == (kAXMenuRole as String),
+               ContinuousClock.now < deadline,
+               let children = childElements(of: menu) {
+                menuItems = children
+            } else {
+                menuItems = menuContents
+            }
+            for menuItem in menuItems.prefix(32) {
+                guard ContinuousClock.now < deadline else { return nil }
+                guard let character = commandCharacter(of: menuItem),
+                      ContinuousClock.now < deadline,
+                      character.caseInsensitiveCompare("V") == .orderedSame,
+                      ContinuousClock.now < deadline,
+                      commandModifiers(of: menuItem) == 0,
+                      ContinuousClock.now < deadline,
+                      isEnabled(menuItem),
+                      ContinuousClock.now < deadline,
+                      processIdentifier(of: menuItem) == target.processIdentifier else { continue }
+                cachedPasteItem = CachedPasteItem(target: target, element: menuItem)
+                return candidate(menuItem: menuItem, capturedFocusedElement: focusedElement,
+                                 application: application)
+            }
+        }
+        return nil
+    }
+
+    private func cacheStillMatches(_ item: AXUIElement, target: TargetIdentity) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard let cachedPasteItem else { return false }
+        return cachedPasteItem.target == target && CFEqual(cachedPasteItem.element, item)
+    }
+
+    private func isPasteMenuItem(_ item: AXUIElement, target: TargetIdentity) -> Bool {
+        commandCharacter(of: item)?.caseInsensitiveCompare("V") == .orderedSame
+            && commandModifiers(of: item) == 0
+            && isEnabled(item)
+            && processIdentifier(of: item) == target.processIdentifier
+    }
+
+    private func candidate(
+        menuItem: AXUIElement,
+        capturedFocusedElement: AXUIElement,
+        application: AXUIElement
+    ) -> PasteCandidate? {
+        guard let currentFocus = focusedElement(in: application),
+              CFEqual(currentFocus, capturedFocusedElement),
+              let currentRange = selectedTextRange(in: currentFocus) else { return nil }
+        return PasteCandidate(menuItem: menuItem, focusedElement: capturedFocusedElement, selectedRange: currentRange)
+    }
+
+    private func focusAndSelectionMatch(_ candidate: PasteCandidate, processIdentifier: pid_t) -> Bool {
+        guard let focused = focusedElement(processIdentifier: processIdentifier),
+              CFEqual(focused, candidate.focusedElement),
+              let selectedRange = selectedTextRange(in: focused) else { return false }
+        return selectedRange.location == candidate.selectedRange.location
+            && selectedRange.length == candidate.selectedRange.length
+    }
+
+    private func invalidate(_ item: AXUIElement, target: TargetIdentity) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        if cachedPasteItem?.target == target, let cached = cachedPasteItem?.element, CFEqual(cached, item) {
+            cachedPasteItem = nil
+        }
+    }
+
+    private func characterBeforeInsertionPointOnQueue(processIdentifier: pid_t) -> String? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let application = AXUIElementCreateApplication(processIdentifier)
+        setTimeout(on: application)
+        guard let focused = focusedElement(in: application),
+              self.processIdentifier(of: focused) == processIdentifier,
+              let selectedRange = selectedTextRange(in: focused),
+              selectedRange.location != kCFNotFound else { return nil }
+        guard selectedRange.location > 0 else { return "" }
+
+        var range = CFRange(location: selectedRange.location - 1, length: 1)
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        let rangeStatus = AXUIElementCopyParameterizedAttributeValue(
+            focused, kAXStringForRangeParameterizedAttribute as CFString, rangeValue, &value
+        )
+        var precedingCharacter = rangeStatus == .success ? value as? String : nil
+        if precedingCharacter == nil {
+            var fullValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(focused, kAXValueAttribute as CFString, &fullValue) == .success,
+               let text = fullValue as? String {
+                let nsText = text as NSString
+                if selectedRange.location <= nsText.length {
+                    precedingCharacter = nsText.substring(with: NSRange(location: selectedRange.location - 1, length: 1))
+                }
+            }
+        }
+        guard focusedElement(in: application).map({ CFEqual($0, focused) }) == true,
+              let currentRange = selectedTextRange(in: focused),
+              currentRange.location == selectedRange.location,
+              currentRange.length == selectedRange.length else { return nil }
+        return precedingCharacter
+    }
+
+    private func focusedElement(in application: AXUIElement) -> AXUIElement? {
+        copyElement(kAXFocusedUIElementAttribute as String, from: application)
+    }
+
+    private func focusedElement(processIdentifier: pid_t) -> AXUIElement? {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        setTimeout(on: application)
+        return focusedElement(in: application)
+    }
+
+    private func childElements(of element: AXUIElement) -> [AXUIElement]? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else { return nil }
+        return children
+    }
+
+    private func copyElement(_ attribute: String, from element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let result = unsafeBitCast(value, to: AXUIElement.self)
+        setTimeout(on: result)
+        return result
+    }
+
+    private func commandCharacter(of element: AXUIElement) -> String? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXMenuItemCmdCharAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private func role(of element: AXUIElement) -> String? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private func commandModifiers(of element: AXUIElement) -> UInt32? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXMenuItemCmdModifiersAttribute as CFString, &value) == .success else { return nil }
+        return (value as? NSNumber)?.uint32Value
+    }
+
+    private func isEnabled(_ element: AXUIElement) -> Bool {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &value) == .success
+            && (value as? NSNumber)?.boolValue == true
+    }
+
+    private func selectedTextRange(in element: AXUIElement) -> CFRange? {
+        setTimeout(on: element)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(axValue, .cfRange, &range) ? range : nil
+    }
+
+    private func setTimeout(on element: AXUIElement) {
+        _ = AXUIElementSetMessagingTimeout(element, messageTimeout)
+    }
+}
+
 final class TextInserter {
     private var pendingSeparator = ""
     private var pendingSeparatorTargetBundleIdentifier: String?
     private let pasteScriptRunner = PasteScriptRunner()
+    private let accessibilityWorker = InsertionAccessibilityWorker()
     private let permissions: Permissions
 
     init(permissions: Permissions = Permissions()) {
@@ -150,12 +663,36 @@ final class TextInserter {
         } else {
             targetApplication = frontmostApplication
         }
-        let targetIsReady = {
+        let targetIsReady: @MainActor @Sendable () -> Bool = {
             guard let targetApplication, !targetApplication.isTerminated else { return false }
             return NSWorkspace.shared.frontmostApplication?.processIdentifier == targetApplication.processIdentifier
         }
         let resolvedTargetProcessIdentifier = targetApplication?.processIdentifier
         let targetBundleIdentifier = targetApplication?.bundleIdentifier
+        let hasMatchingInsertionPlan = modelInsertionPlan.map {
+            Self.normalizedForInsertion($0.text) == Self.normalizedForInsertion(text)
+        } == true
+        let usesCapturedContext = !hasMatchingInsertionPlan
+            && context != nil
+            && style != nil
+            && context.map {
+                Self.shouldUseContextualInsertion(context: $0, targetProcessIdentifier: resolvedTargetProcessIdentifier)
+            } == true
+        let separatorContext: String?
+        if !hasMatchingInsertionPlan,
+           !usesCapturedContext,
+           !pendingSeparator.isEmpty,
+           pendingSeparatorTargetBundleIdentifier == targetBundleIdentifier,
+           Self.needsSeparator(before: text),
+           permissions.checkAccessibilityForUse(promptIfNeeded: false),
+           let processIdentifier = resolvedTargetProcessIdentifier {
+            separatorContext = await accessibilityWorker.characterBeforeInsertionPoint(
+                processIdentifier: processIdentifier,
+                isTargetReady: targetIsReady
+            )
+        } else {
+            separatorContext = nil
+        }
         let insertionText = PerfTrace.measure("insertion.prepare") {
             preparedTextForInsertion(
                 text,
@@ -165,7 +702,8 @@ final class TextInserter {
                 style: style,
                 knownTerms: knownTerms,
                 modelInsertionPlan: modelInsertionPlan,
-                preserveModelFormatting: preserveModelFormatting
+                preserveModelFormatting: preserveModelFormatting,
+                precedingTextForSeparator: separatorContext
             )
         }
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere", category: "TextInsertion")
@@ -200,53 +738,31 @@ final class TextInserter {
         // Plain-text numbering needs one verified replacement, not a second
         // blind edit after pasting. If the snapshot is stale, leave the text on
         // the clipboard rather than replacing someone else's changes.
-        var listEdit: (AXUIElement, PlainTextListEdit)?
+        var listEdit: InsertionAccessibilityWorker.PreparedListEdit?
         if let context, context.processIdentifier == resolvedTargetProcessIdentifier,
            PlainTextListEdit.needsRenumbering(insertion: insertionText, context: context) {
             let listEditTrace = PerfTrace.begin("insertion.listEdit")
             defer { listEditTrace.end() }
-            guard let pid = resolvedTargetProcessIdentifier,
-                  let element = Self.focusedTextElement(processIdentifier: pid),
-                  Self.processIdentifier(of: element) == resolvedTargetProcessIdentifier,
-                  NSWorkspace.shared.frontmostApplication?.processIdentifier == resolvedTargetProcessIdentifier,
-                  let range = selectedTextRange(in: element),
-                  let value = Self.textValue(of: element), (value as NSString).length <= 100_000,
-                  Self.snapshotMatches(value: value, range: range, context: context) else {
+            guard let pid = resolvedTargetProcessIdentifier, let targetApplication,
+                  let prepared = await accessibilityWorker.prepareListEdit(
+                    insertion: insertionText,
+                    context: context,
+                    processIdentifier: pid,
+                    isTargetReady: targetIsReady
+                  ), targetIsReady() else {
                 logger.info("plainListEdit: live snapshot unavailable or changed")
                 resetPendingSeparator()
                 deliverOutcome = "copiedOnly"
                 return .copiedOnly
             }
-            if let edit = PlainTextListEdit.prepare(value: value,
-                selection: NSRange(location: range.location, length: range.length),
-                insertion: insertionText, context: context) {
-                guard await copyToClipboard(edit.replacement) else { return .failed }
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == resolvedTargetProcessIdentifier,
-                      Self.textValue(of: element) == value,
-                      selectedTextRange(in: element).map({ $0.location == range.location && $0.length == range.length }) == true else {
-                    _ = await copyToClipboard(insertionText)
-                    deliverOutcome = "copiedOnly"
-                    return .copiedOnly
-                }
-                let didSelect = Self.setSelection(edit.range, in: element)
-                if didSelect {
-                    for _ in 0..<10 {
-                        if selectedTextRange(in: element).map({ $0.location == edit.range.location && $0.length == edit.range.length }) == true { break }
-                        try? await Task.sleep(for: .milliseconds(20))
-                    }
-                }
-                guard didSelect,
-                      selectedTextRange(in: element).map({ $0.location == edit.range.location && $0.length == edit.range.length }) == true,
-                      Self.textValue(of: element) == value,
-                      NSWorkspace.shared.frontmostApplication?.processIdentifier == resolvedTargetProcessIdentifier else {
-                    logger.info("plainListEdit: selection verification failed, set=\(didSelect)")
-                    _ = Self.setSelection(NSRange(location: range.location, length: range.length), in: element)
-                    _ = await copyToClipboard(insertionText)
-                    deliverOutcome = "copiedOnly"
-                    return .copiedOnly
-                }
-                listEdit = (element, edit)
+            guard await copyToClipboard(prepared.edit.replacement) else { return .failed }
+            guard targetIsReady(), await accessibilityWorker.selectListEdit(prepared, targetApplication: targetApplication), targetIsReady() else {
+                await accessibilityWorker.restoreListEditSelection(prepared, targetApplication: targetApplication)
+                _ = await copyToClipboard(insertionText)
+                deliverOutcome = "copiedOnly"
+                return .copiedOnly
             }
+            listEdit = prepared
         }
 
         // Revalidate after every suspension, including before the keyboard fallback.
@@ -254,8 +770,29 @@ final class TextInserter {
         let pasteResult = await Self.deliverToTarget(
             isTargetReady: targetIsReady,
             pasteScript: {
-                guard let pid = resolvedTargetProcessIdentifier else { return .targetUnavailable }
-                return await self.simulatePasteWithAppleScript(targetProcessIdentifier: pid)
+                guard let targetApplication, let pid = resolvedTargetProcessIdentifier else { return .targetUnavailable }
+                let nativePasteTrace = PerfTrace.begin("insertion.pasteAX")
+                let accessibilityOutcome = await self.accessibilityWorker.paste(
+                    targetApplication: targetApplication,
+                    requiredListEdit: listEdit
+                )
+                switch accessibilityOutcome {
+                case .success:
+                    nativePasteTrace.end()
+                case .automationDenied:
+                    nativePasteTrace.end(outcome: "automationDenied")
+                case .possiblyDispatched:
+                    nativePasteTrace.end(outcome: "possiblyDispatched")
+                case .targetUnavailable:
+                    nativePasteTrace.end(outcome: "targetUnavailable")
+                case .preDispatchFailed:
+                    nativePasteTrace.end(outcome: "preDispatchFailed")
+                }
+                guard accessibilityOutcome == .preDispatchFailed else {
+                    guard listEdit == nil else { return .targetUnavailable }
+                    return await self.simulatePasteWithAppleScript(targetProcessIdentifier: pid)
+                }
+                return accessibilityOutcome
             },
             pasteEvent: {
                 guard let pid = resolvedTargetProcessIdentifier else { return false }
@@ -265,74 +802,24 @@ final class TextInserter {
         )
         if pasteResult == .success {
             if usedKeyboardEvent { try? await Task.sleep(for: .milliseconds(100)) }
-            await finishListEdit(listEdit, insertionText: insertionText)
+            if let listEdit, let targetApplication,
+               await accessibilityWorker.finishListEdit(listEdit, targetApplication: targetApplication) {
+                _ = await copyToClipboard(insertionText)
+            }
             prepareForNextInsertion(targetBundleIdentifier: targetBundleIdentifier)
             deliverOutcome = "success"
             return .success
         }
 
-        if let (element, edit) = listEdit {
-            _ = Self.setSelection(NSRange(location: edit.range.location, length: 0), in: element)
+        if let listEdit {
+            if let targetApplication {
+                await accessibilityWorker.restoreListEditSelection(listEdit, targetApplication: targetApplication)
+            }
             _ = await copyToClipboard(insertionText)
         }
         resetPendingSeparator()
         deliverOutcome = "copiedOnly"
         return .copiedOnly
-    }
-
-    private func finishListEdit(_ pending: (AXUIElement, PlainTextListEdit)?, insertionText: String) async {
-        guard let (element, edit) = pending else { return }
-        let trace = PerfTrace.begin("insertion.listEditVerify")
-        defer { trace.end() }
-        for _ in 0..<10 {
-            if Self.textValue(of: element) == edit.expectedValue {
-                // Leave the cursor after the new items, not after old neighbors.
-                if let range = selectedTextRange(in: element), range.length == 0,
-                   range.location == edit.range.location + (edit.replacement as NSString).length {
-                    _ = Self.setSelection(NSRange(location: edit.caretLocation, length: 0), in: element)
-                }
-                if NSPasteboard.general.string(forType: .string) == edit.replacement {
-                    _ = await copyToClipboard(insertionText)
-                }
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        // A slow editor may still have a paste queued. Keep its replacement on
-        // the clipboard until observed; changing it now could drop old text.
-    }
-
-    private static func focusedTextElement(processIdentifier: pid_t) -> AXUIElement? {
-        let application = AXUIElementCreateApplication(processIdentifier)
-        AXUIElementSetMessagingTimeout(application, 0.25)
-        return DictationContextCapture.focusedTextElement(in: application, processIdentifier: processIdentifier)
-    }
-
-    private static func processIdentifier(of element: AXUIElement) -> pid_t? {
-        var pid: pid_t = 0
-        return AXUIElementGetPid(element, &pid) == .success ? pid : nil
-    }
-
-    private static func textValue(of element: AXUIElement) -> String? {
-        AXUIElementSetMessagingTimeout(element, 0.25)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success else { return nil }
-        return value as? String
-    }
-
-    private static func setSelection(_ range: NSRange, in element: AXUIElement) -> Bool {
-        var range = CFRange(location: range.location, length: range.length)
-        guard let value = AXValueCreate(.cfRange, &range) else { return false }
-        return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success
-    }
-
-    private static func snapshotMatches(value: String, range: CFRange, context: DictationContext) -> Bool {
-        let value = value as NSString
-        guard range.length == 0, range.location >= 0, range.location <= value.length,
-              let before = context.textBeforeCursor, let after = context.textAfterCursor,
-              context.selectedText?.isEmpty != false else { return false }
-        return value.substring(to: range.location).hasSuffix(before)
-            && value.substring(from: range.location).hasPrefix(after)
     }
 
     // MARK: - Private
@@ -345,7 +832,8 @@ final class TextInserter {
         style: DictationWritingStyle?,
         knownTerms: [String],
         modelInsertionPlan: ModelInsertionPlan? = nil,
-        preserveModelFormatting: Bool = false
+        preserveModelFormatting: Bool = false,
+        precedingTextForSeparator: String? = nil
     ) -> String {
         if let plan = modelInsertionPlan,
            Self.normalizedForInsertion(plan.text) == Self.normalizedForInsertion(text) {
@@ -382,7 +870,11 @@ final class TextInserter {
 
         let normalized = Self.normalizedForInsertion(text)
         guard !normalized.isEmpty else { return "" }
-        let separatorPrefix = separatorPrefixIfNeeded(for: targetBundleIdentifier, insertionText: normalized)
+        let separatorPrefix = separatorPrefixIfNeeded(
+            for: targetBundleIdentifier,
+            insertionText: normalized,
+            precedingText: precedingTextForSeparator
+        )
         return separatorPrefix + normalized
     }
 
@@ -708,7 +1200,11 @@ final class TextInserter {
         return String(characters)
     }
 
-    private func separatorPrefixIfNeeded(for targetBundleIdentifier: String?, insertionText: String) -> String {
+    private func separatorPrefixIfNeeded(
+        for targetBundleIdentifier: String?,
+        insertionText: String,
+        precedingText: String?
+    ) -> String {
         guard !pendingSeparator.isEmpty else { return "" }
 
         guard let targetBundleIdentifier,
@@ -717,7 +1213,7 @@ final class TextInserter {
             return ""
         }
 
-        guard shouldInsertPendingSeparator(before: insertionText) else { return "" }
+        guard shouldInsertPendingSeparator(before: insertionText, precedingText: precedingText) else { return "" }
 
         return pendingSeparator
     }
@@ -742,9 +1238,9 @@ final class TextInserter {
         !startsWithAttachedPunctuation(insertionText) && !CJKText.startsWithCJK(insertionText)
     }
 
-    private func shouldInsertPendingSeparator(before insertionText: String) -> Bool {
+    private func shouldInsertPendingSeparator(before insertionText: String, precedingText: String?) -> Bool {
         guard Self.needsSeparator(before: insertionText),
-              let precedingText = textBeforeInsertionPoint(),
+              let precedingText,
               !precedingText.isEmpty else {
             return false
         }
@@ -771,91 +1267,6 @@ final class TextInserter {
 
     private static func isWhitespaceOrNewline(_ text: String) -> Bool {
         text.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
-    }
-
-    private func textBeforeInsertionPoint() -> String? {
-        guard permissions.checkAccessibilityForUse(promptIfNeeded: false),
-              let focusedElement = focusedAccessibilityElement(),
-              let selectedRange = selectedTextRange(in: focusedElement) else {
-            return nil
-        }
-
-        guard selectedRange.location != kCFNotFound else { return nil }
-        guard selectedRange.location > 0 else { return "" }
-
-        if let text = stringForRange(
-            in: focusedElement,
-            location: selectedRange.location - 1,
-            length: 1
-        ) {
-            return text
-        }
-
-        return valueCharacterBeforeLocation(selectedRange.location, in: focusedElement)
-    }
-
-    private func focusedAccessibilityElement() -> AXUIElement? {
-        let systemWideElement = AXUIElementCreateSystemWide()
-        var focusedElement: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(
-            systemWideElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedElement
-        )
-        guard error == .success,
-              let focusedElement,
-              CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
-            return nil
-        }
-        return (focusedElement as! AXUIElement)
-    }
-
-    private func selectedTextRange(in element: AXUIElement) -> CFRange? {
-        var selectedRangeValue: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &selectedRangeValue
-        )
-        guard error == .success,
-              let selectedRangeValue,
-              CFGetTypeID(selectedRangeValue) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        let axValue = selectedRangeValue as! AXValue
-        guard AXValueGetType(axValue) == .cfRange else {
-            return nil
-        }
-
-        var range = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
-        return range
-    }
-
-    private func stringForRange(in element: AXUIElement, location: Int, length: Int) -> String? {
-        var range = CFRange(location: location, length: length)
-        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return nil }
-
-        var value: CFTypeRef?
-        let error = AXUIElementCopyParameterizedAttributeValue(
-            element,
-            kAXStringForRangeParameterizedAttribute as CFString,
-            rangeValue,
-            &value
-        )
-        guard error == .success else { return nil }
-        return value as? String
-    }
-
-    private func valueCharacterBeforeLocation(_ location: Int, in element: AXUIElement) -> String? {
-        var value: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
-        guard error == .success, let text = value as? String else { return nil }
-
-        let nsText = text as NSString
-        guard location > 0, location <= nsText.length else { return nil }
-        return nsText.substring(with: NSRange(location: location - 1, length: 1))
     }
 
     private func copyToClipboard(_ text: String) async -> Bool {
@@ -907,7 +1318,7 @@ final class TextInserter {
             permissions.recordAutomationPastePermission(denied: false)
         case .automationDenied:
             permissions.recordAutomationPastePermission(denied: true)
-        case .targetUnavailable, .failed:
+        case .targetUnavailable, .preDispatchFailed, .possiblyDispatched:
             break
         }
         return outcome
@@ -915,13 +1326,14 @@ final class TextInserter {
 
     /// The production dispatch sequence, injectable without sending real keystrokes.
     static func deliverToTarget(
-        isTargetReady: () -> Bool,
+        isTargetReady: @MainActor () -> Bool,
         pasteScript: () async -> PasteScriptOutcome,
         pasteEvent: () -> Bool
     ) async -> TextInsertionResult {
         guard isTargetReady() else { return .copiedOnly }
         let result = await pasteScript()
         if result == .success { return .success }
+        if result == .possiblyDispatched { return .copiedOnly }
         guard result != .targetUnavailable, isTargetReady() else { return .copiedOnly }
         return pasteEvent() ? .success : .copiedOnly
     }

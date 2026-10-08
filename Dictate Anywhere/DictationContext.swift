@@ -179,6 +179,34 @@ struct DictationContext: Equatable, Sendable {
         textBeforeCursor != nil || selectedText != nil || textAfterCursor != nil
     }
 
+    /// Replaces only the cursor snapshot after a transient capture failure.
+    /// App classification and privacy metadata remain from the recording-time
+    /// context; a newly detected secure or excluded target clears all text.
+    nonisolated func replacingCursorSnapshot(from refreshed: DictationContext) -> Self? {
+        guard processIdentifier == refreshed.processIdentifier,
+              bundleIdentifier == refreshed.bundleIdentifier else { return nil }
+        let protected = isSecureField || isContextExcluded
+            || refreshed.isSecureField || refreshed.isContextExcluded
+        return Self(
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier,
+            appName: appName,
+            category: category,
+            documentURL: documentURL,
+            documentTitle: documentTitle,
+            fieldRole: fieldRole,
+            fieldSubrole: fieldSubrole,
+            fieldPurpose: fieldPurpose,
+            textBeforeCursor: protected ? nil : refreshed.textBeforeCursor,
+            selectedText: protected ? nil : refreshed.selectedText,
+            textAfterCursor: protected ? nil : refreshed.textAfterCursor,
+            isSecureField: isSecureField || refreshed.isSecureField,
+            isContextExcluded: isContextExcluded || refreshed.isContextExcluded,
+            capturedListItemInsertion: protected ? nil : refreshed.capturedListItemInsertion,
+            richTextContext: protected ? nil : refreshed.richTextContext
+        )
+    }
+
     var listItemInsertion: DictationListInsertion? {
         capturedListItemInsertion ?? DictationListInsertion.infer(before: textBeforeCursor, after: textAfterCursor)
     }
@@ -631,6 +659,122 @@ enum DictationContextCapture {
         )
     }
 
+    /// Refreshes only cursor text after capture omitted a position snapshot.
+    /// Classification and writing metadata stay with the original context;
+    /// secure and excluded destinations are rechecked before any text read.
+    nonisolated static func refreshCursorSnapshot(
+        for context: DictationContext,
+        rules: [DictationAppRule]
+    ) -> DictationContext? {
+        guard !context.isSecureField, !context.isContextExcluded else { return nil }
+        let preliminaryClassification = DictationContextClassifier.classification(
+            bundleIdentifier: context.bundleIdentifier,
+            documentURL: context.documentURL,
+            rules: rules
+        )
+        if !preliminaryClassification.contextEnabled
+            || DictationContextClassifier.isSensitiveApplication(bundleIdentifier: context.bundleIdentifier) {
+            return context.replacingCursorSnapshot(from: emptyContext(
+                processIdentifier: context.processIdentifier,
+                bundleIdentifier: context.bundleIdentifier,
+                appName: context.appName,
+                category: context.category,
+                isExcluded: true
+            ))
+        }
+
+        let processIdentifier = pid_t(context.processIdentifier)
+        let application = AXUIElementCreateApplication(processIdentifier)
+        AXUIElementSetMessagingTimeout(application, 0.025)
+        let deadline = ContinuousClock.now + .milliseconds(350)
+        guard let focusedElement = focusedTextElement(in: application, processIdentifier: processIdentifier) else {
+            return nil
+        }
+        guard ContinuousClock.now < deadline else { return nil }
+
+        let role = stringAttribute(kAXRoleAttribute, from: focusedElement, messagingTimeout: 0.025)
+        guard let role else { return nil }
+        let subrole = secureCheckedSubrole(of: focusedElement)
+        guard let subrole else { return nil }
+        var metadataElements = ancestorChain(
+            startingAt: focusedElement,
+            maximumDepth: 8,
+            messagingTimeout: 0.025,
+            deadline: deadline
+        )
+        metadataElements.append(application)
+        guard ContinuousClock.now < deadline else { return nil }
+        let documentURL = firstStringAttribute(
+            [kAXURLAttribute, kAXDocumentAttribute],
+            in: metadataElements,
+            messagingTimeout: 0.025,
+            deadline: deadline
+        )
+            ?? context.documentURL
+        guard ContinuousClock.now < deadline else { return nil }
+        let classification = DictationContextClassifier.classification(
+            bundleIdentifier: context.bundleIdentifier,
+            documentURL: documentURL,
+            rules: rules
+        )
+        let isSecure = subrole == (kAXSecureTextFieldSubrole as String)
+        let isExcluded = !classification.contextEnabled
+            || DictationContextClassifier.isSensitiveApplication(bundleIdentifier: context.bundleIdentifier)
+        if isSecure || isExcluded {
+            let protected = DictationContext(
+                processIdentifier: context.processIdentifier,
+                bundleIdentifier: context.bundleIdentifier,
+                appName: context.appName,
+                category: context.category,
+                documentURL: context.documentURL,
+                documentTitle: context.documentTitle,
+                fieldRole: context.fieldRole,
+                fieldSubrole: context.fieldSubrole,
+                fieldPurpose: context.fieldPurpose,
+                textBeforeCursor: nil,
+                selectedText: nil,
+                textAfterCursor: nil,
+                isSecureField: isSecure,
+                isContextExcluded: isExcluded
+            )
+            return context.replacingCursorSnapshot(from: protected)
+        }
+
+        guard DictationFocusResolver.isTextInput(role: role) else { return nil }
+        let selectedRange = selectedTextRange(in: focusedElement)
+        guard ContinuousClock.now < deadline else { return nil }
+        let markerSnapshot = DictationTextMarkerCapture.capture(in: focusedElement, messagingTimeout: 0.025)
+        let textSnapshot = markerSnapshot
+            ?? selectedRange.flatMap { surroundingText(in: focusedElement, selectedRange: $0) }
+        guard let textSnapshot else { return nil }
+        guard ContinuousClock.now < deadline else { return nil }
+        let listInsertion = selectedRange.flatMap {
+            DictationRichListCapture.capture(in: focusedElement, selectedRange: $0)
+        }
+        let richText = markerSnapshot.map { $0.before + $0.selected + $0.after }
+            ?? selectedRange.flatMap { richTextContext(in: focusedElement, selectedRange: $0) }
+        guard ContinuousClock.now < deadline else { return nil }
+        let refreshed = DictationContext(
+            processIdentifier: context.processIdentifier,
+            bundleIdentifier: context.bundleIdentifier,
+            appName: context.appName,
+            category: context.category,
+            documentURL: context.documentURL,
+            documentTitle: context.documentTitle,
+            fieldRole: context.fieldRole,
+            fieldSubrole: context.fieldSubrole,
+            fieldPurpose: context.fieldPurpose,
+            textBeforeCursor: textSnapshot.before,
+            selectedText: textSnapshot.selected,
+            textAfterCursor: textSnapshot.after,
+            isSecureField: false,
+            isContextExcluded: false,
+            capturedListItemInsertion: listInsertion,
+            richTextContext: richText
+        )
+        return context.replacingCursorSnapshot(from: refreshed)
+    }
+
     /// Chromium can expose native window controls while its web accessibility
     /// tree is disabled. These are the assistive-client activation attributes
     /// supported by Electron and Chromium; unsupported native apps ignore them.
@@ -867,12 +1011,19 @@ enum DictationContextCapture {
 
     private nonisolated static func ancestorChain(
         startingAt element: AXUIElement,
-        maximumDepth: Int
+        maximumDepth: Int,
+        messagingTimeout: Float? = nil,
+        deadline: ContinuousClock.Instant? = nil
     ) -> [AXUIElement] {
         var result = [element]
         var current = element
         for _ in 0..<maximumDepth {
-            guard let parent = elementAttribute(kAXParentAttribute, from: current) else { break }
+            if let deadline, ContinuousClock.now >= deadline { break }
+            guard let parent = elementAttribute(
+                kAXParentAttribute,
+                from: current,
+                messagingTimeout: messagingTimeout
+            ) else { break }
             result.append(parent)
             current = parent
         }
@@ -881,11 +1032,15 @@ enum DictationContextCapture {
 
     private nonisolated static func firstStringAttribute(
         _ attributes: [String],
-        in elements: [AXUIElement]
+        in elements: [AXUIElement],
+        messagingTimeout: Float? = nil,
+        deadline: ContinuousClock.Instant? = nil
     ) -> String? {
         for element in elements {
+            if let deadline, ContinuousClock.now >= deadline { return nil }
             for attribute in attributes {
-                if let value = stringAttribute(attribute, from: element), !value.isEmpty {
+                if let deadline, ContinuousClock.now >= deadline { return nil }
+                if let value = stringAttribute(attribute, from: element, messagingTimeout: messagingTimeout), !value.isEmpty {
                     return value
                 }
             }
@@ -895,8 +1050,10 @@ enum DictationContextCapture {
 
     private nonisolated static func stringAttribute(
         _ attribute: String,
-        from element: AXUIElement
+        from element: AXUIElement,
+        messagingTimeout: Float? = nil
     ) -> String? {
+        if let messagingTimeout { AXUIElementSetMessagingTimeout(element, messagingTimeout) }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
               let value else { return nil }
@@ -917,13 +1074,32 @@ enum DictationContextCapture {
 
     private nonisolated static func elementAttribute(
         _ attribute: String,
-        from element: AXUIElement
+        from element: AXUIElement,
+        messagingTimeout: Float? = nil
     ) -> AXUIElement? {
+        if let messagingTimeout { AXUIElementSetMessagingTimeout(element, messagingTimeout) }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
               let value,
               CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return (value as! AXUIElement)
+    }
+
+    private nonisolated static func secureCheckedSubrole(of element: AXUIElement) -> String? {
+        AXUIElementSetMessagingTimeout(element, 0.025)
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &value) {
+        case .success:
+            return value as? String
+        case .attributeUnsupported:
+            // An editor that cannot report subrole cannot prove this field is
+            // not secure. Defer refresh without requesting any text values.
+            return nil
+        default:
+            // In particular, cannotComplete is a failed security check, not
+            // evidence that the focused field is ordinary text.
+            return nil
+        }
     }
 
     private nonisolated static func bounded(_ value: String?, maximum: Int) -> String? {

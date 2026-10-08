@@ -5,7 +5,11 @@ import Darwin
 /// representation from AXValue. Keep selection, bounds and strings in the
 /// same text-marker coordinate system rather than mixing those offsets.
 enum DictationTextMarkerCapture {
-    nonisolated static func capture(in editor: AXUIElement) -> (before: String, selected: String, after: String)? {
+    nonisolated static func capture(
+        in editor: AXUIElement,
+        messagingTimeout: Float? = nil
+    ) -> (before: String, selected: String, after: String)? {
+        if let messagingTimeout { AXUIElementSetMessagingTimeout(editor, messagingTimeout) }
         guard let selection = attribute("AXSelectedTextMarkerRange", in: editor),
               let start = endpoint(selection, start: true), let end = endpoint(selection, start: false),
               let bounds = parameter("AXTextMarkerRangeForUIElement", editor, in: editor),
@@ -19,8 +23,12 @@ enum DictationTextMarkerCapture {
         return (String(before.suffix(600)), String(selected.prefix(600)), String(after.prefix(600)))
     }
 
-    nonisolated static func selectionStart(in editor: AXUIElement) -> CFTypeRef? {
-        attribute("AXSelectedTextMarkerRange", in: editor).flatMap { endpoint($0, start: true) }
+    nonisolated static func selectionStart(
+        in editor: AXUIElement,
+        messagingTimeout: Float? = nil
+    ) -> CFTypeRef? {
+        if let messagingTimeout { AXUIElementSetMessagingTimeout(editor, messagingTimeout) }
+        return attribute("AXSelectedTextMarkerRange", in: editor).flatMap { endpoint($0, start: true) }
     }
 
     private nonisolated static func endpoint(_ range: CFTypeRef, start: Bool) -> CFTypeRef? {
