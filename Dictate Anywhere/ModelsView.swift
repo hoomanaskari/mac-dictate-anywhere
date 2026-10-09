@@ -50,12 +50,26 @@ struct ModelsView: View {
             }
 
             if settings.engineChoice == .parakeet {
-                DSSection(overline: "FluidAudio") {
-                    DSDetailRow(label: "Variant", caption: selectedModel.detail) {
+                DSSection(overline: "On-Device Speech") {
+                    DSDetailRow(
+                        label: "Expected language",
+                        caption: "The model menu shows choices for this language and this Mac. Multilingual models can still recognize mixed speech."
+                    ) {
                         DSDropdown(
+                            selection: $settings.selectedLanguage,
+                            options: expectedLanguageOptions(settings: settings),
+                            title: \.displayWithFlag,
+                            accessibilityName: "Expected speech language",
+                            isEnabled: canChangeSpeechModel
+                        )
+                    }
+                    DSDivider()
+                    DSDetailRow(label: "Speech model", caption: selectedModel.detail) {
+                        SpeechModelMenu(
                             selection: Binding(
                                 get: { settings.parakeetModelChoice },
                                 set: { newValue in
+                                    guard newValue != settings.parakeetModelChoice else { return }
                                     modelActionError = nil
                                     settings.parakeetModelChoice = newValue
                                     Task {
@@ -64,12 +78,17 @@ struct ModelsView: View {
                                     }
                                 }
                             ),
-                            options: ParakeetModelChoice.availableCases,
-                            title: \.displayName,
-                            accessibilityName: "FluidAudio model variant",
-                            isEnabled: appState.status == .idle && !appState.parakeetEngine.isDownloading
-                                && !appState.isPreparingEngine && !isDeletingModel
+                            language: settings.selectedLanguage,
+                            isEnabled: canChangeSpeechModel
                         )
+                    }
+                    if let notice = selectedModel.languageSupportNotice(for: settings.selectedLanguage) {
+                        DSFieldMessage(
+                            text: notice,
+                            tone: selectedModel.supportsLanguage(settings.selectedLanguage) ? .warning : .error
+                        )
+                        .padding(.horizontal, DS.Spacing.rowHorizontal)
+                        .padding(.bottom, 14)
                     }
                     DSDivider()
                     DSInfoRow(
@@ -79,9 +98,37 @@ struct ModelsView: View {
                             : "On-device speech-to-text"
                     )
                     DSDivider()
+                    DSInfoRow(label: "Underlying model", value: selectedModel.modelName)
+                    DSDivider()
+                    if selectedModel.isEnglishNemotron {
+                        DSDetailRow(
+                            label: "Streaming preset",
+                            caption: "Fast preview uses a smaller audio buffer. Larger buffers delay the preview and improve processing throughput. Each preset has its own download."
+                        ) {
+                            DSDropdown(
+                                selection: Binding(
+                                    get: { settings.parakeetModelChoice },
+                                    set: { preset in
+                                        guard preset != settings.parakeetModelChoice else { return }
+                                        modelActionError = nil
+                                        settings.parakeetModelChoice = preset
+                                        Task {
+                                            await appState.parakeetEngine.recheckModelOnDisk(for: preset)
+                                            await appState.handleParakeetModelSelectionChange(userInitiated: true)
+                                        }
+                                    }
+                                ),
+                                options: [.nemotron560, .nemotron1120, .nemotron2240],
+                                title: \.streamingPresetTitle,
+                                accessibilityName: "English Nemotron streaming preset",
+                                isEnabled: canChangeSpeechModel
+                            )
+                        }
+                        DSDivider()
+                    }
                     DSInfoRow(label: "Languages", value: selectedModel.languageSummary)
                     DSDivider()
-                    DSInfoRow(label: "Size", value: selectedModel.sizeSummary)
+                    DSInfoRow(label: "Download size", value: selectedModel.sizeSummary)
                     if let alternateModel = alternateInstalledModel(excluding: selectedModel) {
                         DSDivider()
                         DSInfoRow(label: "Also installed", value: alternateModel.displayName)
@@ -101,11 +148,13 @@ struct ModelsView: View {
                         }
                         DSDivider()
                         DSInfoRow(
-                            label: "Remove the downloaded model files from this Mac.",
+                            label: selectedModel.isEnglishNemotron
+                                ? "Remove the selected preset files from this Mac."
+                                : "Remove the downloaded model files from this Mac.",
                             labelColor: DS.Colors.textSecondary,
                             labelWeight: .regular
                         ) {
-                            Button("Delete Model…") {
+                            Button(selectedModel.isEnglishNemotron ? "Delete Preset…" : "Delete Model…") {
                                 modelPendingDeletion = selectedModel
                             }
                             .buttonStyle(.dsDestructive)
@@ -124,7 +173,9 @@ struct ModelsView: View {
                 DSHint(text: selectedModel.speechModelFooter)
             } else if settings.engineChoice == .appleSpeech {
                 DSSection(overline: "Apple Speech") {
-                    DSInfoRow(label: "Type", value: "Latest on-device speech-to-text from Apple")
+                    DSInfoRow(label: "Model", value: "Apple Speech — managed by macOS")
+                    DSDivider()
+                    DSInfoRow(label: "Type", value: "On-device speech-to-text")
                     DSDivider()
                     DSInfoRow(label: "Language", value: settings.appleSpeechLanguage.displayName)
                     DSDivider()
@@ -161,8 +212,24 @@ struct ModelsView: View {
             }
             Button("Cancel", role: .cancel) { modelPendingDeletion = nil }
         } message: { model in
-            Text("This will remove the \(model.displayName.lowercased()) speech model (\(model.sizeSummary)). You can download it again later.")
+            Text(model.isEnglishNemotron
+                 ? "This will remove the \(model.streamingPresetTitle) download for \(model.displayName) (\(model.sizeSummary)). Other preset downloads are kept. You can download it again later."
+                 : "This will remove the \(model.displayName) speech model (\(model.sizeSummary)). You can download it again later.")
         }
+    }
+
+
+    private var canChangeSpeechModel: Bool {
+        appState.status == .idle && !appState.parakeetEngine.isDownloading
+            && !appState.isPreparingEngine && !isDeletingModel
+    }
+
+    private func expectedLanguageOptions(settings: Settings) -> [SupportedLanguage] {
+        // Keep a migrated selection visible with its notice; never silently
+        // rewrite the user's preferred language to make the picker look valid.
+        ParakeetModelChoice.catalogLanguageOptions(
+            preserving: settings.selectedLanguage,
+            hasNeuralEngine: Hardware.canUseAppleNeuralEngine)
     }
 
     private func deleteModel(_ model: ParakeetModelChoice) {
@@ -204,6 +271,8 @@ struct ModelsView: View {
         @Bindable var settings = settings
 
         DSSection(overline: "AssemblyAI") {
+            DSInfoRow(label: "Model", value: "AssemblyAI Dictation — provider-managed")
+            DSDivider()
             DSDetailRow(
                 label: "API key",
                 caption:
@@ -466,7 +535,7 @@ struct ModelsView: View {
         // Files for a model this Mac can't run may survive a migration — don't
         // advertise one the picker won't offer.
         ParakeetModelChoice.availableCases.first {
-            $0 != selectedModel && appState.parakeetEngine.checkModelOnDisk(for: $0)
+            $0.catalogChoice != selectedModel.catalogChoice && appState.parakeetEngine.checkModelOnDisk(for: $0)
         }
     }
 }

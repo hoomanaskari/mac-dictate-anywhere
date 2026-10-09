@@ -152,7 +152,7 @@ struct AttentionIssue: Identifiable, Equatable {
         let message: String
         switch problem {
         case .fluidAudioVocabularyUnavailable:
-            message = "Vocabulary rescoring needs a Parakeet TDT speech model."
+            message = "Vocabulary correction needs Parakeet v2, v3, 110M, Ultra, or Nemotron 3.5. Choose a compatible model on the Speech Model page."
         case .appleIntelligenceRequiresMacOS26:
             message = "Apple Intelligence cleanup requires macOS 26 or later. Choose another method."
         case .appleIntelligenceDeviceIneligible:

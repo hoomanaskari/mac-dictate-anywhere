@@ -114,9 +114,19 @@ private struct InputSourceMappingRow: View {
                 DSInfoRow(label: "Model") {
                     DSDropdown(
                         selection: modelBinding,
-                        options: ParakeetModelChoice.availableCases,
+                        options: ParakeetModelChoice.catalogChoices.filter { $0.isAvailableOnThisMac },
                         title: { modelTitle(for: $0) },
                         accessibilityName: "Model for \(mapping.inputSourceDisplayName) mapping"
+                    )
+                }
+            }
+            if mapping.engine == .parakeet, mapping.parakeetModel?.isEnglishNemotron == true {
+                DSInfoRow(label: "Streaming preset") {
+                    DSDropdown(
+                        selection: streamingPresetBinding,
+                        options: [.nemotron560, .nemotron1120, .nemotron2240],
+                        title: \.streamingPresetTitle,
+                        accessibilityName: "Streaming preset for \(mapping.inputSourceDisplayName) mapping"
                     )
                 }
             }
@@ -192,7 +202,9 @@ private struct InputSourceMappingRow: View {
         guard model.isAvailableOnThisMac else {
             return "\(model.displayName) (not available on this Mac)"
         }
-        return appState.parakeetEngine.checkModelOnDisk(for: model)
+        let selected = mapping.parakeetModel ?? appState.settings.parakeetModelChoice
+        let download = model.selectionPreservingPreset(selected)
+        return appState.parakeetEngine.checkModelOnDisk(for: download)
             ? model.displayName
             : "\(model.displayName) (not downloaded)"
     }
@@ -226,10 +238,22 @@ private struct InputSourceMappingRow: View {
 
     private var modelBinding: Binding<ParakeetModelChoice> {
         Binding(
-            get: { mapping.parakeetModel ?? appState.settings.parakeetModelChoice },
+            get: { (mapping.parakeetModel ?? appState.settings.parakeetModelChoice).catalogChoice },
             set: { newModel in
                 var updated = mapping
-                updated.parakeetModel = newModel
+                let current = mapping.parakeetModel ?? appState.settings.parakeetModelChoice
+                updated.parakeetModel = newModel.selectionPreservingPreset(current)
+                commit(updated)
+            }
+        )
+    }
+
+    private var streamingPresetBinding: Binding<ParakeetModelChoice> {
+        Binding(
+            get: { mapping.parakeetModel ?? .nemotron560 },
+            set: { preset in
+                var updated = mapping
+                updated.parakeetModel = preset
                 commit(updated)
             }
         )

@@ -41,10 +41,10 @@ struct SettingsView: View {
                 }
                 DSDivider()
                 DSDetailRow(
-                    label: "Prewarm models at startup",
-                    caption: "Load the selected speech model and eligible S1-mini cleanup model before first use."
+                    label: "Prepare models ahead of time",
+                    caption: "Warm selected models at launch and when cleanup is enabled. Uses more memory to avoid first-use loading."
                 ) {
-                    DSSwitch(accessibilityName: "Prewarm models at startup", isOn: $settings.prewarmEnginesAtStartup)
+                    DSSwitch(accessibilityName: "Prepare models ahead of time", isOn: $settings.prewarmEnginesAtStartup)
                 }
             }
 
@@ -85,22 +85,28 @@ struct SettingsView: View {
                         }
                     } else if settings.engineChoice == .parakeet {
                         DSDetailRow(
-                            label: "Transcription language",
-                            caption: parakeetModelChoice.languageSettingsFooter
+                            label: "Expected language",
+                            caption: "Choose the expected language, then a compatible model on the Speech Model page. " + parakeetModelChoice.languageSettingsFooter
                         ) {
-                            if let fixedLabel = parakeetModelChoice.fixedLanguageLabel {
-                                Text(fixedLabel)
-                                    .font(DS.Fonts.ui(13.5))
-                                    .foregroundStyle(DS.Colors.textSecondary)
-                            } else {
-                                DSDropdown(
-                                    selection: $settings.selectedLanguage,
-                                    options: parakeetModelChoice.selectableLanguages
-                                        ?? Array(SupportedLanguage.allCases),
-                                    title: \.displayWithFlag,
-                                    accessibilityName: "Transcription language"
-                                )
-                            }
+                            DSDropdown(
+                                selection: $settings.selectedLanguage,
+                                options: ParakeetModelChoice.catalogLanguageOptions(
+                                    preserving: settings.selectedLanguage,
+                                    hasNeuralEngine: Hardware.canUseAppleNeuralEngine),
+                                title: \.displayWithFlag,
+                                accessibilityName: "Expected speech language",
+                                isEnabled: appState.status == .idle
+                                    && !appState.isPreparingEngine
+                                    && !appState.parakeetEngine.isDownloading
+                            )
+                        }
+                        if let notice = parakeetModelChoice.languageSupportNotice(for: settings.selectedLanguage) {
+                            DSFieldMessage(
+                                text: notice + " Review your selection on the Speech Model page.",
+                                tone: parakeetModelChoice.supportsLanguage(settings.selectedLanguage) ? .warning : .error
+                            )
+                            .padding(.horizontal, DS.Spacing.rowHorizontal)
+                            .padding(.bottom, 10)
                         }
                     }
                 }
@@ -169,6 +175,14 @@ struct SettingsView: View {
             }
 
             DSHint(text: "Boosting raises low mic input, and muting keeps system audio out of your dictation.")
+        }
+        .task(id: appState.cleanupPreparationKey) {
+            await appState.prepareCleanupEngineIfNeeded()
+        }
+        .onChange(of: settings.prewarmEnginesAtStartup) { _, enabled in
+            if enabled {
+                Task { await appState.prepareActiveEngine() }
+            }
         }
     }
 }

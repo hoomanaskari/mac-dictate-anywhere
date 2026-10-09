@@ -21,6 +21,16 @@ protocol AppleSpeechSessionProtocol: AnyObject, Sendable {
 }
 
 final class AppleSpeechEngine: TranscriptionEngine {
+    typealias SessionFactory = @MainActor @Sendable (
+        SupportedLanguage, [String]
+    ) async throws -> any AppleSpeechSessionProtocol
+
+    private let sessionFactory: SessionFactory?
+
+    init(sessionFactory: SessionFactory? = nil) {
+        self.sessionFactory = sessionFactory
+    }
+
     static var isOperatingSystemSupported: Bool {
         #if DEBUG
         if let simulatedOperatingSystemMajorVersion {
@@ -80,6 +90,9 @@ final class AppleSpeechEngine: TranscriptionEngine {
     private var audioCaptureController: AudioCaptureController?
     var recoveryCapture: RecoveryAudioCapture?
     private var preparedSession: (any AppleSpeechSessionProtocol)?
+    private var preparationTask: Task<Void, Error>?
+    private var preparationIdentity: (language: SupportedLanguage, vocabulary: [String])?
+    private var preparationGeneration = UUID()
     private var activeSession: (any AppleSpeechSessionProtocol)?
     private var preparedLanguage: SupportedLanguage?
     private var preparedVocabulary: [String] = []
@@ -129,25 +142,67 @@ final class AppleSpeechEngine: TranscriptionEngine {
 
         let language = Settings.shared.appleSpeechLanguage
         let vocabulary = appleContextualVocabulary()
-        do {
-            let session = try await AppleSpeechSession(
-                requestedLocale: Self.locale(for: language),
-                contextualVocabulary: vocabulary,
-                onTranscript: { [weak self] text, isPartial in
-                    self?.setTranscript(text)
-                    if isPartial { self?.markFirstPartialIfNeeded(text: text) }
-                }
-            )
-            preparedSession = session
-            preparedLanguage = language
-            preparedVocabulary = vocabulary
+        if preparedSession != nil, preparedLanguage == language, preparedVocabulary == vocabulary {
             isReady = true
-            logger.info("Prepared Apple Speech for language=\(language.rawValue, privacy: .public)")
+            return
+        }
+        if let preparationTask,
+           preparationIdentity?.language == language,
+           preparationIdentity?.vocabulary == vocabulary {
+            try await preparationTask.value
+            return
+        }
+
+        let invalidatedGeneration = await invalidatePreparedSession()
+        guard preparationGeneration == invalidatedGeneration,
+              Settings.shared.appleSpeechLanguage == language,
+              appleContextualVocabulary() == vocabulary else {
+            throw CancellationError()
+        }
+        let generation = UUID()
+        preparationGeneration = generation
+        preparationIdentity = (language, vocabulary)
+        let factory = sessionFactory
+        let task = Task { @MainActor [weak self] in
+            let session: any AppleSpeechSessionProtocol
+            if let factory {
+                session = try await factory(language, vocabulary)
+            } else {
+                session = try await AppleSpeechSession(
+                    requestedLocale: Self.locale(for: language),
+                    contextualVocabulary: vocabulary,
+                    onTranscript: { [weak self] text, isPartial in
+                        self?.setTranscript(text)
+                        if isPartial { self?.markFirstPartialIfNeeded(text: text) }
+                    }
+                )
+            }
+            guard let self, self.preparationGeneration == generation, !Task.isCancelled else {
+                await session.cancel()
+                throw CancellationError()
+            }
+            self.preparedSession = session
+            self.preparedLanguage = language
+            self.preparedVocabulary = vocabulary
+            self.isReady = true
+            self.logger.info("Prepared Apple Speech for language=\(language.rawValue, privacy: .public)")
+        }
+        preparationTask = task
+        do {
+            try await task.value
+            if preparationGeneration == generation {
+                preparationTask = nil
+                preparationIdentity = nil
+            }
         } catch {
-            preparedSession = nil
-            preparedLanguage = nil
-            preparedVocabulary = []
-            isReady = false
+            if preparationGeneration == generation {
+                preparationTask = nil
+                preparationIdentity = nil
+                preparedSession = nil
+                preparedLanguage = nil
+                preparedVocabulary = []
+                isReady = false
+            }
             logger.error("Failed to prepare Apple Speech: \(error.localizedDescription, privacy: .public)")
             throw error
         }
@@ -291,12 +346,22 @@ final class AppleSpeechEngine: TranscriptionEngine {
         return try await session.transcribeFile(at: url)
     }
 
-    func invalidatePreparedSession() async {
-        await preparedSession?.cancel()
+    @discardableResult
+    func invalidatePreparedSession() async -> UUID {
+        let generation = UUID()
+        preparationGeneration = generation
+        let preparation = preparationTask
+        preparationTask = nil
+        preparationIdentity = nil
+        let session = preparedSession
         preparedSession = nil
         preparedLanguage = nil
         preparedVocabulary = []
         isReady = false
+        preparation?.cancel()
+        _ = try? await preparation?.value
+        await session?.cancel()
+        return generation
     }
 
     static func supportedLanguages() async -> [SupportedLanguage] {
@@ -447,6 +512,8 @@ final class AppleSpeechSession: @unchecked Sendable, AppleSpeechSessionProtocol 
             throw TranscriptionError.appleSpeechLanguageUnsupported
         }
 
+        // Apple's preset supplies volatile previews plus authoritative final
+        // results. Keep its decoder/compute policy under framework control.
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
         if let installationRequest = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             guard allowsAssetInstallation else {

@@ -241,17 +241,21 @@ final class InputSourceMappingTests: XCTestCase {
         let sound = settings.soundEffectsEnabled
         let boost = settings.boostMicrophoneVolumeEnabled
         let mute = settings.muteSystemAudioDuringRecordingEnabled
+        let microphone = settings.selectedMicrophoneUID
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profile-trace-\(UUID())")
         defer {
             PerfTrace.onIntervalCompleted = nil
             settings.soundEffectsEnabled = sound
             settings.boostMicrophoneVolumeEnabled = boost
             settings.muteSystemAudioDuringRecordingEnabled = mute
+            settings.selectedMicrophoneUID = microphone
             try? FileManager.default.removeItem(at: directory)
         }
         settings.soundEffectsEnabled = false
         settings.boostMicrophoneVolumeEnabled = false
         settings.muteSystemAudioDuringRecordingEnabled = false
+        // This trace test uses a fake engine, not the user's selected hardware.
+        settings.selectedMicrophoneUID = nil
         settings.engineChoice = .parakeet
         settings.parakeetModelChoice = .multilingual
         settings.selectedLanguage = .english

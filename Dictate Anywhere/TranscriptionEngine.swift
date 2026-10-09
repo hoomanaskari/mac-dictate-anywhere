@@ -502,6 +502,8 @@ final class ParakeetEngine: TranscriptionEngine {
     private var vocabularyPreparationIdentity: (model: ParakeetModelChoice, terms: [String])?
     private var vocabularyPreparationTaskID: UUID?
     private var vocabularyPreparationStatus: ModelReadiness = .available
+    private var modelSelectionGeneration = UUID()
+    private var modelDownloadOperationID: UUID?
 
     var vocabularyReadiness: ModelReadiness {
         guard selectedModelChoice.supportsFluidAudioVocabulary else {
@@ -577,6 +579,10 @@ final class ParakeetEngine: TranscriptionEngine {
         Settings.shared.parakeetModelChoice
     }
 
+    private func ownsSelection(_ modelChoice: ParakeetModelChoice, generation: UUID) -> Bool {
+        modelSelectionGeneration == generation && selectedModelChoice == modelChoice
+    }
+
     private func updateSelectedModelDownloadedState() async {
         let isDownloaded = checkModelOnDisk()
         await MainActor.run {
@@ -632,29 +638,39 @@ final class ParakeetEngine: TranscriptionEngine {
 
     func refreshSelectedModelReadiness() async -> Bool {
         let selectedModel = selectedModelChoice
+        let generation = modelSelectionGeneration
         let coordinatorReady = await asrCoordinator.isInitialized(for: selectedModel)
+        guard ownsSelection(selectedModel, generation: generation) else { return false }
         let ready = !isDownloading && coordinatorReady
-        await MainActor.run {
+        return await MainActor.run {
+            guard self.ownsSelection(selectedModel, generation: generation) else { return false }
             self.isReady = ready
+            return ready
         }
-        return ready
     }
 
     func handleSelectedModelChange() async {
+        modelSelectionGeneration = UUID()
+        let generation = modelSelectionGeneration
         let selectedModel = selectedModelChoice
+        isReady = false
         let isSelectedModelLoaded = await asrCoordinator.isInitialized(for: selectedModel)
+        guard generation == modelSelectionGeneration else { return }
         if !isSelectedModelLoaded {
+            await asrCoordinator.cleanup()
+            guard generation == modelSelectionGeneration else { return }
+            loadedModels = nil
+            invalidateVocabularyReadiness()
             await MainActor.run {
                 self.isReady = false
             }
-            invalidateVocabularyReadiness()
-            await asrCoordinator.cleanup()
-            loadedModels = nil
         }
 
         await recheckModelOnDisk(for: selectedModel)
+        guard generation == modelSelectionGeneration else { return }
 
         let coordinatorReady = await asrCoordinator.isInitialized(for: selectedModel)
+        guard generation == modelSelectionGeneration else { return }
         await MainActor.run {
             self.isReady = coordinatorReady
         }
@@ -743,8 +759,11 @@ final class ParakeetEngine: TranscriptionEngine {
     func downloadModel() async throws {
         let trace = PerfTrace.begin("stt.modelDownload")
         defer { trace.end() }
-        guard !isDownloading else { return }
+        guard !isDownloading, modelDownloadOperationID == nil else { return }
         let modelChoice = selectedModelChoice
+        let generation = modelSelectionGeneration
+        let operationID = UUID()
+        modelDownloadOperationID = operationID
 
         await MainActor.run {
             isDownloading = true
@@ -759,7 +778,8 @@ final class ParakeetEngine: TranscriptionEngine {
         let progressTask = Task { @MainActor in
             guard !modelsExist else { return }
             for i in 1...90 {
-                guard self.isDownloading else { break }
+                guard self.isDownloading, self.modelDownloadOperationID == operationID,
+                      self.ownsSelection(modelChoice, generation: generation) else { break }
                 self.downloadProgress = min(0.9, Double(i) / 100.0)
                 try? await Task.sleep(for: .milliseconds(600))
             }
@@ -776,36 +796,57 @@ final class ParakeetEngine: TranscriptionEngine {
                 let models = modelVersion == .tdtCtc110m
                     ? try await CompactSpeechModelLoader.load(download: true)
                     : try await AsrModels.downloadAndLoad(version: modelVersion)
+                guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
                 let config = BatchTranscriptionPolicy.asrConfig
                 try await asrCoordinator.initialize(models: models, config: config, downloadSpeechDetection: true)
+                guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
                 self.loadedModels = models
             } else {
                 throw TranscriptionError.engineNotReady
             }
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
             progressTask.cancel()
 
-            await prepareVocabularyIfNeeded()
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
+            _ = await prepareVocabularyIfNeeded(for: modelChoice, generation: generation)
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
 
             self.modelOnDiskCached[modelChoice] = true
             isSpeechDetectionDownloaded = BatchSpeechDetection.isDownloaded(at: vadModelURL)
             await MainActor.run {
-                self.isModelDownloaded = true
+                guard self.modelDownloadOperationID == operationID else { return }
+                self.modelDownloadOperationID = nil
                 self.isDownloading = false
-                self.downloadProgress = 1.0
-                self.isReady = true
+                if self.selectedModelChoice == modelChoice {
+                    self.isModelDownloaded = true
+                    self.downloadProgress = 1.0
+                } else {
+                    self.downloadProgress = 0.0
+                }
+                if self.ownsSelection(modelChoice, generation: generation) {
+                    self.isReady = true
+                }
             }
         } catch {
             progressTask.cancel()
             // ASR may have completed before an optional asset failed. Keep its
             // installation visible so cache-only preparation remains available.
             await recheckModelOnDisk(for: modelChoice)
-            invalidateVocabularyReadiness()
-            await asrCoordinator.cleanup()
-            self.loadedModels = nil
+            if ownsSelection(modelChoice, generation: generation) {
+                invalidateVocabularyReadiness()
+                await asrCoordinator.cleanup()
+                if ownsSelection(modelChoice, generation: generation) {
+                    self.loadedModels = nil
+                }
+            }
             await MainActor.run {
+                guard self.modelDownloadOperationID == operationID else { return }
+                self.modelDownloadOperationID = nil
                 self.isDownloading = false
                 self.downloadProgress = 0.0
-                self.isReady = false
+                if self.ownsSelection(modelChoice, generation: generation) {
+                    self.isReady = false
+                }
             }
             throw error
         }
@@ -867,11 +908,15 @@ final class ParakeetEngine: TranscriptionEngine {
         let trace = PerfTrace.begin("stt.enginePrepare")
         defer { trace.end() }
         let modelChoice = selectedModelChoice
+        let generation = modelSelectionGeneration
         logger.info("prepare: entry for \(modelChoice.displayName, privacy: .public)")
         if await asrCoordinator.isInitialized(for: modelChoice) {
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
             logger.info("prepare: coordinator already initialized for selected model, early return")
-            await prepareVocabularyIfNeeded()
+            _ = await prepareVocabularyIfNeeded(for: modelChoice, generation: generation)
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
             await MainActor.run {
+                guard self.ownsSelection(modelChoice, generation: generation) else { return }
                 self.isReady = true
                 self.isModelDownloaded = true
             }
@@ -881,6 +926,7 @@ final class ParakeetEngine: TranscriptionEngine {
         // Only prepare if model is on disk (don't auto-download)
         guard checkModelOnDisk(for: modelChoice) else {
             await MainActor.run {
+                guard self.ownsSelection(modelChoice, generation: generation) else { return }
                 self.isReady = false
                 self.isModelDownloaded = false
             }
@@ -891,15 +937,23 @@ final class ParakeetEngine: TranscriptionEngine {
             do {
                 try await asrCoordinator.initializeSenseVoice()
             } catch {
-                invalidateVocabularyReadiness()
-                await asrCoordinator.cleanup()
-                loadedModels = nil
-                await MainActor.run { self.isReady = false }
+                if ownsSelection(modelChoice, generation: generation) {
+                    invalidateVocabularyReadiness()
+                    await asrCoordinator.cleanup()
+                    guard ownsSelection(modelChoice, generation: generation) else { throw error }
+                    loadedModels = nil
+                    await MainActor.run {
+                        guard self.ownsSelection(modelChoice, generation: generation) else { return }
+                        self.isReady = false
+                    }
+                }
                 throw error
             }
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
             loadedModels = nil
             modelOnDiskCached[modelChoice] = true
             await MainActor.run {
+                guard self.ownsSelection(modelChoice, generation: generation) else { return }
                 self.isReady = true
                 self.isModelDownloaded = true
             }
@@ -910,18 +964,27 @@ final class ParakeetEngine: TranscriptionEngine {
             do {
                 try await asrCoordinator.initializeStreaming(modelChoice: modelChoice)
             } catch {
-                invalidateVocabularyReadiness()
-                await asrCoordinator.cleanup()
-                loadedModels = nil
-                await MainActor.run { self.isReady = false }
+                if ownsSelection(modelChoice, generation: generation) {
+                    invalidateVocabularyReadiness()
+                    await asrCoordinator.cleanup()
+                    guard ownsSelection(modelChoice, generation: generation) else { throw error }
+                    loadedModels = nil
+                    await MainActor.run {
+                        guard self.ownsSelection(modelChoice, generation: generation) else { return }
+                        self.isReady = false
+                    }
+                }
                 throw error
             }
 
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
             loadedModels = nil
             modelOnDiskCached[modelChoice] = true
-            await prepareVocabularyIfNeeded()
+            _ = await prepareVocabularyIfNeeded(for: modelChoice, generation: generation)
+            guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
 
             await MainActor.run {
+                guard self.ownsSelection(modelChoice, generation: generation) else { return }
                 self.isReady = true
                 self.isModelDownloaded = true
             }
@@ -942,22 +1005,33 @@ final class ParakeetEngine: TranscriptionEngine {
                 : try await AsrModels.loadFromCache(version: modelVersion)
         }
 
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
+
         let config = BatchTranscriptionPolicy.asrConfig
         do {
             try await asrCoordinator.initialize(models: models, config: config)
         } catch {
-            invalidateVocabularyReadiness()
-            await asrCoordinator.cleanup()
-            loadedModels = nil
-            await MainActor.run { self.isReady = false }
+            if ownsSelection(modelChoice, generation: generation) {
+                invalidateVocabularyReadiness()
+                await asrCoordinator.cleanup()
+                guard ownsSelection(modelChoice, generation: generation) else { throw error }
+                loadedModels = nil
+                await MainActor.run {
+                    guard self.ownsSelection(modelChoice, generation: generation) else { return }
+                    self.isReady = false
+                }
+            }
             throw error
         }
 
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         loadedModels = models
         modelOnDiskCached[modelChoice] = true
 
-        await prepareVocabularyIfNeeded()
+        _ = await prepareVocabularyIfNeeded(for: modelChoice, generation: generation)
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         await MainActor.run {
+            guard self.ownsSelection(modelChoice, generation: generation) else { return }
             self.isReady = true
             self.isModelDownloaded = true
         }
@@ -972,30 +1046,46 @@ final class ParakeetEngine: TranscriptionEngine {
     @discardableResult
     func prepareVocabularyIfNeeded() async -> Bool {
         let model = selectedModelChoice
-        guard model.supportsFluidAudioVocabulary,
+        return await prepareVocabularyIfNeeded(for: model, generation: modelSelectionGeneration)
+    }
+
+    private func prepareVocabularyIfNeeded(for model: ParakeetModelChoice, generation: UUID) async -> Bool {
+        guard ownsSelection(model, generation: generation), model.supportsFluidAudioVocabulary,
               await asrCoordinator.isInitialized(for: model) else { return false }
+        guard ownsSelection(model, generation: generation) else { return false }
         do {
-            try await prepareVocabulary(terms: activeVocabularyTerms, model: model)
-            return true
+            try await prepareVocabulary(terms: activeVocabularyTerms, model: model, generation: generation)
+            return ownsSelection(model, generation: generation)
         } catch {
+            guard ownsSelection(model, generation: generation) else { return false }
             logger.error("Vocabulary preparation failed: \(error.localizedDescription, privacy: .private)")
             return false
         }
     }
 
-    private func prepareVocabulary(terms: [String], model: ParakeetModelChoice) async throws {
+    private func prepareVocabulary(terms: [String], model: ParakeetModelChoice, generation: UUID) async throws {
+        guard ownsSelection(model, generation: generation) else { throw CancellationError() }
         let id = UUID()
         vocabularyPreparationTaskID = id
         vocabularyPreparationIdentity = (model, Self.normalizedVocabulary(terms))
         vocabularyPreparationStatus = .preparing
-        defer { if vocabularyPreparationTaskID == id { vocabularyPreparationTaskID = nil } }
+        defer {
+            if vocabularyPreparationTaskID == id {
+                vocabularyPreparationTaskID = nil
+                if !ownsSelection(model, generation: generation) {
+                    vocabularyPreparationIdentity = nil
+                    vocabularyPreparationStatus = .available
+                }
+            }
+        }
         do {
             if model == .nemotronMultilingual {
                 try await asrCoordinator.prepareStreamingVocabulary(terms: terms)
             } else {
                 let progress: ProgressHandler = { [weak self] value in
                     Task { @MainActor [weak self] in
-                        guard let self, self.vocabularyPreparationTaskID == id else { return }
+                        guard let self, self.vocabularyPreparationTaskID == id,
+                              self.ownsSelection(model, generation: generation) else { return }
                         switch value.phase {
                         case .compiling: self.vocabularyPreparationStatus = .preparing
                         case .listing, .downloading: self.vocabularyPreparationStatus = .downloading(value.fractionCompleted)
@@ -1004,11 +1094,12 @@ final class ParakeetEngine: TranscriptionEngine {
                 }
                 try await asrCoordinator.prepareVocabulary(terms: terms, progressHandler: progress)
             }
+            guard ownsSelection(model, generation: generation) else { throw CancellationError() }
             if vocabularyPreparationTaskID == id {
                 vocabularyPreparationStatus = terms.isEmpty ? .available : .ready
             }
         } catch {
-            if vocabularyPreparationTaskID == id {
+            if ownsSelection(model, generation: generation), vocabularyPreparationTaskID == id {
                 vocabularyPreparationStatus = .failed("Vocabulary recognition could not be prepared. Check your connection and try again.")
             }
             throw error
@@ -1042,11 +1133,14 @@ final class ParakeetEngine: TranscriptionEngine {
         let recoveryCapture = self.recoveryCapture
         logger.info("startRecording: entry, thread=\(Thread.current.description, privacy: .public), deviceID=\(deviceID.map { String($0) } ?? "nil", privacy: .public)")
         let modelChoice = selectedModelChoice
+        let generation = modelSelectionGeneration
         let previewsEnabled = Settings.shared.showTextPreview
         let vocabularyTerms = activeVocabularyTerms
         let language = scriptLanguage(for: modelChoice)
         let nativeLanguageCode = Settings.shared.selectedLanguage.nemotronLanguageCode
-        if !(await asrCoordinator.isInitialized(for: modelChoice)) {
+        let modelIsInitialized = await asrCoordinator.isInitialized(for: modelChoice)
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
+        if !modelIsInitialized {
             guard !isDownloading else {
                 logger.error("startRecording: selected model is still downloading")
                 throw TranscriptionError.engineNotReady
@@ -1055,24 +1149,28 @@ final class ParakeetEngine: TranscriptionEngine {
             try await prepare()
         }
 
-        guard await asrCoordinator.isInitialized(for: modelChoice) else {
+        let preparedModelIsInitialized = await asrCoordinator.isInitialized(for: modelChoice)
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
+        guard preparedModelIsInitialized else {
             logger.error("startRecording: coordinator not initialized")
-            await MainActor.run {
-                self.isReady = false
-            }
+            isReady = false
             throw TranscriptionError.engineNotReady
         }
-        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
+        guard audioCaptureStartupCancellation === startupCancellation,
+              ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         if modelChoice == .nemotronMultilingual {
-            try await prepareVocabulary(terms: vocabularyTerms, model: modelChoice)
+            try await prepareVocabulary(terms: vocabularyTerms, model: modelChoice, generation: generation)
         } else if modelChoice.supportsFluidAudioVocabulary {
-            do { try await prepareVocabulary(terms: vocabularyTerms, model: modelChoice) }
+            do { try await prepareVocabulary(terms: vocabularyTerms, model: modelChoice, generation: generation) }
+            catch is CancellationError { throw CancellationError() }
             catch { logger.error("Vocabulary preparation failed: \(error.localizedDescription, privacy: .private)") }
         }
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         try await asrCoordinator.resetSession(for: modelChoice, language: language,
                                               requiresWholeRecordingFinal: !vocabularyTerms.isEmpty,
                                               previewsEnabled: previewsEnabled)
         let signalThreshold = try await asrCoordinator.audioProcessingSignalThreshold(for: modelChoice)
+        guard ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         recordingModelChoice = modelChoice
         recordingScriptLanguage = language
         recordingVocabularyTerms = vocabularyTerms
@@ -1084,11 +1182,13 @@ final class ParakeetEngine: TranscriptionEngine {
         }
 
         // Ensure a previous engine is fully torn down before starting a new one.
-        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
+        guard audioCaptureStartupCancellation === startupCancellation,
+              ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         await teardownAudioEngineIfNeeded()
 
         // Clear state
-        guard audioCaptureStartupCancellation === startupCancellation else { throw CancellationError() }
+        guard audioCaptureStartupCancellation === startupCancellation,
+              ownsSelection(modelChoice, generation: generation) else { throw CancellationError() }
         sampleLock.withLock {
             sampleBuffer.removeAll(keepingCapacity: true)
             levelSampleBuffer.reset(keepingCapacity: true)
@@ -1144,7 +1244,8 @@ final class ParakeetEngine: TranscriptionEngine {
             throw error
         }
 
-        guard audioCaptureStartupCancellation === startupCancellation else {
+        guard audioCaptureStartupCancellation === startupCancellation,
+              ownsSelection(modelChoice, generation: generation) else {
             captureController.stop()
             invalidateAudioProcessingSignals(sessionID: audioSessionID)
             AudioCaptureRestartGate.shared.recordStop()
@@ -1238,6 +1339,27 @@ final class ParakeetEngine: TranscriptionEngine {
             self.currentTranscript = ""
             self.audioSamples = []
         }
+    }
+
+    /// Releases speech weights only after capture and inference owners have
+    /// unwound. AppState calls this when the user selects another provider.
+    func unloadDeselectedModel() async {
+        modelSelectionGeneration = UUID()
+        let generation = modelSelectionGeneration
+        await cancel()
+        guard generation == modelSelectionGeneration, Settings.shared.engineChoice != .parakeet else { return }
+        await asrCoordinator.cleanup()
+        guard generation == modelSelectionGeneration, Settings.shared.engineChoice != .parakeet else { return }
+        loadedModels = nil
+        invalidateVocabularyReadiness()
+        await MainActor.run { self.isReady = false }
+    }
+
+    /// Keep the selected speech model warm while dropping vocabulary-only
+    /// heads and cached graphs after FluidAudio vocabulary cleanup is deselected.
+    func releaseVocabularyModels() async {
+        await asrCoordinator.releaseVocabularyModels()
+        invalidateVocabularyReadiness()
     }
 
     func transcribeRecording(at url: URL) async throws -> String {
@@ -1649,6 +1771,8 @@ private actor AsrManagerCoordinator {
     private var preparedVocabularyTerms: [String] = []
     private var vocabularyPreparation: (id: UUID, terms: [String], task: Task<PreparedTDTVocabulary, Error>)?
     private var modelGeneration = UUID()
+    private var lifecycleMutationInProgress = false
+    private var lifecycleMutationWaiters: [CheckedContinuation<Void, Never>] = []
     private var multilingualModelDirectory: URL?
     private var preparedStreamingTerms: [String] = []
     private var streamingVocabularyPreparation: (id: UUID, terms: [String], task: Task<Void, Error>)?
@@ -1662,10 +1786,16 @@ private actor AsrManagerCoordinator {
     }
 
     func isInitialized() -> Bool {
-        manager != nil || streamingManager != nil || senseVoiceManager != nil || multilingualManager != nil
+        guard !lifecycleMutationInProgress else { return false }
+        return manager != nil || streamingManager != nil || senseVoiceManager != nil || multilingualManager != nil
     }
 
     func isInitialized(for modelChoice: ParakeetModelChoice) -> Bool {
+        guard !lifecycleMutationInProgress else { return false }
+        return isInitializedUnlocked(for: modelChoice)
+    }
+
+    private func isInitializedUnlocked(for modelChoice: ParakeetModelChoice) -> Bool {
         switch modelChoice {
         case .senseVoice:
             return senseVoiceManager != nil
@@ -1708,7 +1838,11 @@ private actor AsrManagerCoordinator {
     func initializeSenseVoice(download: Bool = false) async throws {
         let trace = PerfTrace.begin("stt.modelLoad")
         defer { trace.end() }
-        await cleanup()
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        await cleanupUnlocked()
         // int8: ~225 MB, ANE-targeted, accuracy-neutral per FluidAudio docs.
         // Non-ANE Macs get the fp32 encoder instead — see senseVoiceEncoderPrecision.
         let precision = ParakeetEngine.senseVoiceEncoderPrecision
@@ -1738,7 +1872,11 @@ private actor AsrManagerCoordinator {
         let trace = PerfTrace.begin("stt.modelLoad")
         defer { trace.end() }
         logger.info("initialize: starting (existing manager=\(self.manager != nil, privacy: .public))")
-        await cleanup()
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        await cleanupUnlocked()
         let m = AsrManager(config: config)
         try await m.loadModels(models)
         let vad = try await loadSpeechDetection(download: downloadSpeechDetection)
@@ -1759,12 +1897,16 @@ private actor AsrManagerCoordinator {
         // The picker already hides ANE-only models on Intel; this stops a stale
         // persisted selection from starting a download that can never load.
         guard modelChoice.isAvailableOnThisMac else { throw TranscriptionError.engineNotReady }
-        if isInitialized(for: modelChoice) {
-            try await resetSession(for: modelChoice, language: nil)
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        if isInitializedUnlocked(for: modelChoice) {
+            try await resetSessionUnlocked(for: modelChoice, language: nil)
             return
         }
 
-        await cleanup()
+        await cleanupUnlocked()
         pendingEndOfUtterance = false
 
         switch modelChoice {
@@ -1858,6 +2000,10 @@ private actor AsrManagerCoordinator {
     }
 
     func downloadSpeechDetection() async throws {
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
         let vad = try await loadSpeechDetection(download: true)
         try Task.checkCancellation()
         batchVad = vad
@@ -1866,6 +2012,8 @@ private actor AsrManagerCoordinator {
     /// Serialize preparation against capture and other preparation requests.
     /// Reset clears the match tail, while the unchanged term index stays resident.
     func prepareStreamingVocabulary(terms: [String]) async throws {
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
         let terms = Array(Set(terms.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty })).sorted()
         let generation = modelGeneration
@@ -1931,6 +2079,8 @@ private actor AsrManagerCoordinator {
     }
 
     func prepareVocabulary(terms: [String], progressHandler: ProgressHandler? = nil) async throws {
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
         let terms = Array(Set(terms.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty })).sorted()
         let generation = modelGeneration
@@ -1994,7 +2144,24 @@ private actor AsrManagerCoordinator {
 
     func resetSession(for modelChoice: ParakeetModelChoice, language: Language?, requiresWholeRecordingFinal: Bool = false,
                       previewsEnabled: Bool = true) async throws {
-        guard isInitialized(for: modelChoice) else { throw TranscriptionError.engineNotReady }
+        await waitForLifecycleMutation()
+        try Task.checkCancellation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        try await resetSessionUnlocked(
+            for: modelChoice, language: language,
+            requiresWholeRecordingFinal: requiresWholeRecordingFinal,
+            previewsEnabled: previewsEnabled
+        )
+    }
+
+    private func resetSessionUnlocked(
+        for modelChoice: ParakeetModelChoice,
+        language: Language?,
+        requiresWholeRecordingFinal: Bool = false,
+        previewsEnabled: Bool = true
+    ) async throws {
+        guard isInitializedUnlocked(for: modelChoice) else { throw TranscriptionError.engineNotReady }
         if !modelChoice.usesTrueStreaming {
             await cancelBatch()
             if modelChoice == .senseVoice {
@@ -2152,6 +2319,15 @@ private actor AsrManagerCoordinator {
     }
 
     func cleanup() async {
+        await waitForLifecycleMutation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        await cleanupUnlocked()
+    }
+
+    private func cleanupUnlocked() async {
+        let hadInitializedManager = manager != nil || streamingManager != nil
+            || senseVoiceManager != nil || multilingualManager != nil
         modelGeneration = UUID()
         let tdtTask = vocabularyPreparation?.task
         vocabularyPreparation = nil
@@ -2167,7 +2343,7 @@ private actor AsrManagerCoordinator {
         preparedStreamingTerms = []
         multilingualModelDirectory = nil
         await cancelBatch()
-        logger.info("cleanup: releasing manager (was initialized=\(self.isInitialized(), privacy: .public))")
+        logger.info("cleanup: releasing manager (was initialized=\(hadInitializedManager, privacy: .public))")
         if let manager {
             await manager.cleanup()
         }
@@ -2186,5 +2362,44 @@ private actor AsrManagerCoordinator {
         multilingualManager = nil
         pendingEndOfUtterance = false
         ctcModels = nil
+    }
+
+    func releaseVocabularyModels() async {
+        await waitForLifecycleMutation()
+        lifecycleMutationInProgress = true
+        defer { finishLifecycleMutation() }
+        modelGeneration = UUID()
+        let tdtTask = vocabularyPreparation?.task
+        vocabularyPreparation = nil
+        tdtTask?.cancel()
+        _ = try? await tdtTask?.value
+        let streamingTask = streamingVocabularyPreparation?.task
+        streamingVocabularyPreparation = nil
+        streamingTask?.cancel()
+        _ = try? await streamingTask?.value
+        preparedVocabulary = nil
+        preparedVocabularyTerms = []
+        preparedStreamingTerms = []
+        cachedVocabularyHead = nil
+        ctcModels = nil
+        if let multilingualManager {
+            await multilingualManager.setCustomVocabulary([])
+        }
+    }
+
+    /// Actor methods can re-enter at `await`. Keep vocabulary preparation,
+    /// vocabulary release, and full cleanup from mutating shared graph state
+    /// across one another's suspension points.
+    private func waitForLifecycleMutation() async {
+        while lifecycleMutationInProgress {
+            await withCheckedContinuation { lifecycleMutationWaiters.append($0) }
+        }
+    }
+
+    private func finishLifecycleMutation() {
+        lifecycleMutationInProgress = false
+        let waiters = lifecycleMutationWaiters
+        lifecycleMutationWaiters.removeAll(keepingCapacity: true)
+        waiters.forEach { $0.resume() }
     }
 }

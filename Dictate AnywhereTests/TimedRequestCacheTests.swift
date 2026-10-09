@@ -25,22 +25,32 @@ final class TimedRequestCacheTests: XCTestCase {
 
     func testCancelledConsumerDoesNotPoisonSharedLoad() async throws {
         let started = expectation(description: "loader started")
+        let cancelled = expectation(description: "cancelled consumer stops before the shared load")
         let calls = OSAllocatedUnfairLock(initialState: 0)
+        let continuation = OSAllocatedUnfairLock<CheckedContinuation<Int, Never>?>(initialState: nil)
         let cache = TimedRequestCache<String, Int>()
         let load: @Sendable () async throws -> Int = {
             calls.withLock { $0 += 1 }
-            started.fulfill()
-            try await Task.sleep(for: .milliseconds(50))
-            return 42
+            return await withCheckedContinuation { resume in
+                continuation.withLock { $0 = resume }
+                started.fulfill()
+            }
         }
-        let first = Task { try await cache.value(for: "shared", load: load) }
+        let first = Task {
+            do { _ = try await cache.value(for: "shared", load: load); XCTFail("Cancelled consumer returned a value") }
+            catch is CancellationError { cancelled.fulfill() }
+            catch { XCTFail("Unexpected error: \(error)") }
+        }
         await fulfillment(of: [started], timeout: 1)
         let second = Task { try await cache.value(for: "shared", load: load) }
         first.cancel()
-        do { _ = try await first.value; XCTFail("Cancelled consumer returned a value") }
-        catch is CancellationError {}
+        await fulfillment(of: [cancelled], timeout: 1)
+        continuation.withLock { resume in resume?.resume(returning: 42); resume = nil }
+        await first.value
         let result = try await second.value
         XCTAssertEqual(result, 42)
+        let cached = try await cache.value(for: "shared", load: load)
+        XCTAssertEqual(cached, 42)
         XCTAssertEqual(calls.withLock { $0 }, 1)
     }
 

@@ -1,5 +1,7 @@
 import XCTest
 import CoreAudio
+import FoundationModels
+import os
 @testable import Dictate_Anywhere
 
 @MainActor
@@ -19,18 +21,24 @@ final class DictationStartupContextTests: XCTestCase {
         let localLanguage = settings.selectedLanguage
         let cloudLanguage = settings.assemblyAILanguage
         let processing = settings.transcriptPostProcessingMode
+        let vocabulary = settings.customVocabulary
+        let model = settings.parakeetModelChoice
+        let prewarm = settings.prewarmEnginesAtStartup
         let history = settings.transcriptHistory
         restoreSettings = {
             settings.engineChoice = engine
+            settings.parakeetModelChoice = model
             settings.soundEffectsEnabled = sound
             settings.boostMicrophoneVolumeEnabled = boost
             settings.muteSystemAudioDuringRecordingEnabled = mute
             settings.preserveCancelledSessions = preserve
             settings.selectedMicrophoneUID = microphone
-            settings.transcriptPostProcessingMode = processing
             settings.transcriptHistory = history
             settings.selectedLanguage = localLanguage
             settings.assemblyAILanguage = cloudLanguage
+            settings.transcriptPostProcessingMode = processing
+            settings.customVocabulary = vocabulary
+            settings.prewarmEnginesAtStartup = prewarm
         }
         settings.engineChoice = .assemblyAI
         settings.soundEffectsEnabled = false
@@ -55,6 +63,7 @@ final class DictationStartupContextTests: XCTestCase {
     private func app(
         engine: StartupContextEngine,
         capture: @escaping @Sendable (pid_t?) async -> DictationContext?,
+        cleanupPreparation: ((TranscriptPostProcessingMode) async -> Bool)? = nil,
         delivery: @escaping (String) async -> TextInsertionResult = { _ in .copiedOnly }
     ) -> AppState {
         let app = AppState(
@@ -62,7 +71,8 @@ final class DictationStartupContextTests: XCTestCase {
             recoveryStore: DictationRecoveryStore(directory: directory),
             engine: engine,
             transcriptDelivery: delivery,
-            contextCapture: capture
+            contextCapture: capture,
+            cleanupModelPreparation: cleanupPreparation
         )
         app.permissions.micGranted = true
         return app
@@ -80,6 +90,548 @@ final class DictationStartupContextTests: XCTestCase {
         await app.prepareActiveEngine()
         XCTAssertEqual(engine.prepareCount, 1)
         XCTAssertTrue(engine.isReady)
+        await app.shutdown()
+    }
+
+    func testCleanupPreparationRespondsToSelectionLanguageOptOutAndIdleState() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .english
+        settings.prewarmEnginesAtStartup = true
+        var modes: [TranscriptPostProcessingMode] = []
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: {
+            modes.append($0)
+            return true
+        })
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertTrue(modes.isEmpty)
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.prewarmEnginesAtStartup = false
+        await app.prepareCleanupEngineIfNeeded()
+        settings.prewarmEnginesAtStartup = true
+        settings.selectedLanguage = .german
+        await app.prepareCleanupEngineIfNeeded()
+        settings.selectedLanguage = .english
+        app.status = .recording
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertTrue(modes.isEmpty)
+        app.status = .idle
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(modes, [.s1Mini])
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        app.status = .recording
+        XCTAssertTrue(app.isCleanupEnginePrepared, "Recording must not make resident cleanup look cold")
+        app.status = .idle
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(modes, [.s1Mini, .fluidAudioVocabulary])
+        let oldKey = app.cleanupPreparationKey
+        settings.customVocabulary = ["Quilter"]
+        XCTAssertNotEqual(app.cleanupPreparationKey, oldKey)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(modes, [.s1Mini, .fluidAudioVocabulary, .fluidAudioVocabulary])
+        settings.engineChoice = .assemblyAI
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(modes.count, 3)
+        await app.shutdown()
+    }
+
+    func testRecordingJoinsMatchingIdleCleanupPreparation() async {
+        let settings = Settings.shared
+        let savedModel = settings.ollamaModel
+        defer { settings.ollamaModel = savedModel }
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .ollama
+        settings.ollamaModel = "test-model"
+        settings.prewarmEnginesAtStartup = true
+        let started = expectation(description: "idle cleanup started")
+        let gate = StartupModelPreparationGate(started: started)
+        var calls = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            if calls == 1 { await gate.wait() }
+            return true
+        })
+        let idle = Task { await app.prepareCleanupEngineIfNeeded() }
+        await fulfillment(of: [started], timeout: 2)
+        await app.startDictation()
+        XCTAssertEqual(app.status, .recording)
+        // Allow the recording wrapper to join before releasing the owned task.
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(calls, 1)
+        await gate.release()
+        await idle.value
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(calls, 1, "Busy eligibility must not start a duplicate backend load")
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.cancelDictation()
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testCancelReleasesDictationWhileSharedRemotePreloadContinuesForNextRecording() async {
+        let settings = Settings.shared
+        let savedModel = settings.ollamaModel
+        defer { settings.ollamaModel = savedModel }
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .ollama
+        settings.ollamaModel = "test-model"
+        settings.prewarmEnginesAtStartup = true
+        let started = expectation(description: "remote cache loader started")
+        let gate = StartupModelPreparationGate(started: started)
+        let cache = TimedRequestCache<String, Bool>()
+        let loads = OSAllocatedUnfairLock(initialState: 0)
+        var secondPreparation: XCTestExpectation?
+        var calls = 0
+        let engine = StartupContextEngine()
+        let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            if calls == 2 { secondPreparation?.fulfill() }
+            return (try? await cache.value(for: "remote") {
+                loads.withLock { $0 += 1 }
+                await gate.wait()
+                return true
+            }) ?? false
+        })
+        await app.startDictation()
+        await fulfillment(of: [started], timeout: 2)
+        let cancelled = expectation(description: "Cancel returns before the remote loader")
+        let cancellation = Task { await app.cancelDictation(); cancelled.fulfill() }
+        await fulfillment(of: [cancelled], timeout: 1)
+        guard app.status == .idle else {
+            await gate.release()
+            await cancellation.value
+            await app.shutdown()
+            return
+        }
+        XCTAssertFalse(engine.capturing)
+        XCTAssertFalse(app.isPreparingCleanupEngine)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        let nextPreparation = expectation(description: "next recording joins the remote load")
+        secondPreparation = nextPreparation
+        await app.startDictation()
+        await fulfillment(of: [nextPreparation], timeout: 2)
+        XCTAssertEqual(app.status, .recording)
+        XCTAssertTrue(engine.capturing, "Cancel must unlock the next recording without waiting for network work")
+        await gate.release()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while app.isPreparingCleanupEngine, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        XCTAssertEqual(loads.withLock { $0 }, 1, "Cancelling a consumer must preserve the shared cache load")
+        await cancellation.value
+        await app.cancelDictation()
+        await app.shutdown()
+    }
+
+    func testManualVocabularyPreparationWarmsSpeechOnceAndRejectsChangedConfiguration() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        settings.prewarmEnginesAtStartup = false
+        for changeSelection in [false, true] {
+            settings.customVocabulary = ["Quilter"]
+            let engine = StartupContextEngine()
+            engine.isReady = false
+            let started = expectation(description: "manual speech dependency preparation")
+            let gate = StartupModelPreparationGate(started: started)
+            engine.onPrepareAsync = { await gate.wait() }
+            var calls = 0
+            let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { mode in
+                XCTAssertEqual(mode, .fluidAudioVocabulary)
+                XCTAssertTrue(engine.isReady)
+                calls += 1
+                return true
+            })
+            let preparing = Task { await app.prepareCleanupEngineIfNeeded(force: true) }
+            await fulfillment(of: [started], timeout: 2)
+            if changeSelection { settings.customVocabulary = ["Metal"] }
+            await gate.release()
+            await preparing.value
+            XCTAssertEqual(engine.prepareCount, 1)
+            XCTAssertTrue(engine.isReady)
+            XCTAssertEqual(calls, changeSelection ? 0 : 1,
+                           "One manual action must complete vocabulary preparation only for the requested configuration")
+            XCTAssertEqual(app.isCleanupEnginePrepared, !changeSelection)
+            await app.shutdown()
+        }
+    }
+
+    func testCredentialRevisionInvalidatesPreparationDuringAnInFlightLoad() async {
+        let settings = Settings.shared
+        let savedModel = settings.openRouterModel
+        let savedEnvironment = settings.openRouterAPIKeyEnvironmentVariable
+        defer {
+            settings.openRouterModel = savedModel
+            settings.openRouterAPIKeyEnvironmentVariable = savedEnvironment
+        }
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .openRouter
+        settings.openRouterModel = "test/model"
+        settings.openRouterAPIKeyEnvironmentVariable = "TEST_PREPARATION_CREDENTIAL_A"
+        settings.prewarmEnginesAtStartup = true
+        let started = expectation(description: "first credential revision started")
+        let gate = StartupModelPreparationGate(started: started)
+        var calls = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            if calls == 1 { await gate.wait() }
+            return true
+        })
+        let firstKey = app.cleanupPreparationKey
+        let first = Task { await app.prepareCleanupEngineIfNeeded() }
+        await fulfillment(of: [started], timeout: 2)
+        settings.openRouterAPIKeyEnvironmentVariable = "TEST_PREPARATION_CREDENTIAL_B"
+        XCTAssertNotEqual(firstKey, app.cleanupPreparationKey)
+        await gate.release()
+        await first.value
+        XCTAssertEqual(calls, 2)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testAppleContextArrivalReplacesContextFreePreparation() async {
+        guard #available(macOS 26, *) else { return }
+        let settings = Settings.shared
+        let savedContextAwareness = settings.dictationContextAwarenessEnabled
+        defer { settings.dictationContextAwarenessEnabled = savedContextAwareness }
+        settings.dictationContextAwarenessEnabled = true
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .appleIntelligence
+        settings.prewarmEnginesAtStartup = true
+        let captured = expectation(description: "context capture started")
+        let contextGate = StartupContextGate(started: captured)
+        let preparing = expectation(description: "context-free preparation started")
+        let preparationGate = StartupModelPreparationGate(started: preparing)
+        var calls = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in await contextGate.capture() },
+                      cleanupPreparation: { _ in
+            calls += 1
+            if calls == 1 { await preparationGate.wait() }
+            return true
+        })
+        await app.startDictation()
+        await fulfillment(of: [captured, preparing], timeout: 2)
+        XCTAssertNil(app.cleanupPreparationKey.context)
+        await contextGate.resolve(Self.context(pid: 1, word: "Quilter"))
+        let deadline = ContinuousClock.now + .seconds(2)
+        while app.cleanupPreparationKey.context == nil, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertNotNil(app.cleanupPreparationKey.context)
+        await preparationGate.release()
+        while (calls < 2 || app.isPreparingCleanupEngine), ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(calls, 2)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.cancelDictation()
+        await app.shutdown()
+    }
+
+    func testConcurrentCleanupPreparationsJoinAndShutdownWaitsForTheLoad() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.prewarmEnginesAtStartup = true
+        let started = expectation(description: "cleanup preparation started")
+        let gate = StartupModelPreparationGate(started: started)
+        let engine = StartupContextEngine()
+        engine.capturing = true
+        var calls = 0
+        let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            await gate.wait()
+            return true
+        })
+        let first = Task { await app.prepareCleanupEngineIfNeeded() }
+        await fulfillment(of: [started], timeout: 5)
+        XCTAssertTrue(app.isPreparingCleanupEngine)
+        XCTAssertEqual(app.cleanupReadiness, .preparing)
+        let second = Task { await app.prepareCleanupEngineIfNeeded() }
+        let stopping = Task { await app.shutdown() }
+        await Task.yield()
+        XCTAssertTrue(engine.capturing, "Shutdown unloaded the engine while preparation was running")
+        XCTAssertEqual(calls, 1)
+        await gate.release()
+        await first.value
+        await second.value
+        await stopping.value
+        XCTAssertEqual(calls, 1)
+        XCTAssertFalse(engine.capturing)
+        XCTAssertFalse(app.isPreparingCleanupEngine)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+    }
+
+    func testManualCleanupPreparationReportsFailureAndCanRetryWithAutomaticPreparationDisabled() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.selectedLanguage = .english
+        settings.prewarmEnginesAtStartup = false
+        var succeeds = false
+        var calls = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            return succeeds
+        })
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(calls, 0)
+        await app.prepareCleanupEngineIfNeeded(force: true)
+        guard case .failed = app.cleanupReadiness else { return XCTFail("Preparation failure must be visible") }
+        succeeds = true
+        await app.prepareCleanupEngineIfNeeded(force: true)
+        XCTAssertEqual(app.cleanupReadiness, .ready)
+        XCTAssertEqual(calls, 2)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        settings.prewarmEnginesAtStartup = true
+        XCTAssertEqual(app.cleanupReadiness, .ready, "Scheduling preference does not evict a prepared model")
+        settings.prewarmEnginesAtStartup = false
+        XCTAssertEqual(app.cleanupReadiness, .ready)
+        await app.shutdown()
+    }
+
+    func testUnavailableAppleModelCannotInheritCachedPreparedReadiness() {
+        guard #available(macOS 26, *) else { return }
+        for availability in [SystemLanguageModel.Availability.unavailable(.deviceNotEligible),
+                             .unavailable(.appleIntelligenceNotEnabled), .unavailable(.modelNotReady)] {
+            XCTAssertFalse(AppState.appleCleanupReadiness(availability: availability, isPrepared: true).isReady)
+        }
+        XCTAssertEqual(AppState.appleCleanupReadiness(availability: .unavailable(.modelNotReady), isPrepared: true), .preparing)
+        XCTAssertEqual(AppState.appleCleanupReadiness(availability: .available, isPrepared: false), .available)
+        XCTAssertEqual(AppState.appleCleanupReadiness(availability: .available, isPrepared: true), .ready)
+    }
+
+    func testFirstUseRuntimeReadinessRespectsOptOutAndInvalidatesLostContext() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.selectedLanguage = .english
+        settings.prewarmEnginesAtStartup = false
+        var preparations = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in
+            preparations += 1
+            return true
+        })
+        let key = app.cleanupPreparationKey
+        let installationStatus = app.cleanupReadiness
+        XCTAssertFalse(installationStatus.isReady)
+        app.recordS1MiniRuntimeReadiness(false, for: key)
+        XCTAssertEqual(app.cleanupReadiness, installationStatus, "A transcript fallback must not claim runtime preparation")
+        app.recordS1MiniRuntimeReadiness(true, for: key)
+        XCTAssertEqual(app.cleanupReadiness, .ready)
+        app.status = .recording
+        XCTAssertEqual(app.cleanupReadiness, .ready)
+        app.status = .idle
+        await app.prepareCleanupEngineIfNeeded(force: true)
+        XCTAssertEqual(preparations, 0, "A resident model does not need synthetic preparation after first use")
+        app.recordS1MiniRuntimeReadiness(false, for: key)
+        XCTAssertEqual(app.cleanupReadiness, installationStatus, "Discarding a failed inference context clears Ready")
+        await app.shutdown()
+        app.recordS1MiniRuntimeReadiness(true, for: key)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+    }
+
+    func testFirstUseReadinessCannotAttachToAChangedCleanupSelection() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.selectedLanguage = .english
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil })
+        let oldKey = app.cleanupPreparationKey
+        settings.selectedLanguage = .german
+        app.recordS1MiniRuntimeReadiness(true, for: oldKey)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        guard case .unavailable = app.cleanupReadiness else { return XCTFail("Unsupported cleanup language must remain unavailable") }
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .none
+        app.recordS1MiniRuntimeReadiness(true, for: oldKey)
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testCancelledFirstUseCannotPublishReadyButCanClearLostContext() async {
+        Settings.shared.engineChoice = .parakeet
+        Settings.shared.transcriptPostProcessingMode = .s1Mini
+        Settings.shared.selectedLanguage = .english
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil })
+        let key = app.cleanupPreparationKey
+        await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            app.recordS1MiniRuntimeReadiness(true, for: key)
+        }.value
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        app.recordS1MiniRuntimeReadiness(true, for: key)
+        await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            app.recordS1MiniRuntimeReadiness(false, for: key)
+        }.value
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testS1ReadinessUsesTheActiveAppleSpeechLanguage() async {
+        let settings = Settings.shared
+        let previousAppleLanguage = settings.appleSpeechLanguage
+        defer { settings.appleSpeechLanguage = previousAppleLanguage }
+        settings.engineChoice = .appleSpeech
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.selectedLanguage = .german
+        settings.appleSpeechLanguage = .english
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in true })
+        await app.prepareCleanupEngineIfNeeded(force: true)
+        XCTAssertEqual(app.cleanupReadiness, .ready, "The inactive Parakeet language must not block English cleanup")
+        settings.appleSpeechLanguage = .german
+        guard case .unavailable = app.cleanupReadiness else { return XCTFail("The active unsupported language must override cached readiness") }
+        XCTAssertFalse(app.canPrepareCleanupEngine)
+        await app.shutdown()
+    }
+
+    func testRemotePreparationShowsConfiguredWithoutClaimingLocalReadiness() async {
+        let settings = Settings.shared
+        let previousModel = settings.ollamaModel
+        defer { settings.ollamaModel = previousModel }
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .ollama
+        settings.ollamaModel = "test-remote-model"
+        settings.prewarmEnginesAtStartup = false
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { _ in true })
+        XCTAssertEqual(app.cleanupReadiness, .configured)
+        XCTAssertTrue(app.canPrepareCleanupEngine)
+        await app.prepareCleanupEngineIfNeeded(force: true)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        XCTAssertEqual(app.cleanupReadiness, .configured, "Remote discovery is not proof of an inference-ready local model")
+        XCTAssertTrue(app.canPrepareCleanupEngine, "Manual preparation must remain available to refresh remote state")
+        await app.shutdown()
+    }
+
+    func testCleanupChoiceChangedDuringPreparationIsPreparedAfterTheOldLoad() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.prewarmEnginesAtStartup = true
+        let started = expectation(description: "first cleanup preparation started")
+        let gate = StartupModelPreparationGate(started: started)
+        var modes: [TranscriptPostProcessingMode] = []
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { mode in
+            modes.append(mode)
+            if mode == .s1Mini { await gate.wait() }
+            return true
+        })
+        let first = Task { await app.prepareCleanupEngineIfNeeded() }
+        await fulfillment(of: [started], timeout: 5)
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        let joining = expectation(description: "changed choice joins the active load")
+        let changed = Task {
+            joining.fulfill()
+            await app.prepareCleanupEngineIfNeeded()
+        }
+        await fulfillment(of: [joining], timeout: 2)
+        await gate.release()
+        await first.value
+        await changed.value
+        XCTAssertEqual(modes, [.s1Mini, .fluidAudioVocabulary])
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testIndependentSelectedEnginesBeginPreparationBeforeEitherCompletes() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.selectedLanguage = .english
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.prewarmEnginesAtStartup = true
+        let speechStarted = expectation(description: "speech preparation started")
+        let cleanupStarted = expectation(description: "cleanup preparation started")
+        let speechGate = StartupModelPreparationGate(started: speechStarted)
+        let cleanupGate = StartupModelPreparationGate(started: cleanupStarted)
+        let engine = StartupContextEngine()
+        engine.isReady = false
+        engine.onPrepareAsync = { await speechGate.wait() }
+        let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { _ in
+            XCTAssertFalse(engine.isReady, "Independent cleanup must start before speech completes")
+            await cleanupGate.wait()
+            return true
+        })
+        let preparation = Task { await app.prepareSelectedEngines() }
+        await fulfillment(of: [speechStarted, cleanupStarted], timeout: 2)
+        XCTAssertFalse(engine.isReady)
+        XCTAssertTrue(app.isPreparingCleanupEngine)
+        await speechGate.release()
+        await cleanupGate.release()
+        await preparation.value
+        XCTAssertTrue(engine.isReady)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testAppleLanguageFallbackResolvesBeforeIndependentCleanupEligibility() async {
+        let settings = Settings.shared
+        let savedAppleLanguage = settings.appleSpeechLanguage
+        defer { settings.appleSpeechLanguage = savedAppleLanguage }
+        settings.engineChoice = .appleSpeech
+        settings.appleSpeechLanguage = .german
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.prewarmEnginesAtStartup = true
+        let engine = StartupContextEngine()
+        engine.isReady = false
+        var cleanupCalls = 0
+        var assetSnapshots = 0
+        let app = AppState(
+            permissions: Permissions(statusProvider: { (true, false) }),
+            recoveryStore: DictationRecoveryStore(directory: directory),
+            engine: engine,
+            appleSpeechAssetSnapshot: {
+                assetSnapshots += 1
+                return ([.english], [])
+            },
+            cleanupModelPreparation: { _ in
+                cleanupCalls += 1
+                XCTAssertEqual(settings.appleSpeechLanguage, .english)
+                return true
+            }
+        )
+        await app.prepareSelectedEngines()
+        XCTAssertEqual(settings.appleSpeechLanguage, .english)
+        XCTAssertEqual(cleanupCalls, 1, "English-only cleanup must see the resolved speech language")
+        XCTAssertEqual(assetSnapshots, 1, "Resolve configuration once before loading both engines")
+        XCTAssertEqual(engine.prepareCount, 1)
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        await app.shutdown()
+    }
+
+    func testVocabularyPreparationWaitsForSpeechAndOptOutDoesNotLoadCleanup() async {
+        let settings = Settings.shared
+        settings.engineChoice = .parakeet
+        settings.parakeetModelChoice = .multilingual
+        settings.transcriptPostProcessingMode = .fluidAudioVocabulary
+        settings.prewarmEnginesAtStartup = true
+        let speechStarted = expectation(description: "vocabulary speech load started")
+        let speechGate = StartupModelPreparationGate(started: speechStarted)
+        let engine = StartupContextEngine()
+        engine.isReady = false
+        engine.onPrepareAsync = { await speechGate.wait() }
+        var calls = 0
+        let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { _ in
+            calls += 1
+            XCTAssertTrue(engine.isReady, "Vocabulary needs the selected speech weights")
+            return true
+        })
+        let preparation = Task { await app.prepareSelectedEngines() }
+        await fulfillment(of: [speechStarted], timeout: 2)
+        XCTAssertEqual(calls, 0)
+        await speechGate.release()
+        await preparation.value
+        XCTAssertEqual(calls, 1)
+        await app.prepareSelectedEngines(prewarmModel: false)
+        XCTAssertEqual(calls, 1)
+        settings.prewarmEnginesAtStartup = false
+        settings.transcriptPostProcessingMode = .s1Mini
+        await app.prepareSelectedEngines()
+        XCTAssertEqual(calls, 1)
         await app.shutdown()
     }
 
@@ -102,6 +654,64 @@ final class DictationStartupContextTests: XCTestCase {
         await firstUse.value
         XCTAssertEqual(engine.prepareCount, 1)
         XCTAssertTrue(engine.isReady)
+        await app.shutdown()
+    }
+
+    func testAppleCleanupPreparationTracksPromptVocabularyAndOptOut() async {
+        guard #available(macOS 26, *) else { return }
+        let settings = Settings.shared
+        let savedPrompt = settings.aiPostProcessingPrompt
+        let savedVocabulary = settings.customVocabulary
+        defer { settings.aiPostProcessingPrompt = savedPrompt; settings.customVocabulary = savedVocabulary }
+        settings.engineChoice = .parakeet
+        settings.transcriptPostProcessingMode = .appleIntelligence
+        settings.prewarmEnginesAtStartup = true
+        var calls = 0
+        let app = app(engine: StartupContextEngine(), capture: { _ in nil }, cleanupPreparation: { mode in
+            XCTAssertEqual(mode, .appleIntelligence)
+            calls += 1
+            return true
+        })
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertTrue(app.isCleanupEnginePrepared)
+        settings.aiPostProcessingPrompt = "Keep all numbers."
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.prepareCleanupEngineIfNeeded()
+        settings.customVocabulary = ["Metal"]
+        XCTAssertFalse(app.isCleanupEnginePrepared)
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(calls, 3)
+        settings.prewarmEnginesAtStartup = false
+        await app.prepareCleanupEngineIfNeeded()
+        XCTAssertEqual(calls, 3)
+        await app.shutdown()
+    }
+
+    func testApplePreparationOverlapsRecordingWithoutBlockingMicrophone() async {
+        guard #available(macOS 26, *) else { return }
+        Settings.shared.engineChoice = .parakeet
+        Settings.shared.transcriptPostProcessingMode = .appleIntelligence
+        Settings.shared.prewarmEnginesAtStartup = true
+        let started = expectation(description: "Apple cleanup preparation began")
+        let gate = StartupModelPreparationGate(started: started)
+        let engine = StartupContextEngine()
+        let app = app(engine: engine, capture: { _ in nil }, cleanupPreparation: { _ in
+            XCTAssertTrue(engine.capturing, "Cleanup must not postpone microphone capture")
+            await gate.wait()
+            return true
+        })
+        await app.startDictation()
+        await fulfillment(of: [started], timeout: 5)
+        XCTAssertEqual(app.status, .recording)
+        let cancellation = Task { await app.cancelDictation() }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while engine.capturing, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertFalse(engine.capturing, "Cancellation must stop capture before waiting for preparation")
+        XCTAssertEqual(app.status, .recording, "Local session preparation must finish before teardown permits reuse")
+        XCTAssertFalse(app.canStopDictation)
+        await gate.release()
+        await cancellation.value
+        XCTAssertEqual(app.status, .idle)
         await app.shutdown()
     }
 
@@ -218,10 +828,10 @@ final class DictationStartupContextTests: XCTestCase {
         let gate = StartupContextGate(started: captured)
         let engine = StartupContextEngine()
         var delivered: [String] = []
-        let app = app(engine: engine, capture: { _ in await gate.capture() }) {
+        let app = app(engine: engine, capture: { _ in await gate.capture() }, delivery: {
             delivered.append($0)
             return .copiedOnly
-        }
+        })
         let listening = expectation(description: "listening before context is ready")
         let starting = Task {
             await app.startDictation()

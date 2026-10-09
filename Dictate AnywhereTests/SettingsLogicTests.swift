@@ -70,6 +70,33 @@ final class SettingsLogicTests: XCTestCase {
         super.tearDown()
     }
 
+
+    func testChangingModelKeepsExpectedLanguageForExplicitCorrection() {
+        let settings = Settings.shared
+        settings.selectedLanguage = .norwegian
+        settings.parakeetModelChoice = .multilingual
+        XCTAssertEqual(settings.selectedLanguage, .norwegian)
+        settings.parakeetModelChoice = .englishOnly
+        XCTAssertEqual(settings.selectedLanguage, .norwegian)
+    }
+
+    func testUnsupportedStoredLanguageFailsBeforeModelOrMicrophoneStartup() async throws {
+        let settings = Settings.shared
+        settings.parakeetModelChoice = .multilingual
+        settings.selectedLanguage = .norwegian
+        let engine = ParakeetEngine()
+        do {
+            try await engine.startRecording(deviceID: nil)
+            XCTFail("An unsupported model/language pair must not start capture.")
+        } catch TranscriptionError.speechModelLanguageUnsupported(let model, let language) {
+            XCTAssertEqual(model, "Parakeet v3")
+            XCTAssertEqual(language, "Norwegian")
+        }
+        XCTAssertFalse(engine.isDownloading)
+        XCTAssertFalse(engine.isReady)
+        XCTAssertEqual(settings.selectedLanguage, .norwegian, "Keep the preference visible for the user to resolve.")
+    }
+
     func testPrewarmEnginesAtStartupPersistsRoundTrip() {
         let settings = Settings.shared
         settings.prewarmEnginesAtStartup = false

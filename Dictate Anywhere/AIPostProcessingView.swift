@@ -61,25 +61,37 @@ struct AIPostProcessingView: View {
 
             DSSection(overline: "Cleanup Method") {
                 DSDetailRow(
-                    label: "Transcript processing",
-                    caption: "The sections that follow set up the method you choose. Local filler-word removal at the bottom of the page runs before all of them."
+                    label: "Method",
+                    caption: "Choose a built-in model, vocabulary correction only, or a custom model provider. Local filler-word removal below runs before the selected method."
                 ) {
-                    DSDropdown(
+                    CleanupMethodMenu(
                         selection: $settings.transcriptPostProcessingMode,
-                        options: TranscriptPostProcessingMode.allCases.filter { mode in
-                            mode != .fluidAudioVocabulary
-                                || settings.engineChoice != .parakeet
-                                || settings.parakeetModelChoice.supportsFluidAudioVocabulary
-                        },
-                        title: \.displayName,
-                        accessibilityName: "Transcript processing method"
+                        offersVocabulary: settings.engineChoice != .parakeet
+                            || settings.parakeetModelChoice.supportsFluidAudioVocabulary
                     )
+                }
+                if let model = cleanupModelIdentity(settings: settings) {
+                    DSDivider()
+                    DSInfoRow(label: "Model", value: model)
                 }
             }
 
             // Setup for the selected method sits directly under the picker, so
             // its status and any blocking action stay in the same viewport.
             selectedMethodContent(settings: settings)
+            if settings.transcriptPostProcessingMode != .none,
+               settings.transcriptPostProcessingMode != .s1Mini,
+               settings.engineChoice != .assemblyAI {
+                DSSection(overline: "Preparation") {
+                    DSModelReadinessRow(readiness: appState.cleanupReadiness,
+                        label: settings.transcriptPostProcessingMode == .fluidAudioVocabulary ? "Vocabulary recognition" : "Cleanup model",
+                        actionTitle: appState.canPrepareCleanupEngine ? (appState.cleanupReadiness.detail == nil ? "Prepare" : "Retry") : nil,
+                        action: { Task { await appState.prepareCleanupEngineIfNeeded(force: true) } })
+                        .disabled(appState.status != .idle)
+                    DSDivider()
+                    DSCardCaption(text: "Ready means the local model has been prepared. Preparing downloads missing local support files before first use. Remote services show Configured; preparation checks their connection and model information.")
+                }
+            }
 
             let supportedFeatures = settings.transcriptPostProcessingMode.supportedFeatures
 
@@ -98,6 +110,9 @@ struct AIPostProcessingView: View {
             guard shouldAutoRefreshProviderAvailability else { return }
             ollamaCLIAvailability = OllamaPostProcessingService.cliAvailability()
             await refreshProviderAvailabilityIfNeeded(settings: settings)
+        }
+        .task(id: appState.cleanupPreparationKey) {
+            await appState.prepareCleanupEngineIfNeeded()
         }
         .alert(
             "Delete Ollama Model?",
@@ -138,6 +153,21 @@ struct AIPostProcessingView: View {
         } message: {
             Text("This removes the local model and its downloaded license file. You can download them again later.")
         }
+    }
+
+
+    private func cleanupModelIdentity(settings: Settings) -> String? {
+        let customID: String
+        switch settings.transcriptPostProcessingMode {
+        case .none, .fluidAudioVocabulary: return nil
+        case .appleIntelligence: return "Apple Foundation Models — managed by macOS"
+        case .s1Mini: return "Superwhisper S1-mini — Qwen3 0.6B fine-tune"
+        case .ollama: customID = settings.ollamaModel
+        case .openRouter: customID = settings.openRouterModel
+        case .openAICompatible: customID = settings.openAICompatibleModel
+        }
+        let model = customID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return model.isEmpty ? "Choose a model ID below" : model
     }
 
     // MARK: - Selected method
@@ -685,13 +715,15 @@ struct AIPostProcessingView: View {
     @ViewBuilder
     private func fluidAudioVocabularyContent(settings: Settings) -> some View {
         if settings.engineChoice != .parakeet || !settings.parakeetModelChoice.supportsFluidAudioVocabulary {
-            DSSection(overline: "FluidAudio Vocabulary") {
-                DSInfoRow(label: "Status", value: "Requires a Parakeet TDT model")
+            DSSection(overline: "Vocabulary Correction") {
+                DSInfoRow(label: "Status", value: "Requires Parakeet TDT or multilingual Nemotron")
             }
         } else if settings.transcriptPostProcessingMode.supportedFeatures.contains(.customVocabulary) {
             vocabularySection(
                 settings: settings,
-                footer: "These terms are applied by FluidAudio's vocabulary rescoring on Parakeet TDT final transcripts only. Keep the list short and domain-specific for best precision."
+                footer: settings.parakeetModelChoice == .nemotronMultilingual
+                    ? "These terms guide multilingual Nemotron while it recognizes speech, including live previews. Keep the list short and domain-specific for best precision."
+                    : "These terms are applied by FluidAudio's vocabulary rescoring on Parakeet TDT final transcripts only. Keep the list short and domain-specific for best precision."
             )
         }
     }
@@ -769,14 +801,24 @@ struct AIPostProcessingView: View {
         let manager = appState.s1MiniModelManager
 
         DSSection(overline: "S1-mini by Superwhisper") {
+            DSInfoRow(label: "Language", value: "English cleanup")
+            DSDivider()
             DSInfoRow(label: "Model", value: "462 MB · English · Local transcript normalizer")
             DSDivider()
             DSModelReadinessRow(
                 readiness: s1MiniReadiness(manager: manager),
-                actionTitle: !manager.isModelDownloaded && !manager.isBusy ? "Download Model" : nil,
-                action: downloadS1MiniModel
+                actionTitle: !manager.isModelDownloaded && !manager.isBusy ? "Download Model"
+                    : (appState.canPrepareCleanupEngine ? (appState.cleanupReadiness.detail == nil ? "Prepare Model" : "Retry") : nil),
+                action: {
+                    if manager.isModelDownloaded {
+                        Task { await appState.prepareCleanupEngineIfNeeded(force: true) }
+                    } else {
+                        downloadS1MiniModel()
+                    }
+                }
             )
-            .disabled(manager.isBusy)
+            .disabled(manager.isBusy || appState.status != .idle)
+            DSCardCaption(text: "Downloaded means the files are installed. Ready means the model has been loaded and prepared for cleanup.")
 
             if manager.isDownloading {
                 DSCardCaption(text: s1MiniDownloadProgressText(manager: manager))
@@ -793,7 +835,7 @@ struct AIPostProcessingView: View {
                         isConfirmingS1MiniDeletion = true
                     }
                     .buttonStyle(.dsDestructive)
-                    .disabled(manager.isBusy)
+                    .disabled(manager.isBusy || appState.isPreparingCleanupEngine)
                 }
             }
             DSDivider()
@@ -866,7 +908,7 @@ struct AIPostProcessingView: View {
         if manager.isDownloading { return .downloading(s1MiniVisibleDownloadProgress(manager: manager)) }
         if manager.isDeleting { return .deleting }
         if manager.isVerifying { return .verifying }
-        return manager.isModelDownloaded ? .downloaded : .notDownloaded
+        return appState.cleanupReadiness
     }
 
     private func s1MiniVisibleDownloadProgress(manager: S1MiniModelManager) -> Double {
@@ -889,6 +931,7 @@ struct AIPostProcessingView: View {
         Task {
             do {
                 try await appState.s1MiniModelManager.downloadModel()
+                await appState.prepareCleanupEngineIfNeeded()
             } catch {
                 s1MiniActionError = error.localizedDescription
             }
@@ -916,7 +959,7 @@ struct AIPostProcessingView: View {
                 )
             }
             DSDivider()
-            fieldRow(label: "Model") {
+            fieldRow(label: "Model ID") {
                 DSTextField(
                     placeholder: "Enter an installed model name",
                     text: Binding(
@@ -972,7 +1015,7 @@ struct AIPostProcessingView: View {
                     .padding(.horizontal, DS.Spacing.rowHorizontal)
             }
             DSDivider()
-            DSCardCaption(text: "Runs transcript cleanup through your local Ollama server. Use the server base URL and an installed model name. Larger models are noticeably better at following cleanup instructions and vocabulary normalization.")
+            DSCardCaption(text: "Ollama is the provider; the Model ID above selects the cleanup model. Use an installed model trained to preserve names, numbers and meaning. The server URL determines where processing runs.")
         }
 
         if let capability = ollamaAvailability?.selectedModelReasoningCapability,
@@ -1046,7 +1089,7 @@ struct AIPostProcessingView: View {
                 )
             }
             DSDivider()
-            fieldRow(label: "Model") {
+            fieldRow(label: "Model ID") {
                 DSTextField(
                     placeholder: "openai/gpt-5-mini",
                     text: Binding(
@@ -1167,7 +1210,7 @@ struct AIPostProcessingView: View {
                     .padding(.bottom, 10)
             }
             DSDivider()
-            fieldRow(label: "Model") {
+            fieldRow(label: "Model ID") {
                 DSTextField(
                     placeholder: "local-model",
                     text: Binding(
@@ -1270,7 +1313,7 @@ struct AIPostProcessingView: View {
                 .buttonStyle(.dsPrimary)
             }
 
-            Text("Install Ollama to clean up transcripts with a local language model and pull recommended models from this app. You can also leave it uninstalled and point the server URL below at a remote Ollama server.")
+            Text("Install Ollama to run your own cleanup model. Choose an installed model by its exact ID. You can also leave it uninstalled and point the server URL below at a remote Ollama server.")
                 .font(DS.Fonts.ui(12.5))
                 .lineSpacing(12.5 * 0.5 - 3)
                 .foregroundStyle(DS.Colors.textSecondary)
