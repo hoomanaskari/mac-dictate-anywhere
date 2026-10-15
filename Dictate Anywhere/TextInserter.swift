@@ -788,11 +788,12 @@ final class TextInserter {
                 case .preDispatchFailed:
                     nativePasteTrace.end(outcome: "preDispatchFailed")
                 }
-                guard accessibilityOutcome == .preDispatchFailed else {
-                    guard listEdit == nil else { return .targetUnavailable }
-                    return await self.simulatePasteWithAppleScript(targetProcessIdentifier: pid)
+                return await Self.pasteWithScriptFallback(
+                    accessibilityOutcome: accessibilityOutcome,
+                    hasPendingListEdit: listEdit != nil
+                ) {
+                    await self.simulatePasteWithAppleScript(targetProcessIdentifier: pid)
                 }
-                return accessibilityOutcome
             },
             pasteEvent: {
                 guard let pid = resolvedTargetProcessIdentifier else { return false }
@@ -1322,6 +1323,17 @@ final class TextInserter {
             break
         }
         return outcome
+    }
+
+    static func pasteWithScriptFallback(
+        accessibilityOutcome: PasteScriptOutcome,
+        hasPendingListEdit: Bool,
+        pasteScript: () async -> PasteScriptOutcome
+    ) async -> PasteScriptOutcome {
+        // Success and uncertain dispatch are final: retrying can insert twice.
+        guard accessibilityOutcome == .preDispatchFailed else { return accessibilityOutcome }
+        guard !hasPendingListEdit else { return .targetUnavailable }
+        return await pasteScript()
     }
 
     /// The production dispatch sequence, injectable without sending real keystrokes.

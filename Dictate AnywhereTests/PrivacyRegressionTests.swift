@@ -38,15 +38,30 @@ final class PrivacyRegressionTests: XCTestCase {
         XCTAssertFalse(fallback)
     }
 
-    func testAmbiguousAccessibilityActionNeverDispatchesAnotherPaste() async {
-        var fallbackCount = 0
-        let result = await TextInserter.deliverToTarget(
-            isTargetReady: { true },
-            pasteScript: { .possiblyDispatched },
-            pasteEvent: { fallbackCount += 1; return true }
-        )
-        XCTAssertEqual(result, .copiedOnly)
-        XCTAssertEqual(fallbackCount, 0)
+    func testNativePasteUsesScriptOnlyAfterConfirmedPreDispatchFailure() async {
+        for outcome in [PasteScriptOutcome.success, .possiblyDispatched, .targetUnavailable, .preDispatchFailed] {
+            for hasPendingListEdit in [false, true] {
+                var scriptCount = 0
+                var keyboardCount = 0
+                let result = await TextInserter.deliverToTarget(
+                    isTargetReady: { true },
+                    pasteScript: {
+                        await TextInserter.pasteWithScriptFallback(
+                            accessibilityOutcome: outcome,
+                            hasPendingListEdit: hasPendingListEdit
+                        ) {
+                            scriptCount += 1
+                            return .success
+                        }
+                    },
+                    pasteEvent: { keyboardCount += 1; return true }
+                )
+                let shouldUseScript = outcome == .preDispatchFailed && !hasPendingListEdit
+                XCTAssertEqual(scriptCount, shouldUseScript ? 1 : 0, "Native outcome: \(outcome)")
+                XCTAssertEqual(keyboardCount, 0, "Native outcome: \(outcome)")
+                XCTAssertEqual(result, outcome == .success || shouldUseScript ? .success : .copiedOnly)
+            }
+        }
     }
 
     func testListPasteProofRequiresSameFocusedElementAndExactRange() {
