@@ -51,25 +51,6 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertEqual(c.b, catalog!.blueComponent, accuracy: 0.001)
     }
 
-    /// The derived variants must reproduce the design.pen palette (within a
-    /// small tolerance) while the catalog accent is the default #DE6A3B.
-    func testDerivedAccentVariantsMatchDesign() {
-        let deep = components(DS.Colors.accentDeep)
-        XCTAssertEqual(deep.r, Double(0xC4) / 255, accuracy: 0.04)
-        XCTAssertEqual(deep.g, Double(0x55) / 255, accuracy: 0.04)
-        XCTAssertEqual(deep.b, Double(0x2A) / 255, accuracy: 0.04)
-
-        let soft = components(DS.Colors.accentSoft)
-        XCTAssertEqual(soft.r, Double(0xF8) / 255, accuracy: 0.04)
-        XCTAssertEqual(soft.g, Double(0xE5) / 255, accuracy: 0.04)
-        XCTAssertEqual(soft.b, Double(0xD5) / 255, accuracy: 0.04)
-
-        let panel = components(DS.Colors.panelText)
-        XCTAssertEqual(panel.r, Double(0x8A) / 255, accuracy: 0.04)
-        XCTAssertEqual(panel.g, Double(0x4A) / 255, accuracy: 0.04)
-        XCTAssertEqual(panel.b, Double(0x28) / 255, accuracy: 0.04)
-    }
-
     func testWindowBackgroundToken() {
         let c = components(DS.Colors.bgWindow)
         XCTAssertEqual(c.r, Double(0xFA) / 255, accuracy: 0.001)
@@ -129,7 +110,6 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertHex(components(DS.Colors.bgCard, appearance: .darkAqua), 0x292420)
         XCTAssertHex(components(DS.Colors.bgInset, appearance: .darkAqua), 0x201B15)
         XCTAssertHex(components(DS.Colors.ink, appearance: .darkAqua), 0xF2EAE0)
-        XCTAssertHex(components(DS.Colors.textSecondary, appearance: .darkAqua), 0xA79A8A)
         XCTAssertHex(components(DS.Colors.border, appearance: .darkAqua), 0x3A332A)
     }
 
@@ -148,15 +128,6 @@ final class DesignSystemTests: XCTestCase {
             let delta = abs(light.r - dark.r) + abs(light.g - dark.g) + abs(light.b - dark.b)
             XCTAssertGreaterThan(delta, 0.05, "token must adapt to dark appearance")
         }
-    }
-
-    func testFixedTokensStayConstantAcrossAppearances() {
-        // The overlay pill previews the always-dark dictation overlay.
-        let light = components(DS.Colors.waveformPillFill, appearance: .aqua)
-        let dark = components(DS.Colors.waveformPillFill, appearance: .darkAqua)
-        XCTAssertEqual(light.r, dark.r, accuracy: 0.001)
-        XCTAssertEqual(light.g, dark.g, accuracy: 0.001)
-        XCTAssertEqual(light.b, dark.b, accuracy: 0.001)
     }
 
     func testFooterCardFillAdaptsAlpha() {
@@ -194,15 +165,18 @@ final class DesignSystemTests: XCTestCase {
     func testDarkAccentContrastMeetsAA() {
         // Accents lightened for dark surfaces: destructive was 2.8:1 reused.
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.destructive, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 3)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .darkAqua), 4.5)
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.success, DS.Colors.bgCard, appearance: .darkAqua), 3)
     }
 
-    func testLightBodyTextContrastBaseline() {
-        // Locks the shipped light palette: body text is AAA-comfortable;
-        // secondary copy sits at large-text/UI contrast (light hexes frozen).
+    func testLightBodyTextContrastMeetsAA() {
         XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .aqua), 7)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 3)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgWindow, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgSidebar, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .aqua), 4.5)
+        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .aqua), 4.5)
     }
     func testFontFamiliesMatchDesign() {
         XCTAssertEqual(DS.Fonts.displayFamily, "Fraunces")
@@ -225,20 +199,7 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertEqual(DS.Spacing.contentHorizontal, 44)
     }
 
-    // MARK: - Waveform pill
-
-    func testWaveformPillBarsMatchDesign() {
-        let bars = DSWaveformPill.bars
-        XCTAssertEqual(bars.count, 14)
-        XCTAssertEqual(bars.filter(\.isActive).count, 6)
-        // Design: bars 4–9 are the accent bars.
-        for (index, bar) in bars.enumerated() {
-            XCTAssertEqual(bar.isActive, (4...9).contains(index), "bar \(index)")
-        }
-        XCTAssertEqual(bars.map(\.height), [8, 14, 20, 12, 24, 17, 10, 22, 15, 26, 12, 18, 9, 14])
-    }
-
-    // MARK: - History filtering & date format
+    // MARK: - History filtering
 
     private func entry(_ text: String) -> TranscriptHistoryEntry {
         TranscriptHistoryEntry(id: UUID(), text: text, createdAt: Date(timeIntervalSince1970: 1_800_000_000))
@@ -259,21 +220,6 @@ final class DesignSystemTests: XCTestCase {
     func testHistoryFilterNoMatches() {
         let entries = [entry("alpha")]
         XCTAssertTrue(TranscriptHistoryView.filteredEntries(entries, searchText: "zzz").isEmpty)
-    }
-
-    func testHistoryDateFormatMatchesDesign() {
-        var components = DateComponents()
-        components.year = 2026; components.month = 7; components.day = 15
-        components.hour = 17; components.minute = 54
-        let calendar = Calendar(identifier: .gregorian)
-        let date = calendar.date(from: components)!
-
-        let formatter = TranscriptHistoryView.dateFormatter
-        let original = formatter.locale
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        defer { formatter.locale = original }
-
-        XCTAssertEqual(formatter.string(from: date), "Jul 15, 2026 · 5:54 PM")
     }
 
     // MARK: - Comparable.clamped

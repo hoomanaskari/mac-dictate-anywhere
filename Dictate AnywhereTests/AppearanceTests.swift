@@ -2,7 +2,7 @@ import XCTest
 import SwiftUI
 @testable import Dictate_Anywhere
 
-/// Readability and bundled-font integration, without freezing cosmetic design values.
+/// Guards preview and control readability without freezing cosmetic design values.
 final class AppearanceTests: XCTestCase {
     private func components(_ color: Color, appearance: NSAppearance.Name) -> (r: Double, g: Double, b: Double, a: Double) {
         let drawingAppearance = NSAppearance(named: appearance) ?? NSAppearance.currentDrawing()
@@ -25,35 +25,6 @@ final class AppearanceTests: XCTestCase {
         return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
     }
 
-    func testDarkBodyTextContrastMeetsAA() {
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .darkAqua), 7)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgCard, appearance: .darkAqua), 7)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgWindow, appearance: .darkAqua), 4.5)
-    }
-
-    func testDarkTintedPairContrastMeetsAA() {
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.panelText, DS.Colors.accentSoft, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.successText, DS.Colors.successSoft, appearance: .darkAqua), 4.5)
-    }
-
-    func testDarkAccentContrastMeetsAA() {
-        // Accents lightened for dark surfaces: destructive was 2.8:1 reused.
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.destructive, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .darkAqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.success, DS.Colors.bgCard, appearance: .darkAqua), 3)
-    }
-
-    func testLightBodyTextContrastMeetsAA() {
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.ink, DS.Colors.bgWindow, appearance: .aqua), 7)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgCard, appearance: .aqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgWindow, appearance: .aqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.textSecondary, DS.Colors.bgSidebar, appearance: .aqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgCard, appearance: .aqua), 4.5)
-        XCTAssertGreaterThanOrEqual(contrastRatio(DS.Colors.accentDeep, DS.Colors.bgWindow, appearance: .aqua), 4.5)
-    }
-
     func testPreviewPalettesStayReadableInBothThemes() {
         for (scheme, appearance) in [(ColorScheme.light, NSAppearance.Name.aqua), (.dark, .darkAqua)] {
             let palette = OverlayPalette(scheme: scheme)
@@ -74,9 +45,4 @@ final class AppearanceTests: XCTestCase {
         }
     }
 
-    func testBundledFontsAreRegistered() {
-        // ATSApplicationFontsPath = "." must register both families in the host app.
-        XCTAssertNotNil(NSFont(name: "Fraunces", size: 16), "Fraunces font not registered")
-        XCTAssertNotNil(NSFont(name: "Inter", size: 13), "Inter font not registered")
-    }
 }

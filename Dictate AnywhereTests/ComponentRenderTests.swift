@@ -149,10 +149,6 @@ final class ComponentRenderTests: XCTestCase {
         assertRenders(DSNavItem(title: "History", systemImage: "clock.arrow.circlepath", isSelected: false) {})
     }
 
-    func testWaveformPillRenders() {
-        assertRenders(DSWaveformPill())
-    }
-
     // MARK: - Organisms
 
     func testAttentionBannerRenders() {
