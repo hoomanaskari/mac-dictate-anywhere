@@ -6,7 +6,7 @@ struct OverlaySettingsPreview: View {
     @State private var model = Self.makeSample()
     @State private var replay = 0
     @State private var isPlaying = false
-    private static let sampleText = "A little more room for your train of thought."
+    private static let sampleText = "A little more room for your train of thought, so a quick glance shows exactly what was heard."
 
     var body: some View {
         VStack(spacing: 14) {
@@ -60,7 +60,7 @@ struct OverlaySettingsPreview: View {
                 let count = min(words.count, tick / 4 + 1)
                 let level = Float(0.12 + 0.55 * abs(sin(Double(tick) * 0.7)))
                 model.updateListening(level: level, transcript: words.prefix(count).joined(separator: " "))
-                try await Task.sleep(for: .milliseconds(80))
+                try await Task.sleep(for: .milliseconds(70))
             }
             model.updateState(.processing)
             try await Task.sleep(for: .milliseconds(450))

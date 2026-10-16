@@ -22,6 +22,15 @@ struct WaveformView: View {
             .animation(reduceMotion || !isActive ? nil : .easeOut(duration: 0.12), value: level)
         }
         .frame(height: height)
+        // Taper the ends so the resting line reads as a voice ribbon, not a divider.
+        .mask {
+            LinearGradient(
+                stops: [.init(color: .clear, location: 0), .init(color: .white, location: 0.2),
+                        .init(color: .white, location: 0.8), .init(color: .clear, location: 1)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
         .accessibilityHidden(true)
     }
 }

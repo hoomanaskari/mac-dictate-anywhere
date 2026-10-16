@@ -16,7 +16,8 @@ final class OverlayWindow {
     private var hostingView: NSHostingView<OverlayContent>?
     private var hideTask: Task<Void, Never>?
     private let model = OverlayModel()
-    private let bottomMargin: CGFloat = OverlayMetrics.size(24)
+    // The canvas already reserves `shadowInset` below the pill.
+    private let bottomMargin: CGFloat = OverlayMetrics.size(24) - OverlaySize.shadowInset
     private var canvasWidth: CGFloat { Settings.shared.overlaySize.canvasSize.width }
     private var canvasHeight: CGFloat { Settings.shared.overlaySize.canvasSize.height }
     @ObservationIgnored private var preferenceObserver: NSObjectProtocol?

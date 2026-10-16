@@ -6,6 +6,8 @@ struct OverlayPill: View {
     var settings: Settings = .shared
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Measured height of the live text block; animated so the pill grows a line at a time.
+    @State private var listeningHeight: CGFloat?
 
     private var state: OverlayState { model.overlayState }
 
@@ -15,7 +17,6 @@ struct OverlayPill: View {
 
     private var palette: OverlayPalette { OverlayPalette(scheme: colorScheme) }
     private var overlayTextColor: Color { palette.text }
-    private var overlaySecondaryTextColor: Color { palette.text }
 
     private var stateCategory: String {
         switch state {
@@ -41,6 +42,10 @@ struct OverlayPill: View {
         }
     }
 
+    private var isTextPreview: Bool {
+        model.cancellationProgress == nil && state == .listening && showTextPreview
+    }
+
     private var statusBottomInset: CGFloat {
         isCircularStatusState ? 1 : 0
     }
@@ -63,7 +68,9 @@ struct OverlayPill: View {
         if model.cancellationProgress != nil { return OverlayMetrics.size(64) }
         switch state {
         case .listening:
-            return showTextPreview ? settings.overlaySize.height : settings.overlaySize.waveformHeight + 20
+            return showTextPreview
+                ? listeningHeight ?? settings.overlaySize.minHeight
+                : settings.overlaySize.waveformOnlyHeight
         case .processing, .success:
             return statusCircleDiameter
         case .copiedOnly:
@@ -80,11 +87,26 @@ struct OverlayPill: View {
                 .transition(reduceMotion ? .identity : .opacity)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stateCategory)
         }
-        .frame(width: pillWidth, height: pillHeight)
+        .frame(width: pillWidth, height: pillHeight, alignment: isTextPreview ? .bottom : .center)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: settings.overlaySize)
-        .modifier(OverlaySurfaceModifier(isCircular: isCircularStatusState))
+        .modifier(OverlaySurfaceModifier(
+            isCircular: isCircularStatusState,
+            cornerRadius: isTextPreview ? settings.overlaySize.cornerRadius : OverlayMetrics.size(22)
+        ))
         .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82), value: isCircularStatusState)
         .padding(.bottom, statusBottomInset)
+        .onChange(of: isTextPreview) { _, isTextPreview in
+            if !isTextPreview { listeningHeight = nil }
+        }
+    }
+
+    private func updateListeningHeight(_ height: CGFloat) {
+        guard abs((listeningHeight ?? 0) - height) > 0.5 else { return }
+        if listeningHeight == nil || reduceMotion {
+            listeningHeight = height
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { listeningHeight = height }
+        }
     }
 
     @ViewBuilder
@@ -97,9 +119,13 @@ struct OverlayPill: View {
                 ListeningOverlayContent(
                     model: model,
                     showTextPreview: showTextPreview,
-                    textColor: overlaySecondaryTextColor,
+                    textColor: overlayTextColor,
                     size: settings.overlaySize
                 )
+                .fixedSize(horizontal: false, vertical: showTextPreview)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if showTextPreview { updateListeningHeight(height) }
+                }
 
             case .processing:
                 ProcessingStatusView(tint: overlayTextColor)

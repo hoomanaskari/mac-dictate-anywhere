@@ -61,10 +61,11 @@ struct OverlayContent: View {
         VStack {
             Spacer()
             OverlayPill(model: model, settings: settings)
-                .scaleEffect(model.isVisible ? 1 : 0.95)
+                .scaleEffect(model.isVisible ? 1 : 0.95, anchor: .bottom)
                 .opacity(model.isVisible ? 1 : 0)
                 .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: model.isVisible)
         }
+        .padding(.bottom, OverlaySize.shadowInset)
         .frame(width: settings.overlaySize.canvasSize.width, height: settings.overlaySize.canvasSize.height)
     }
 }
@@ -77,14 +78,17 @@ struct ListeningOverlayContent: View {
     var size: OverlaySize = .comfortable
 
     var body: some View {
-        VStack(spacing: 8) {
-            if showTextPreview {
+        if showTextPreview {
+            VStack(alignment: .leading, spacing: size.textWaveformSpacing) {
                 OverlayTranscriptContent(model: model, size: size, textColor: textColor)
+                OverlayWaveformContent(model: model, height: size.waveformHeight)
             }
+            .padding(.horizontal, size.horizontalPadding)
+            .padding(.vertical, size.verticalPadding)
+        } else {
             OverlayWaveformContent(model: model, height: size.waveformHeight)
+                .padding(.horizontal, size.horizontalPadding)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 }
 
@@ -131,6 +135,7 @@ struct CancellationProgressView: View {
 
 struct OverlaySurfaceModifier: ViewModifier {
     let isCircular: Bool
+    var cornerRadius: CGFloat = OverlayMetrics.size(22)
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -140,7 +145,7 @@ struct OverlaySurfaceModifier: ViewModifier {
         } else {
             decorated(
                 content: content,
-                shape: RoundedRectangle(cornerRadius: OverlayMetrics.size(22), style: .continuous)
+                shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
         }
     }
@@ -148,11 +153,23 @@ struct OverlaySurfaceModifier: ViewModifier {
     @ViewBuilder
     private func decorated<S: Shape>(content: Content, shape: S) -> some View {
         let palette = OverlayPalette(scheme: colorScheme)
+        let isDark = colorScheme == .dark
         content
             .background(palette.surface, in: shape)
             .clipShape(shape)
-            .overlay(shape.stroke(palette.border, lineWidth: contrast == .increased ? 2 : 1))
-            .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.14), radius: 10, x: 0, y: 4)
+            // A faint top highlight gives the opaque surface some lift without glass.
+            .overlay(
+                shape.stroke(
+                    LinearGradient(
+                        colors: [palette.highlight, palette.border],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: contrast == .increased ? 2 : 1
+                )
+            )
+            .shadow(color: .black.opacity(isDark ? 0.32 : 0.10), radius: 1, x: 0, y: 1)
+            .shadow(color: .black.opacity(isDark ? 0.34 : 0.14), radius: 8, x: 0, y: 4)
     }
 }
 
