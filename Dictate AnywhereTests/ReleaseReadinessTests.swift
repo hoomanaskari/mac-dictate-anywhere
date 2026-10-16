@@ -36,7 +36,7 @@ final class ReleaseReadinessTests: XCTestCase {
             targetBundleIdentifier: nil, targetProcessIdentifier: 123, context: context,
             style: .original, knownTerms: [], modelInsertionPlan: plan, preserveModelFormatting: true)
         let edit = try XCTUnwrap(PlainTextListEdit.prepare(value: before + after,
-            selection: NSRange(location: before.utf16.count, length: 0), insertion: insertion, context: context))
+            selection: NSRange(location: before.utf16.count, length: 0), insertion: insertion, context: context)?.edit)
         XCTAssertEqual(edit.expectedValue, "1. Apples\n2. Tangerines\n3. Blueberries\n4. Oranges")
         XCTAssertEqual(edit.caretLocation, (before + insertion).utf16.count)
     }
@@ -80,7 +80,7 @@ final class ReleaseReadinessTests: XCTestCase {
         let insertion = "Tangerines\n10) Blueberries"
         let edit = try XCTUnwrap(PlainTextListEdit.prepare(value: before + after,
             selection: NSRange(location: before.utf16.count, length: 0), insertion: insertion,
-            context: makeContext(before: before, after: after)))
+            context: makeContext(before: before, after: after))?.edit)
         XCTAssertEqual(edit.expectedValue, before + insertion + "\n11) Oranges\n    1. Nested\n    continuation\n\n12) Flowers\nParagraph\n12) Unrelated")
     }
 
@@ -89,7 +89,7 @@ final class ReleaseReadinessTests: XCTestCase {
         let after = "\r\n  3. Oranges\r\n1. Outer list"
         let edit = try XCTUnwrap(PlainTextListEdit.prepare(value: before + after,
             selection: NSRange(location: before.utf16.count, length: 0), insertion: "Pears\n  3. Grapes",
-            context: makeContext(before: before, after: after)))
+            context: makeContext(before: before, after: after))?.edit)
         XCTAssertEqual(edit.expectedValue, before + "Pears\n  3. Grapes\r\n  4. Oranges\r\n1. Outer list")
     }
 

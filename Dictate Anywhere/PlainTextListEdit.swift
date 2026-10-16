@@ -3,6 +3,11 @@ import Foundation
 /// A local, bounded replacement extending through affected literal ordinals.
 /// Rich editors own their numbering and never use this path.
 struct PlainTextListEdit {
+    /// A verified snapshot can require an ordinary paste without a replacement.
+    struct Preparation {
+        let edit: PlainTextListEdit?
+    }
+
     let range: NSRange
     let replacement: String
     let expectedValue: String
@@ -16,7 +21,7 @@ struct PlainTextListEdit {
     }
 
     static func prepare(value: String, selection: NSRange, insertion: String,
-                        context: DictationContext) -> Self? {
+                        context: DictationContext) -> Preparation? {
         let original = value as NSString
         guard needsRenumbering(insertion: insertion, context: context),
               original.length <= 100_000, selection.length == 0,
@@ -52,14 +57,14 @@ struct PlainTextListEdit {
             replacements.append((NSRange(location: offset + digits.location, length: digits.length), String(expectedOrdinal + added)))
             expectedOrdinal += 1
         }
-        guard let last = replacements.last else { return nil }
+        guard let last = replacements.last else { return Preparation(edit: nil) }
         let tailLength = NSMaxRange(last.0)
         let updatedTail = NSMutableString(string: tail.substring(to: tailLength))
         for (range, replacement) in replacements.reversed() { updatedTail.replaceCharacters(in: range, with: replacement) }
         let range = NSRange(location: selection.location, length: tailLength)
         let replacement = insertion + (updatedTail as String)
-        return Self(range: range, replacement: replacement,
+        return Preparation(edit: Self(range: range, replacement: replacement,
                     expectedValue: original.replacingCharacters(in: range, with: replacement),
-                    caretLocation: selection.location + (insertion as NSString).length)
+                    caretLocation: selection.location + (insertion as NSString).length))
     }
 }

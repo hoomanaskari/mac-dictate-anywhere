@@ -59,7 +59,9 @@ final class PrivacyRegressionTests: XCTestCase {
                 let shouldUseScript = outcome == .preDispatchFailed && !hasPendingListEdit
                 XCTAssertEqual(scriptCount, shouldUseScript ? 1 : 0, "Native outcome: \(outcome)")
                 XCTAssertEqual(keyboardCount, 0, "Native outcome: \(outcome)")
-                XCTAssertEqual(result, outcome == .success || shouldUseScript ? .success : .copiedOnly)
+                let expected: PasteDeliveryOutcome = outcome == .possiblyDispatched ? .possiblyDispatched
+                    : (outcome == .success || shouldUseScript ? .success : .copiedOnly)
+                XCTAssertEqual(result, expected)
             }
         }
     }

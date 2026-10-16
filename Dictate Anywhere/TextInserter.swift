@@ -17,6 +17,12 @@ enum TextInsertionResult {
     case failed
 }
 
+enum PasteDeliveryOutcome {
+    case success
+    case possiblyDispatched
+    case copiedOnly
+}
+
 enum PasteScriptOutcome: Equatable, Sendable {
     case success
     case automationDenied
@@ -180,6 +186,10 @@ private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendabl
         let edit: PlainTextListEdit
     }
 
+    struct ListEditPreparation: Sendable {
+        let edit: PreparedListEdit?
+    }
+
     private let queue = DispatchQueue(label: "com.dictate-anywhere.insertion-accessibility", qos: .userInitiated)
     private let messageTimeout: Float = 0.025
     private var cachedPasteItem: CachedPasteItem?
@@ -203,7 +213,7 @@ private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendabl
         context: DictationContext,
         processIdentifier: pid_t,
         isTargetReady: @escaping @MainActor @Sendable () -> Bool
-    ) async -> PreparedListEdit? {
+    ) async -> ListEditPreparation? {
         guard await MainActor.run(body: isTargetReady) else { return nil }
         return await withCheckedContinuation { continuation in
             queue.async { [self] in
@@ -215,7 +225,7 @@ private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendabl
                       let range = selectedTextRange(in: element), range.location >= 0,
                       let value = textValue(of: element), (value as NSString).length <= 100_000,
                       snapshotMatches(value: value, range: range, context: context),
-                      let edit = PlainTextListEdit.prepare(
+                      let preparation = PlainTextListEdit.prepare(
                         value: value,
                         selection: NSRange(location: range.location, length: range.length),
                         insertion: insertion,
@@ -225,9 +235,9 @@ private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendabl
                     continuation.resume(returning: nil)
                     return
                 }
-                continuation.resume(returning: PreparedListEdit(
-                    element: element, originalRange: range, originalValue: value, edit: edit
-                ))
+                continuation.resume(returning: ListEditPreparation(edit: preparation.edit.map {
+                    PreparedListEdit(element: element, originalRange: range, originalValue: value, edit: $0)
+                }))
             }
         }
     }
@@ -739,6 +749,7 @@ final class TextInserter {
         // blind edit after pasting. If the snapshot is stale, leave the text on
         // the clipboard rather than replacing someone else's changes.
         var listEdit: InsertionAccessibilityWorker.PreparedListEdit?
+        var listClipboardChangeCount: Int?
         if let context, context.processIdentifier == resolvedTargetProcessIdentifier,
            PlainTextListEdit.needsRenumbering(insertion: insertionText, context: context) {
             let listEditTrace = PerfTrace.begin("insertion.listEdit")
@@ -755,14 +766,21 @@ final class TextInserter {
                 deliverOutcome = "copiedOnly"
                 return .copiedOnly
             }
-            guard await copyToClipboard(prepared.edit.replacement) else { return .failed }
-            guard targetIsReady(), await accessibilityWorker.selectListEdit(prepared, targetApplication: targetApplication), targetIsReady() else {
-                await accessibilityWorker.restoreListEditSelection(prepared, targetApplication: targetApplication)
-                _ = await copyToClipboard(insertionText)
-                deliverOutcome = "copiedOnly"
-                return .copiedOnly
+            if let prepared = prepared.edit {
+                guard await copyToClipboard(prepared.edit.replacement) else { return .failed }
+                let changeCount = NSPasteboard.general.changeCount
+                guard targetIsReady(), await accessibilityWorker.selectListEdit(prepared, targetApplication: targetApplication), targetIsReady() else {
+                    await Self.finalizeListPaste(delivery: .copiedOnly, insertionText: insertionText,
+                        replacementText: prepared.edit.replacement, clipboardChangeCount: changeCount,
+                        finishEdit: { false }, restoreSelection: {
+                            await self.accessibilityWorker.restoreListEditSelection(prepared, targetApplication: targetApplication)
+                        })
+                    deliverOutcome = "copiedOnly"
+                    return .copiedOnly
+                }
+                listEdit = prepared
+                listClipboardChangeCount = changeCount
             }
-            listEdit = prepared
         }
 
         // Revalidate after every suspension, including before the keyboard fallback.
@@ -801,23 +819,27 @@ final class TextInserter {
                 return self.simulatePasteWithCGEvent(targetProcessIdentifier: pid)
             }
         )
-        if pasteResult == .success {
-            if usedKeyboardEvent { try? await Task.sleep(for: .milliseconds(100)) }
-            if let listEdit, let targetApplication,
-               await accessibilityWorker.finishListEdit(listEdit, targetApplication: targetApplication) {
-                _ = await copyToClipboard(insertionText)
-            }
+        if pasteResult == .success, usedKeyboardEvent { try? await Task.sleep(for: .milliseconds(100)) }
+        var deliveryConfirmed = pasteResult == .success
+        if let listEdit, let clipboardChangeCount = listClipboardChangeCount {
+            let observedDelivery = await Self.finalizeListPaste(delivery: pasteResult, insertionText: insertionText,
+                replacementText: listEdit.edit.replacement, clipboardChangeCount: clipboardChangeCount,
+                finishEdit: {
+                    guard let targetApplication else { return false }
+                    return await self.accessibilityWorker.finishListEdit(listEdit, targetApplication: targetApplication)
+                }, restoreSelection: {
+                    if let targetApplication {
+                        await self.accessibilityWorker.restoreListEditSelection(listEdit, targetApplication: targetApplication)
+                    }
+                })
+            deliveryConfirmed = deliveryConfirmed || observedDelivery
+        }
+        if deliveryConfirmed {
             prepareForNextInsertion(targetBundleIdentifier: targetBundleIdentifier)
             deliverOutcome = "success"
             return .success
         }
 
-        if let listEdit {
-            if let targetApplication {
-                await accessibilityWorker.restoreListEditSelection(listEdit, targetApplication: targetApplication)
-            }
-            _ = await copyToClipboard(insertionText)
-        }
         resetPendingSeparator()
         deliverOutcome = "copiedOnly"
         return .copiedOnly
@@ -1341,13 +1363,42 @@ final class TextInserter {
         isTargetReady: @MainActor () -> Bool,
         pasteScript: () async -> PasteScriptOutcome,
         pasteEvent: () -> Bool
-    ) async -> TextInsertionResult {
+    ) async -> PasteDeliveryOutcome {
         guard isTargetReady() else { return .copiedOnly }
         let result = await pasteScript()
         if result == .success { return .success }
-        if result == .possiblyDispatched { return .copiedOnly }
+        if result == .possiblyDispatched { return .possiblyDispatched }
         guard result != .targetUnavailable, isTargetReady() else { return .copiedOnly }
         return pasteEvent() ? .success : .copiedOnly
+    }
+
+    /// Finalizes the same transaction dispatched above, without real AX in tests.
+    @discardableResult
+    static func finalizeListPaste(
+        delivery: PasteDeliveryOutcome,
+        insertionText: String,
+        replacementText: String,
+        clipboardChangeCount: Int,
+        pasteboard: NSPasteboard = .general,
+        finishEdit: () async -> Bool,
+        restoreSelection: () async -> Void
+    ) async -> Bool {
+        switch delivery {
+        case .success, .possiblyDispatched:
+            // AX errors can arrive before the editor consumes Paste. Only an
+            // observed complete replacement can release those pending inputs.
+            guard await finishEdit() else { return false }
+        case .copiedOnly:
+            await restoreSelection()
+        }
+        // The editor check and rollback can both suspend. Even an identical
+        // subsequent copy belongs to the user, not this transaction.
+        let delivered = delivery != .copiedOnly
+        guard pasteboard.changeCount == clipboardChangeCount,
+              pasteboard.string(forType: .string) == replacementText else { return delivered }
+        pasteboard.clearContents()
+        pasteboard.setString(insertionText, forType: .string)
+        return delivered
     }
 
     /// Compiles the paste script ahead of first use so no dictation pays
