@@ -203,6 +203,7 @@ actor S1MiniInferenceEngine {
     private var loadedModelPath: String?
     private var warmedModelPath: String?
     private var backendInitialized = false
+    private var useInputDrafting = true
 
     deinit {
         if let inferenceContext {
@@ -243,7 +244,7 @@ actor S1MiniInferenceEngine {
         _ = try generate(
             prompt: S1MiniPromptBuilder.prompt(transcript: text, styling: .semiFormal,
                                                structure: .prose, context: "general"),
-            transcript: text, modelURL: url
+            transcript: text, styling: .semiFormal, modelURL: url
         )
     }
 
@@ -260,6 +261,7 @@ actor S1MiniInferenceEngine {
     func generate(
         prompt: String,
         transcript: String,
+        styling: S1MiniStyling,
         modelURL: URL,
         knownTranscriptTokenCount: Int? = nil
     ) throws -> String {
@@ -271,9 +273,10 @@ actor S1MiniInferenceEngine {
             throw S1MiniServiceError.modelLoadFailed
         }
 
-        let (transcriptTokenCount, initialPromptTokens) = try tokenizeInputs(
+        let (transcriptTokenCount, initialPromptTokens, transcriptTokens) = try tokenizeInputs(
             transcript: transcript,
             prompt: prompt,
+            styling: styling,
             vocabulary: vocabulary,
             knownTranscriptTokenCount: knownTranscriptTokenCount
         )
@@ -323,7 +326,8 @@ actor S1MiniInferenceEngine {
             context: context,
             vocabulary: vocabulary,
             sampler: sampler,
-            maximumOutputTokens: maximumOutputTokens, firstTokenTrace: firstTokenTrace
+            maximumOutputTokens: maximumOutputTokens, firstTokenTrace: firstTokenTrace,
+            transcriptTokens: transcriptTokens.map(Int.init)
         )
         trace.recordCounts(["output_tokens": outputTokenCount, "output_bytes": output.count])
 
@@ -347,8 +351,8 @@ actor S1MiniInferenceEngine {
         parameters.n_ctx = 4_096
         parameters.n_batch = 2_048
         parameters.n_ubatch = 512
-        parameters.n_outputs_max = 1
-        parameters.n_outputs_max_per_seq = 1
+        parameters.n_outputs_max = 17
+        parameters.n_outputs_max_per_seq = 17
         #if arch(arm64)
         // Metal measurements favor FP16 KV; keep the CPU Q8 path on Intel.
         parameters.type_k = GGML_TYPE_F16
@@ -377,6 +381,8 @@ actor S1MiniInferenceEngine {
     // Lifecycle tests compare independent requests and inspect cache clearing.
     func discardInferenceContextForTesting() { discardInferenceContext() }
 
+    func configureInputDraftingForTesting(_ enabled: Bool) { useInputDrafting = enabled }
+
     func inferenceContextStateForTesting() -> (allocated: Bool, maximumPosition: Int32) {
         guard let inferenceContext else { return (false, -1) }
         return (true, llama_memory_seq_pos_max(llama_get_memory(inferenceContext), 0))
@@ -389,19 +395,21 @@ actor S1MiniInferenceEngine {
     private func tokenizeInputs(
         transcript: String,
         prompt: String,
+        styling: S1MiniStyling,
         vocabulary: OpaquePointer,
         knownTranscriptTokenCount: Int?
-    ) throws -> (transcriptTokenCount: Int, promptTokens: [llama_token]) {
+    ) throws -> (transcriptTokenCount: Int, promptTokens: [llama_token], transcriptTokens: [llama_token]) {
         let trace = PerfTrace.begin("cleanup.tokenize")
         defer { trace.end() }
         // A planned chunk carries its exact count from this GGUF tokenizer.
         // The complete prompt below is always tokenized across all boundaries.
-        let transcriptTokenCount = try knownTranscriptTokenCount ?? tokenize(
+        let transcriptTokens = try tokenize(
             transcript,
             vocabulary: vocabulary,
             addSpecial: false,
             parseSpecial: false
-        ).count
+        )
+        let transcriptTokenCount = knownTranscriptTokenCount ?? transcriptTokens.count
         guard transcriptTokenCount <= S1MiniModelSpec.maximumTranscriptTokens else {
             throw S1MiniServiceError.transcriptTooLong(
                 actual: transcriptTokenCount,
@@ -414,7 +422,15 @@ actor S1MiniInferenceEngine {
             addSpecial: false,
             parseSpecial: true
         )
-        return (transcriptTokenCount, promptTokens)
+        var draftTokens = transcriptTokens
+        if useInputDrafting {
+            let proposalText = S1MiniInputDraft.proposalSource(transcript, styling: styling)
+            if proposalText != transcript {
+                draftTokens = try tokenize(proposalText, vocabulary: vocabulary,
+                    addSpecial: false, parseSpecial: false)
+            }
+        }
+        return (transcriptTokenCount, promptTokens, draftTokens)
     }
 
     /// Runs the autoregressive sampling loop. Traced separately so future
@@ -423,15 +439,20 @@ actor S1MiniInferenceEngine {
         context: OpaquePointer,
         vocabulary: OpaquePointer,
         sampler: UnsafeMutablePointer<llama_sampler>,
-        maximumOutputTokens: Int, firstTokenTrace: PerfInterval
+        maximumOutputTokens: Int, firstTokenTrace: PerfInterval, transcriptTokens: [Int]
     ) throws -> (Data, Int) {
         let trace = PerfTrace.begin("cleanup.decode")
         defer { trace.end() }
         var output = Data()
         var outputTokenCount = 0
-        for _ in 0...maximumOutputTokens {
+        var draft = S1MiniInputDraft(tokens: transcriptTokens)
+        var nextToken = llama_sampler_sample(sampler, context, -1)
+        var position = llama_memory_seq_pos_max(llama_get_memory(context), 0) + 1
+        var batch = llama_batch_init(17, 0, 1)
+        defer { llama_batch_free(batch) }
+        while true {
             try Task.checkCancellation()
-            let token = llama_sampler_sample(sampler, context, -1)
+            let token = nextToken
             firstTokenTrace.end()
             if llama_vocab_is_eog(vocabulary, token) {
                 trace.recordCounts(["output_tokens": outputTokenCount])
@@ -443,17 +464,49 @@ actor S1MiniInferenceEngine {
             }
             outputTokenCount += 1
             output.append(try piece(for: token, vocabulary: vocabulary))
-
-            var nextToken = token
-            let tokenStatus = llama_decode(
-                context,
-                llama_batch_get_one(&nextToken, 1)
-            )
-            guard tokenStatus == 0 else {
-                throw S1MiniServiceError.tokenEvaluationFailed(tokenStatus)
+            draft.didEmit(Int(token))
+            let proposals = useInputDrafting
+                ? draft.propose(maximumTokens: min(16, maximumOutputTokens - outputTokenCount)) : []
+            if proposals.isEmpty {
+                var input = token
+                let status = llama_decode(context, llama_batch_get_one(&input, 1))
+                guard status == 0 else { throw S1MiniServiceError.tokenEvaluationFailed(status) }
+                position += 1
+                nextToken = llama_sampler_sample(sampler, context, -1)
+                continue
+            }
+            batch.n_tokens = Int32(proposals.count + 1)
+            for (index, value) in ([Int(token)] + proposals).enumerated() {
+                batch.token[index] = llama_token(value)
+                batch.pos[index] = position + Int32(index)
+                batch.n_seq_id[index] = 1
+                batch.seq_id[index]![0] = 0
+                batch.logits[index] = 1
+            }
+            let status = llama_decode(context, batch)
+            guard status == 0 else { throw S1MiniServiceError.tokenEvaluationFailed(status) }
+            var accepted = 0
+            nextToken = llama_sampler_sample(sampler, context, 0)
+            while accepted < proposals.count && Int(nextToken) == proposals[accepted] {
+                try Task.checkCancellation()
+                if llama_vocab_is_eog(vocabulary, nextToken) {
+                    trace.recordCounts(["output_tokens": outputTokenCount])
+                    return (output, outputTokenCount)
+                }
+                guard outputTokenCount < maximumOutputTokens else { throw S1MiniServiceError.outputLimitReached }
+                output.append(try piece(for: nextToken, vocabulary: vocabulary))
+                outputTokenCount += 1
+                draft.didEmit(Int(nextToken))
+                accepted += 1
+                nextToken = llama_sampler_sample(sampler, context, Int32(accepted))
+            }
+            position += Int32(accepted + 1)
+            if accepted < proposals.count {
+                guard llama_memory_seq_rm(llama_get_memory(context), 0, position, -1) else {
+                    throw S1MiniServiceError.invalidOutput
+                }
             }
         }
-        throw S1MiniServiceError.outputLimitReached
     }
 
     /// Loads the cached model or the model at `url`.
@@ -634,6 +687,7 @@ enum S1MiniPostProcessingService {
         let output = try await S1MiniInferenceEngine.shared.generate(
             prompt: prompt,
             transcript: text,
+            styling: styling,
             modelURL: modelURL,
             knownTranscriptTokenCount: knownTranscriptTokenCount
         )

@@ -83,6 +83,7 @@ FluidAudio and Apple Speech transcribe locally. Their raw audio stays on your Ma
 
 - Downloads a pinned Q4_K_M model directly from Hugging Face and verifies its exact size and SHA-256 before installation
 - Runs through the embedded llama.cpp runtime, with Metal acceleration on Apple Silicon and CPU inference on Intel
+- Uses request-local transcript drafts verified by greedy inference to reduce repeated generation. Drafts follow the selected writing style; the model still receives the complete original transcript
 - Provides the model's trained styling, structure, and context controls instead of an arbitrary prompt
 - Splits longer English transcripts into lossless chunks of approximately 1,000 model tokens; unsupported languages or a failed chunk preserve the entire original transcript
 - Can be removed from the Transcript Cleanup page, including its locally stored license file

@@ -27,27 +27,40 @@ final class S1MiniPostProcessingTests: XCTestCase {
         guard let path = realModelPath() else { throw XCTSkip("Install S1-mini to check context reuse") }
         let url = URL(fileURLWithPath: path)
         let engine = S1MiniInferenceEngine.shared
+        addTeardownBlock {
+            await engine.configureInputDraftingForTesting(true)
+            await engine.unload()
+        }
         await engine.unload()
         let fixtures = [
             (id: "invoice", input: "Send invoice 43 on Thursday."),
             (id: "question", input: "When does the office open?"),
-            (id: "name", input: "Please send the report to Nadia tomorrow.")
+            (id: "name", input: "Please send the report to Nadia tomorrow."),
+            (id: "repeated", input: "send invoice 43 to Nadia. send invoice 430 to Mara. do not cancel invoice 43.")
         ]
-        var baseline: [String: String] = [:]
-        for fixture in fixtures {
-            await engine.discardInferenceContextForTesting()
-            baseline[fixture.id] = try await process(fixture.input, modelURL: url)
-        }
-        // Reverse order so previous requests have different names, numbers,
-        // intent and prompt lengths than the fresh-context baseline.
-        for fixture in fixtures.reversed() {
-            let output = try await process(fixture.input, modelURL: url)
-            XCTAssertEqual(output, baseline[fixture.id], fixture.id)
-            let state = await engine.inferenceContextStateForTesting()
-            XCTAssertTrue(state.allocated)
-            XCTAssertEqual(state.maximumPosition, -1, "A completed request retained KV token positions")
-            let ready = await S1MiniPostProcessingService.isPrepared(modelURL: url)
-            XCTAssertTrue(ready, "Successful first use prepares the retained runtime")
+        for styling in S1MiniStyling.allCases {
+            var baseline: [String: String] = [:]
+            await engine.configureInputDraftingForTesting(false)
+            for fixture in fixtures {
+                await engine.discardInferenceContextForTesting()
+                baseline[fixture.id] = try await S1MiniPostProcessingService.process(
+                    text: fixture.input, modelURL: url, styling: styling,
+                    structure: .prose, contextSetting: .general, context: nil)
+            }
+            await engine.configureInputDraftingForTesting(true)
+            // Reverse order to catch both incorrect proposal acceptance and
+            // names/numbers leaking from an earlier request's retained context.
+            for fixture in fixtures.reversed() {
+                let output = try await S1MiniPostProcessingService.process(
+                    text: fixture.input, modelURL: url, styling: styling,
+                    structure: .prose, contextSetting: .general, context: nil)
+                XCTAssertEqual(output, baseline[fixture.id], "\(styling)/\(fixture.id)")
+                let state = await engine.inferenceContextStateForTesting()
+                XCTAssertTrue(state.allocated)
+                XCTAssertEqual(state.maximumPosition, -1, "A completed request retained KV token positions")
+                let ready = await S1MiniPostProcessingService.isPrepared(modelURL: url)
+                XCTAssertTrue(ready, "Successful first use prepares the retained runtime")
+            }
         }
         await engine.unload()
         let state = await engine.inferenceContextStateForTesting()
