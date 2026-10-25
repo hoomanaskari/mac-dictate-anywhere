@@ -12,6 +12,7 @@ enum DictationRichListCapture {
         guard selectedRange.location >= 0, selectedRange.length == 0,
               let marker = DictationTextMarkerCapture.selectionStart(in: editor)
                 ?? parameter("AXTextMarkerForIndex", NSNumber(value: selectedRange.location), in: editor),
+              DictationTextMarkerCapture.markerIsInsideEditor(marker, in: editor),
               let rawNode = parameter("AXUIElementForTextMarker", marker, in: editor),
               CFGetTypeID(rawNode) == AXUIElementGetTypeID() else { return nil }
 

@@ -541,6 +541,12 @@ private nonisolated final class InsertionAccessibilityWorker: @unchecked Sendabl
               self.processIdentifier(of: focused) == processIdentifier,
               let selectedRange = selectedTextRange(in: focused),
               selectedRange.location != kCFNotFound else { return nil }
+        var rawCount: CFTypeRef?
+        let countStatus = AXUIElementCopyAttributeValue(focused, kAXNumberOfCharactersAttribute as CFString, &rawCount)
+        let characterCount = countStatus == .success ? (rawCount as? NSNumber)?.intValue : nil
+        // This fallback must reject the same stale document offsets as context
+        // capture, or it can reintroduce a leading space after capture declines.
+        guard DictationCursorText.isValidRange(selectedRange, characterCount: characterCount) else { return nil }
         guard selectedRange.location > 0 else { return "" }
 
         var range = CFRange(location: selectedRange.location - 1, length: 1)

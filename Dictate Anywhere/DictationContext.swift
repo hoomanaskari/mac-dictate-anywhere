@@ -505,6 +505,21 @@ enum DictationContextClassifier {
     }
 }
 
+nonisolated struct DictationCursorText {
+    enum Source: String { case emptyField, textMarkers, textRange }
+    let before: String
+    let selected: String
+    let after: String
+    let source: Source
+
+    static func isValidRange(_ range: CFRange, characterCount: Int?) -> Bool {
+        guard range.location >= 0, range.length >= 0,
+              range.location <= Int.max - range.length else { return false }
+        guard let characterCount else { return true }
+        return characterCount >= 0 && range.location + range.length <= characterCount
+    }
+}
+
 enum DictationContextCapture {
     private nonisolated static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
@@ -629,15 +644,18 @@ enum DictationContextCapture {
 
         let selectedRange = DictationFocusResolver.isTextInput(role: role)
             ? selectedTextRange(in: focusedElement) : nil
-        let markerSnapshot = DictationFocusResolver.isTextInput(role: role)
-            ? DictationTextMarkerCapture.capture(in: focusedElement) : nil
-        let textSnapshot = markerSnapshot ?? selectedRange.flatMap { surroundingText(in: focusedElement, selectedRange: $0) }
-        let listInsertion = selectedRange.flatMap {
+        let textSnapshot = DictationFocusResolver.isTextInput(role: role)
+            ? cursorText(in: focusedElement, selectedRange: selectedRange) : nil
+        let listInsertion = textSnapshot?.source == .emptyField ? nil : selectedRange.flatMap {
             DictationRichListCapture.capture(in: focusedElement, selectedRange: $0)
         }
-        let richText = markerSnapshot.map { $0.before + $0.selected + $0.after }
-            ?? selectedRange.flatMap { richTextContext(in: focusedElement, selectedRange: $0) }
-        logger.info("contextCapture: target pid=\(processIdentifier) role=\(role ?? "unknown", privacy: .public) range=\(selectedRange != nil) snapshot=\(textSnapshot != nil) structuralList=\(listInsertion != nil) richLayout=\(richText != nil) markers=\(markerSnapshot != nil)")
+        let richText: String?
+        switch textSnapshot?.source {
+        case .textMarkers: richText = textSnapshot.map { $0.before + $0.selected + $0.after }
+        case .textRange: richText = selectedRange.flatMap { richTextContext(in: focusedElement, selectedRange: $0) }
+        default: richText = nil
+        }
+        logger.info("contextCapture: target pid=\(processIdentifier) role=\(role ?? "unknown", privacy: .public) range=\(selectedRange != nil) snapshot=\(textSnapshot != nil) structuralList=\(listInsertion != nil) richLayout=\(richText != nil) source=\(textSnapshot?.source.rawValue ?? "none", privacy: .public) beforeChars=\(textSnapshot?.before.count ?? -1) afterChars=\(textSnapshot?.after.count ?? -1)")
 
         return DictationContext(
             processIdentifier: processIdentifier,
@@ -743,16 +761,18 @@ enum DictationContextCapture {
         guard DictationFocusResolver.isTextInput(role: role) else { return nil }
         let selectedRange = selectedTextRange(in: focusedElement)
         guard ContinuousClock.now < deadline else { return nil }
-        let markerSnapshot = DictationTextMarkerCapture.capture(in: focusedElement, messagingTimeout: 0.025)
-        let textSnapshot = markerSnapshot
-            ?? selectedRange.flatMap { surroundingText(in: focusedElement, selectedRange: $0) }
+        let textSnapshot = cursorText(in: focusedElement, selectedRange: selectedRange, messagingTimeout: 0.025)
         guard let textSnapshot else { return nil }
         guard ContinuousClock.now < deadline else { return nil }
-        let listInsertion = selectedRange.flatMap {
+        let listInsertion = textSnapshot.source == .emptyField ? nil : selectedRange.flatMap {
             DictationRichListCapture.capture(in: focusedElement, selectedRange: $0)
         }
-        let richText = markerSnapshot.map { $0.before + $0.selected + $0.after }
-            ?? selectedRange.flatMap { richTextContext(in: focusedElement, selectedRange: $0) }
+        let richText: String?
+        switch textSnapshot.source {
+        case .textMarkers: richText = textSnapshot.before + textSnapshot.selected + textSnapshot.after
+        case .textRange: richText = selectedRange.flatMap { richTextContext(in: focusedElement, selectedRange: $0) }
+        case .emptyField: richText = nil
+        }
         guard ContinuousClock.now < deadline else { return nil }
         let refreshed = DictationContext(
             processIdentifier: context.processIdentifier,
@@ -897,6 +917,46 @@ enum DictationContextCapture {
             isSecureField: false,
             isContextExcluded: isExcluded
         )
+    }
+
+    /// Three agreeing field-local attributes take precedence over document-wide
+    /// marker APIs. In particular, an empty composer must not inherit a stale
+    /// page selection even when the reported marker envelope contains it.
+    nonisolated static func resolvedCursorText(
+        fullValue: String?, characterCount: Int?, selectedRange: CFRange?,
+        markerSnapshot: () -> (before: String, selected: String, after: String)?,
+        rangeSnapshot: (CFRange) -> (before: String, selected: String, after: String)?
+    ) -> DictationCursorText? {
+        if fullValue == "", characterCount == 0,
+           selectedRange?.location == 0, selectedRange?.length == 0 {
+            return DictationCursorText(before: "", selected: "", after: "", source: .emptyField)
+        }
+        if let marker = markerSnapshot() {
+            return DictationCursorText(before: marker.before, selected: marker.selected,
+                after: marker.after, source: .textMarkers)
+        }
+        guard let selectedRange, DictationCursorText.isValidRange(selectedRange, characterCount: characterCount)
+        else { return nil }
+        if let snapshot = rangeSnapshot(selectedRange) {
+            return DictationCursorText(before: snapshot.before, selected: snapshot.selected,
+                after: snapshot.after, source: .textRange)
+        }
+        return nil
+    }
+
+    private nonisolated static func cursorText(
+        in element: AXUIElement, selectedRange: CFRange?, messagingTimeout: Float? = nil
+    ) -> DictationCursorText? {
+        if let messagingTimeout { AXUIElementSetMessagingTimeout(element, messagingTimeout) }
+        let count = integerAttribute(kAXNumberOfCharactersAttribute, from: element)
+        // Avoid fetching a potentially large field value on the normal marker path.
+        let value = count == 0 && selectedRange?.location == 0 && selectedRange?.length == 0
+            ? stringAttribute(kAXValueAttribute, from: element) : nil
+        let snapshot = resolvedCursorText(fullValue: value, characterCount: count, selectedRange: selectedRange,
+            markerSnapshot: { DictationTextMarkerCapture.capture(in: element, messagingTimeout: messagingTimeout) },
+            rangeSnapshot: { surroundingText(in: element, selectedRange: $0) })
+        logger.info("cursorSnapshot: fieldChars=\(count ?? -1) valueChars=\(value?.count ?? -1) selectionLocation=\(selectedRange?.location ?? -1) selectionLength=\(selectedRange?.length ?? -1) source=\(snapshot?.source.rawValue ?? "none", privacy: .public)")
+        return snapshot
     }
 
     private nonisolated static func surroundingText(

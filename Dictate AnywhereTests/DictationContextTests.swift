@@ -359,6 +359,67 @@ final class DictationContextTests: XCTestCase {
         XCTAssertEqual(snapshot?.after, "")
     }
 
+    func testConfirmedEmptyFieldOverridesConflictingMarkerContextBeforeInsertion() throws {
+        var markerReads = 0
+        var rangeReads = 0
+        let snapshot = try XCTUnwrap(DictationContextCapture.resolvedCursorText(
+            fullValue: "", characterCount: 0, selectedRange: CFRange(location: 0, length: 0),
+            markerSnapshot: {
+                markerReads += 1
+                return ("Previous conversation without punctuation", "", "other page text")
+            }, rangeSnapshot: { _ in
+                rangeReads += 1
+                return ("Stale numeric context", "", "other text")
+            }))
+        let context = makeContext(category: .other, before: snapshot.before,
+            selected: snapshot.selected, after: snapshot.after)
+        XCTAssertEqual(snapshot.source, .emptyField)
+        XCTAssertEqual(markerReads, 0)
+        XCTAssertEqual(rangeReads, 0)
+        XCTAssertFalse(context.continuesExistingSentence)
+        for text in ["Also, does the production point at Vercel or Netlify?", "Alright, dig really deep."] {
+            XCTAssertEqual(TextInserter().preparedTextForInsertion(text,
+                targetBundleIdentifier: context.bundleIdentifier, targetProcessIdentifier: context.processIdentifier,
+                context: context, style: .formal, knownTerms: []), text)
+        }
+    }
+
+    func testIncompleteEmptyFieldEvidencePreservesRichMarkerContext() throws {
+        let snapshots: [(String?, Int?, CFRange?)] = [
+            (nil, 0, CFRange(location: 0, length: 0)),
+            ("", nil, CFRange(location: 0, length: 0)),
+            ("", 0, nil),
+            ("", 20, CFRange(location: 0, length: 0)),
+            ("", 0, CFRange(location: 1, length: 0)),
+            ("", 0, CFRange(location: 0, length: 1)),
+            ("\n", 0, CFRange(location: 0, length: 0))
+        ]
+        for (value, count, range) in snapshots {
+            let snapshot = try XCTUnwrap(DictationContextCapture.resolvedCursorText(
+                fullValue: value, characterCount: count, selectedRange: range,
+                markerSnapshot: { ("• Apples\n• ", "", "\n• Oranges") },
+                rangeSnapshot: { _ in XCTFail("Valid rich markers should be preserved"); return nil }))
+            XCTAssertEqual(snapshot.source, .textMarkers)
+            XCTAssertEqual(snapshot.before, "• Apples\n• ")
+            XCTAssertEqual(snapshot.after, "\n• Oranges")
+        }
+    }
+
+    func testOutOfFieldNumericSelectionNeverReadsStaleSurroundings() {
+        // WebKit can retain a page selection at offset 31 while this empty
+        // composer's only character is a structural newline.
+        for range in [CFRange(location: 31, length: 0), CFRange(location: 0, length: 2),
+                      CFRange(location: -1, length: 0), CFRange(location: Int.max, length: 1)] {
+            let snapshot = DictationContextCapture.resolvedCursorText(
+                fullValue: nil, characterCount: 1, selectedRange: range,
+                markerSnapshot: { nil }, rangeSnapshot: { _ in
+                    XCTFail("An out-of-field caret must never read text from the document")
+                    return ("previous conversation", "", "other text")
+                })
+            XCTAssertNil(snapshot)
+        }
+    }
+
     func testRecoveredGroceryCursorFormatsAssemblyAIOutput() {
         let before = "I need to buy some groceries: apples, bananas, oranges, "
         let after = "and some sourdough starter."

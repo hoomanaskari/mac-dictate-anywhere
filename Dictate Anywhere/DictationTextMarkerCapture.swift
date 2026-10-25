@@ -12,6 +12,8 @@ enum DictationTextMarkerCapture {
         if let messagingTimeout { AXUIElementSetMessagingTimeout(editor, messagingTimeout) }
         guard let selection = attribute("AXSelectedTextMarkerRange", in: editor),
               let start = endpoint(selection, start: true), let end = endpoint(selection, start: false),
+              markerIsInsideEditor(start, in: editor),
+              CFEqual(start, end) || markerIsInsideEditor(end, in: editor),
               let bounds = parameter("AXTextMarkerRangeForUIElement", editor, in: editor),
               let first = endpoint(bounds, start: true), let last = endpoint(bounds, start: false),
               let totalLength = length(of: bounds, in: editor),
@@ -22,10 +24,28 @@ enum DictationTextMarkerCapture {
               let beforeStart = boundedEndpoint(from: start, to: first, length: beforeLength, backwards: true, in: editor),
               let selectionEnd = boundedEndpoint(from: start, to: end, length: selectedLength, backwards: false, in: editor),
               let afterEnd = boundedEndpoint(from: end, to: last, length: afterLength, backwards: false, in: editor),
-              let before = text(from: beforeStart, to: start, in: editor),
-              let selected = text(from: start, to: selectionEnd, in: editor),
-              let after = text(from: end, to: afterEnd, in: editor) else { return nil }
+              let before = beforeLength == 0 ? "" : text(from: beforeStart, to: start, in: editor),
+              let selected = selectedLength == 0 ? "" : text(from: start, to: selectionEnd, in: editor),
+              let after = afterLength == 0 ? "" : text(from: end, to: afterEnd, in: editor) else { return nil }
         return (String(before.suffix(600)), String(selected.prefix(600)), String(after.prefix(600)))
+    }
+
+    /// A marker envelope can itself be document-wide. Require the selection's
+    /// actual accessible node to belong to this editor, independently of lengths.
+    nonisolated static func markerIsInsideEditor(_ marker: CFTypeRef, in editor: AXUIElement) -> Bool {
+        guard let owner = parameter("AXUIElementForTextMarker", marker, in: editor),
+              CFGetTypeID(owner) == AXUIElementGetTypeID() else { return false }
+        var current = unsafeBitCast(owner, to: AXUIElement.self)
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.1
+        for _ in 0..<16 {
+            if CFEqual(current, editor) { return true }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            AXUIElementSetMessagingTimeout(current, 0.025)
+            guard let parent = attribute(kAXParentAttribute, in: current),
+                  CFGetTypeID(parent) == AXUIElementGetTypeID() else { return false }
+            current = unsafeBitCast(parent, to: AXUIElement.self)
+        }
+        return false
     }
 
     /// Unordered marker ranges silently reverse endpoints outside the editor.
