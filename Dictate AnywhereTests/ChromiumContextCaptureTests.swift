@@ -86,11 +86,33 @@ final class ChromiumContextCaptureTests: XCTestCase {
     }
 
     @MainActor
+    func testEmptyChromiumComposerDoesNotInheritPageText() async throws {
+        try await runChromeFixture(isList: false, prose: "Alright, dig really deep.", surroundingPageText: true)
+    }
+
+    @MainActor
+    func testEmptyChromiumComposerRejectsStalePageSelection() async throws {
+        try await runChromeFixture(isList: false, prose: "Alright, dig really deep.",
+            surroundingPageText: true, stalePageSelection: true)
+    }
+
+    @MainActor
+    func testScopedChromiumMarkersPreserveRichListContext() async throws {
+        try await runChromeFixture(isList: true, surroundingPageText: true)
+    }
+
+    @MainActor
+    func testScopedChromiumMarkersPreserveInlineContext() async throws {
+        try await runChromeFixture(isList: false, surroundingPageText: true)
+    }
+
+    @MainActor
     private func runChromeFixture(isList: Bool, spoken: String? = nil, expectedItem: String? = nil,
                                   neighbors: [String] = ["Apples", "Bananas", "Oranges", "Flowers"],
                                   expectedItems: [String]? = nil, ordered: Bool = false,
                                   inlineAtEnd: Bool = false, plainNumbered: Bool = false,
-                                  prose: String? = nil) async throws {
+                                  prose: String? = nil, surroundingPageText: Bool = false,
+                                  stalePageSelection: Bool = false) async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["DICTATE_CHROMIUM_CAPTURE_TESTS"] == "1")
         let executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: executable))
@@ -112,11 +134,14 @@ final class ChromiumContextCaptureTests: XCTestCase {
             : "const r = document.createRange(); \(cursor) r.collapse(true); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);"
         let html = """
         <!doctype html><title>Dictation capture fixture</title>
+        \(surroundingPageText ? "<p id='reference'>Previous conversation without punctuation</p>" : "")
         \(editorHTML)
+        \(surroundingPageText ? "<p>Text after the composer</p>" : "")
         <script>
         window.onload = () => {
           const e = document.getElementById('editor'); e.focus();
           \(selectionJS)
+          \(stalePageSelection ? "const stale = document.createRange(); stale.setStart(document.getElementById('reference').firstChild, 12); stale.collapse(true); window.getSelection().removeAllRanges(); window.getSelection().addRange(stale);" : "")
         };
         </script>
         """
@@ -140,9 +165,13 @@ final class ChromiumContextCaptureTests: XCTestCase {
             }
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, process.processIdentifier,
-            "Only the isolated fixture may be inspected by this test.")
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier else { return }
+        // Capture-only fixtures can read their own process while backgrounded.
+        // Live paste still requires the explicit foreground check below.
+        if !surroundingPageText {
+            XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, process.processIdentifier,
+                "Only the isolated fixture may be inspected by this test.")
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == process.processIdentifier else { return }
+        }
         try await Task.sleep(for: .milliseconds(500))
         let pid = process.processIdentifier
         var context = await Task.detached {
@@ -172,6 +201,12 @@ final class ChromiumContextCaptureTests: XCTestCase {
         }
         _ = try XCTUnwrap(context.textBeforeCursor)
         _ = try XCTUnwrap(context.textAfterCursor)
+        if surroundingPageText, let prose {
+            let insertion = TextInserter().preparedTextForInsertion(prose,
+                targetBundleIdentifier: "com.google.Chrome", targetProcessIdentifier: pid,
+                context: context, style: .formal, knownTerms: [])
+            XCTAssertEqual(insertion, prose, "An empty composer must preserve sentence casing and have no boundary spaces")
+        }
 
         // Optional full live path: real capture -> configured provider ->
         // production clipboard/paste -> re-read the isolated editor result.

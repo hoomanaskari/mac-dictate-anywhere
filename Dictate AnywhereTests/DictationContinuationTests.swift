@@ -102,6 +102,39 @@ final class DictationContinuationTests: XCTestCase {
         XCTAssertEqual(entry.rawText, engine.stoppedText)
     }
 
+    func testS1MiniOwnsFillerRemovalBeforeDelivery() async throws {
+        let modelURL = S1MiniModelManager.defaultModelDirectory.appendingPathComponent(S1MiniModelSpec.filename)
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: modelURL.path), "Install S1-mini for the cleanup pipeline regression")
+        addTeardownBlock { await S1MiniPostProcessingService.unload() }
+        let settings = Settings.shared
+        let oldEnabled = settings.isFillerWordRemovalEnabled
+        let oldWords = settings.fillerWordsToRemove
+        let oldStyle = settings.s1MiniStyling
+        let oldContext = settings.dictationContextAwarenessEnabled
+        defer {
+            settings.isFillerWordRemovalEnabled = oldEnabled
+            settings.fillerWordsToRemove = oldWords
+            settings.s1MiniStyling = oldStyle
+            settings.dictationContextAwarenessEnabled = oldContext
+        }
+        settings.transcriptPostProcessingMode = .s1Mini
+        settings.isFillerWordRemovalEnabled = true
+        // A custom removal rule must not delete content before S1 sees it.
+        settings.fillerWordsToRemove = ["purple"]
+        settings.s1MiniStyling = .semiFormal
+        settings.dictationContextAwarenessEnabled = false
+        let engine = ContinuationTestEngine()
+        engine.stoppedText = "Um keep the purple umbrella by the door."
+        let app = app(engine: engine)
+        app.status = .recording
+        await app.stopDictation()
+        let entry = try XCTUnwrap(settings.transcriptHistory.last)
+        XCTAssertEqual(entry.rawText, engine.stoppedText)
+        XCTAssertTrue(entry.text.localizedCaseInsensitiveContains("purple umbrella"), entry.text)
+        XCTAssertFalse(entry.text.lowercased().hasPrefix("um "), entry.text)
+        XCTAssertTrue(entry.text.first?.isUppercase == true, entry.text)
+    }
+
     func testCancelAgainPreservesPrefixAndOnlyNewAudioAcrossRelaunch() async throws {
         let entry = try await savedSession(target: "example.unavailable-app")
         let engine = ContinuationTestEngine()

@@ -1849,7 +1849,9 @@ final class AppState {
         // because it contains repetitions or words rejected by final decoding.
         let normalizeTrace = PerfTrace.begin("transcript.normalize")
         let finalText: String
-        if usesAssemblyAI {
+        if usesAssemblyAI || settings.transcriptPostProcessingMode == .s1Mini {
+            // S1-mini owns filler removal and sentence repair together. Removing
+            // words first discards the speech cues its normalizer was trained on.
             finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         } else {
             finalText = settings.removeFillerWords(from: transcript).trimmingCharacters(in: .whitespacesAndNewlines)
