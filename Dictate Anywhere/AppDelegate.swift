@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var copyLastTranscriptMenuItem: NSMenuItem?
     private var cancelDictationMenuItem: NSMenuItem?
     private var stopDictationMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
     private var isTerminating = false
 
     override init() {
@@ -142,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 #if !DEBUG
         let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
+        updateMenuItem = updateItem
         menu.addItem(updateItem)
 #endif
 
@@ -160,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem?.menu = menu
+        refreshUpdateIndicator()
     }
 
     /// Ensures only one Dictate Anywhere process stays active.
@@ -217,15 +220,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyAppearanceMode(treatingMainWindowAsVisible: Bool = false) {
         let preferredPolicy = Settings.shared.appAppearanceMode.activationPolicy
-        let shouldPresentRegularApp = preferredPolicy == .regular || treatingMainWindowAsVisible || mainWindow?.isVisible == true
-        let targetPolicy: NSApplication.ActivationPolicy = shouldPresentRegularApp ? .regular : .accessory
+        #if !DEBUG
+        let updateIsVisible = softwareUpdater.presentation.isActive
+        #else
+        let updateIsVisible = false
+        #endif
+        let targetPolicy = Self.activationPolicy(preferred: preferredPolicy,
+            mainWindowIsVisible: treatingMainWindowAsVisible || mainWindow?.isVisible == true,
+            updateIsVisible: updateIsVisible)
         if NSApp.activationPolicy() != targetPolicy {
             NSApp.setActivationPolicy(targetPolicy)
         }
     }
 
+    static func activationPolicy(preferred: NSApplication.ActivationPolicy,
+                                 mainWindowIsVisible: Bool, updateIsVisible: Bool) -> NSApplication.ActivationPolicy {
+        preferred == .regular || mainWindowIsVisible || updateIsVisible ? .regular : .accessory
+    }
+
     private func setupNotificationObservers() {
         NotificationCenter.default.addObserver(self, selector: #selector(handleAppearanceChanged), name: .appAppearanceModeChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleAppearanceChanged), name: .softwareUpdatePresentationChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(dismissMenusForPaste), name: .dismissMenusForPaste, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleShowMainWindowRequest), name: .requestShowMainWindow, object: nil)
     }
@@ -236,6 +251,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleAppearanceChanged() {
         applyAppearanceMode()
+        refreshUpdateIndicator()
+    }
+
+    private func refreshUpdateIndicator() {
+        #if !DEBUG
+        guard let button = statusItem?.button, let updateMenuItem else { return }
+        UpdateAvailabilityIndicator.apply(version: softwareUpdater.presentation.availableVersion,
+            to: button, updateItem: updateMenuItem)
+        #endif
     }
 
     @objc private func dismissMenusForPaste() {

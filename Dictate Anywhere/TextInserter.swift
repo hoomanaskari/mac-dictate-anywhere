@@ -10,6 +10,7 @@ import AppKit
 import CoreGraphics
 import Carbon
 import os
+import NaturalLanguage
 
 enum TextInsertionResult {
     case success
@@ -870,7 +871,7 @@ final class TextInserter {
             if let context,
                context.processIdentifier == targetProcessIdentifier,
                !context.isSecureField, !context.isContextExcluded,
-               context.listItemInsertion != nil || Self.hasInlineCommaBoundary(context)
+               context.startsNewSentence || context.listItemInsertion != nil || Self.hasInlineCommaBoundary(context)
                 || (!plan.text.contains(where: \.isNewline) && Self.standaloneLineConvention(context) != nil) {
                 // The provider can return standalone punctuation/spacing even
                 // with explicit instructions. Confirmed list or comma boundaries
@@ -915,7 +916,8 @@ final class TextInserter {
     static func hasInlineCommaBoundary(_ context: DictationContext) -> Bool {
         guard !context.isSecureField, !context.isContextExcluded,
               context.listItemInsertion == nil,
-              let before = context.textBeforeCursor, let after = context.textAfterCursor,
+              let before = context.currentProseLineBeforeCursor, let after = context.proseAfterCursor,
+              before.contains(where: { $0.isLetter || $0.isNumber }),
               let last = before.lastIndex(where: { !$0.isWhitespace }),
               before[last] == "," || before[last] == "，",
               !before[before.index(after: last)...].contains(where: \.isNewline) else { return false }
@@ -956,6 +958,9 @@ final class TextInserter {
     ) -> String {
         var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return "" }
+        if context.fieldPurpose != .searchQuery {
+            body = capitalizingLeadingEnglishPronoun(in: body)
+        }
         let listInsertion = context.fieldPurpose == .searchQuery ? nil
             : context.listItemInsertion ?? (body.contains(where: \.isNewline) ? nil : standaloneLineConvention(context))
 
@@ -982,6 +987,8 @@ final class TextInserter {
                     }
                     return (index == 0 ? "" : list.continuationPrefix(itemOffset: index)) + item
                 }.joined(separator: "\n")
+        } else if context.startsNewSentence {
+            body = capitalizingLeadingOrdinaryWord(in: body, preserving: knownTerms)
         } else if preserveModelFormatting {
             // Preserve model choices when there is no confirmed list convention.
         } else if context.fieldPurpose == .searchQuery {
@@ -1018,7 +1025,16 @@ final class TextInserter {
             )
         }
 
-        let hasFollowingText = !(context.textAfterCursor ?? "").isEmpty
+        // Preserving case after a colon or opening quotation does not make a
+        // duplicate period before an existing clause comma grammatically valid.
+        if listInsertion == nil, !context.startsNewSentence, !context.continuesExistingSentence,
+           let after = context.proseAfterCursor,
+           !after.prefix(while: \.isWhitespace).contains(where: \.isNewline),
+           let first = after.first(where: { !$0.isWhitespace }), ",，;；".contains(first) {
+            body = removingMidSentenceTerminalPunctuation(from: body, textAfterCursor: after)
+        }
+
+        let hasFollowingText = !(context.proseAfterCursor ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let effectiveStyle = style.sanitized(for: context.category)
         if (effectiveStyle == .casual || effectiveStyle == .veryCasual),
            !preserveModelFormatting,
@@ -1029,22 +1045,41 @@ final class TextInserter {
         }
 
         let prefix = listInsertion.map { $0.needsSpaceAfterMarker ? " " : "" } ?? contextualSeparator(
-            left: context.textBeforeCursor,
+            left: context.proseBeforeCursor,
             right: body,
             rightStartsWithAttachedPunctuation: startsWithAttachedPunctuation(body)
         )
         let suffix = listInsertion?.isEmptyStructuralItem == true ? "" : contextualSeparator(
             left: body,
-            right: context.textAfterCursor,
-            rightStartsWithAttachedPunctuation: startsWithAttachedPunctuation(context.textAfterCursor ?? "")
+            right: context.proseAfterCursor,
+            rightStartsWithAttachedPunctuation: startsWithAttachedPunctuation(context.proseAfterCursor ?? "")
+                || isClosingQuote(context.proseAfterCursor, after: (context.proseBeforeCursor ?? "") + body)
         )
         return prefix + body + suffix
+    }
+
+    private static func isClosingQuote(_ following: String?, after preceding: String) -> Bool {
+        guard let following, let quote = following.first, quote == "\"" || quote == "'" else { return false }
+        if quote == "'", preceding.last?.isLetter == true, following.dropFirst().first?.isLetter == true { return true }
+        var count = 0
+        for index in preceding.indices where preceding[index] == quote {
+            let next = preceding.index(after: index)
+            // Apostrophes inside words do not open or close quotations.
+            if quote == "'", index > preceding.startIndex, next < preceding.endIndex,
+               preceding[preceding.index(before: index)].isLetter, preceding[next].isLetter { continue }
+            count += 1
+        }
+        return count % 2 == 1
     }
 
     private static func capitalizingLeadingOrdinaryWord(in text: String, preserving knownTerms: [String]) -> String {
         guard let start = text.firstIndex(where: { $0.isLetter || $0.isNumber }),
               text[start].isLowercase else { return text }
         let word = String(text[start...].prefix { $0.isLetter || $0 == "'" || $0 == "’" || $0 == "-" })
+        let prefix = text[..<start]
+        guard prefix.allSatisfy({ $0.isWhitespace || "\"'‘“([{「『【《".contains($0) }) else { return text }
+        let token = text[start...].prefix { !$0.isWhitespace }
+        guard !isLiteralToken(token) else { return text }
         // Sentence capitalization must not turn iPhone/eBay into IPhone/EBay.
         guard !word.dropFirst().contains(where: \.isUppercase),
               !knownTerms.contains(where: { $0.split(separator: " ").first?.lowercased() == word.lowercased() })
@@ -1052,6 +1087,25 @@ final class TextInserter {
         var result = text
         result.replaceSubrange(start..<text.index(after: start), with: String(text[start]).uppercased())
         return result
+    }
+
+    private static func capitalizingLeadingEnglishPronoun(in text: String) -> String {
+        guard let start = text.firstIndex(where: \.isLetter), text[start] == "i",
+              text[..<start].allSatisfy({ $0.isWhitespace || "\"'‘“([{「『【《".contains($0) }) else { return text }
+        let word = String(text[start...].prefix { $0.isLetter || $0 == "'" || $0 == "’" })
+        guard !isLiteralToken(text[start...].prefix { !$0.isWhitespace }) else { return text }
+        let englishContractions: Set<String> = ["i'm", "i’ve", "i've", "i’ll", "i'll", "i’d", "i'd", "i’m"]
+        guard englishContractions.contains(word)
+                || (word == "i" && NLLanguageRecognizer.dominantLanguage(for: text) == .english) else { return text }
+        var result = text
+        result.replaceSubrange(start..<text.index(after: start), with: "I")
+        return result
+    }
+
+    private static func isLiteralToken(_ token: Substring) -> Bool {
+        let token = token.trimmingCharacters(in: CharacterSet(charactersIn: ".,!?;:)]}’”"))
+        return token.contains(".") || token.contains("/") || token.contains("@")
+            || token.contains("_") || token.contains("\\")
     }
 
     private static func lowercasingLeadingOrdinaryWord(
@@ -1085,7 +1139,7 @@ final class TextInserter {
         }
 
         let word = String(text[wordStart..<wordEnd])
-        guard word != "I",
+        guard word != "I", !word.hasPrefix("I'"), !word.hasPrefix("I’"),
               word.first?.isUppercase == true,
               !word.dropFirst().contains(where: \Character.isUppercase) else {
             return text
@@ -1166,7 +1220,7 @@ final class TextInserter {
         if CharacterSet.whitespacesAndNewlines.contains(leftScalar)
             || CharacterSet.whitespacesAndNewlines.contains(rightScalar)
             || rightStartsWithAttachedPunctuation
-            || "([{\"'“".unicodeScalars.contains(leftScalar)
+            || "([{\"'‘“「『【《".unicodeScalars.contains(leftScalar)
             || CJKText.endsWithCJK(left)
             || CJKText.startsWithCJK(right) {
             return ""
@@ -1288,6 +1342,8 @@ final class TextInserter {
             93, // ]
             125, // }
             0x2026,
+            0x2019, // closing single quote / apostrophe
+            0x201D, // closing double quote
         ]).union(CJKText.cjkAttachedLeadingPunctuation)
 
         guard let firstScalar = text.unicodeScalars.first else { return false }

@@ -110,6 +110,19 @@ enum DictationTextMarkerCapture {
 
     private nonisolated static func text(from start: CFTypeRef, to end: CFTypeRef, in editor: AXUIElement) -> String? {
         guard let range = parameter("AXTextMarkerRangeForUnorderedTextMarkers", [start, end] as CFArray, in: editor) else { return nil }
+        // Plain AX strings can expand an image into its accessible name. The
+        // attributed representation identifies attachments separately from prose.
+        if let attributed = parameter("AXAttributedStringForTextMarkerRange", range, in: editor) as? NSAttributedString {
+            let result = NSMutableString(string: attributed.string)
+            var attachments: [NSRange] = []
+            attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length)) { attributes, range, _ in
+                if attributes.keys.contains(where: { $0.rawValue == "AXAttachment" || $0 == .attachment }) {
+                    attachments.append(range)
+                }
+            }
+            for range in attachments.reversed() { result.replaceCharacters(in: range, with: "\u{FFFC}") }
+            return result as String
+        }
         return parameter("AXStringForTextMarkerRange", range, in: editor) as? String
     }
 

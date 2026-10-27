@@ -189,7 +189,7 @@ final class DictationContextTests: XCTestCase {
             style: .casual
         )
 
-        XCTAssertEqual(output, "sounds good")
+        XCTAssertEqual(output, "Sounds good", "Light punctuation must not imply an uncapitalized sentence start")
     }
 
     func testSearchQueryInsertionDropsSpeechModelPeriodAndSentenceCapitalization() {
@@ -359,6 +359,77 @@ final class DictationContextTests: XCTestCase {
         XCTAssertEqual(snapshot?.after, "")
     }
 
+    func testStructuralAndSentenceBoundariesDoNotLowercaseOrAddLeadingSpace() {
+        let cases: [(String, String)] = [
+            ("\u{FFFC}", "\n"), ("\u{FFFC}\n", "\n"), ("\u{FFFC} \u{FFFC}", "\n"),
+            ("Previous line\n", ""), ("Previous line\r\n  ", "\n"),
+            ("Previous line\u{2028}", ""), ("Previous line\u{2029}\t", ""),
+            ("He said “Done.” ", "Next sentence"), ("(", ")"), ("“", "”")
+        ]
+        for (before, after) in cases {
+            let context = makeContext(category: .other, before: before, after: after)
+            XCTAssertFalse(context.continuesExistingSentence, before.debugDescription)
+            let insertion = TextInserter.contextualizedForInsertion("how about we fix this?", context: context, style: .formal)
+            XCTAssertTrue(insertion.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("How"), "\(before.debugDescription): \(insertion)")
+            if !before.contains("Done") {
+                XCTAssertFalse(insertion.hasPrefix(" "), before.debugDescription)
+            }
+        }
+    }
+
+    func testEnglishPersonalPronounSurvivesInlineAndSentenceFormatting() {
+        for before in ["", "Yesterday\n", "\u{FFFC}", "She said "] {
+            let context = makeContext(category: .other, before: before, after: before == "She said " ? " before leaving." : "\n")
+            for body in ["i think this works.", "i'm ready.", "i’ve checked it.", "i'll send it.", "I'm ready.", "I've checked it.", "I'd like that."] {
+                let output = TextInserter.contextualizedForInsertion(body, context: context, style: .formal)
+                XCTAssertEqual(output.first(where: \.isLetter), "I", "\(before.debugDescription): \(output)")
+            }
+        }
+    }
+
+    func testBoundaryRepairsPreserveLiteralTextAndNames() {
+        let context = makeContext(category: .other, before: "\u{FFFC}\n", after: "\n")
+        for text in ["iPhone works.", "eBay works.", "https://example.com/path", "i.example/path", "file_name.txt", "`i` is an index.", "```swift\nlet i = 0\n```"] {
+            XCTAssertEqual(TextInserter.contextualizedForInsertion(text, context: context, style: .formal), text)
+        }
+        XCTAssertEqual(TextInserter.contextualizedForInsertion("ffmpeg works.", context: context,
+            style: .formal, knownTerms: ["ffmpeg"]), "ffmpeg works.")
+        let inline = makeContext(category: .other, before: "She prefers", after: " in spring.")
+        XCTAssertEqual(TextInserter.contextualizedForInsertion("Fresh flowers.", context: inline, style: .formal), " fresh flowers")
+    }
+
+    func testAmbiguousClauseAndQuotationStartsPreserveCapitalization() {
+        for (before, after, expected) in [
+            ("She said “", "”", "Hello."),
+            ("She said \"", "\"", "Hello."),
+            ("The title: ", "", "Hello."),
+            ("Consider — ", "", "Hello."),
+            ("See (", ")", "Hello.")
+        ] {
+            let context = makeContext(category: .other, before: before, after: after)
+            XCTAssertFalse(context.continuesExistingSentence)
+            XCTAssertEqual(TextInserter.contextualizedForInsertion("Hello.", context: context, style: .formal), expected)
+        }
+    }
+
+    func testQuoteSpacingDistinguishesClosersFromTheNextQuotedPhrase() {
+        XCTAssertEqual(TextInserter.contextualizedForInsertion("I'm ready.",
+            context: makeContext(category: .other, before: "She said '", after: "'"), style: .formal), "I'm ready.")
+        XCTAssertEqual(TextInserter.contextualizedForInsertion("Hello.",
+            context: makeContext(category: .other, before: "Done. ", after: "\"Next sentence\""), style: .formal), "Hello. ")
+    }
+
+    func testSentenceStartOverridesIncorrectModelSpacingPlan() throws {
+        let plan = try XCTUnwrap(ModelInsertionPlan.decode(#"{"text":"how about we fix it?","space_before":true,"space_after":false}"#))
+        let context = makeContext(category: .other, before: "\u{FFFC}\n", after: "\n")
+        XCTAssertEqual(TextInserter().preparedTextForInsertion(plan.text,
+            targetBundleIdentifier: context.bundleIdentifier, targetProcessIdentifier: context.processIdentifier,
+            context: context, style: .formal, knownTerms: [], modelInsertionPlan: plan, preserveModelFormatting: true), "How about we fix it?")
+        let request = context.postProcessingContext(style: .formal, includeCapturedText: true)
+        XCTAssertFalse(request.continuesExistingSentence)
+        XCTAssertFalse(request.requestSection.contains("\u{FFFC}"))
+    }
+
     func testConfirmedEmptyFieldOverridesConflictingMarkerContextBeforeInsertion() throws {
         var markerReads = 0
         var rangeReads = 0
@@ -384,23 +455,21 @@ final class DictationContextTests: XCTestCase {
         }
     }
 
-    func testIncompleteEmptyFieldEvidencePreservesRichMarkerContext() throws {
-        let snapshots: [(String?, Int?, CFRange?)] = [
-            (nil, 0, CFRange(location: 0, length: 0)),
-            ("", nil, CFRange(location: 0, length: 0)),
-            ("", 0, nil),
-            ("", 20, CFRange(location: 0, length: 0)),
-            ("", 0, CFRange(location: 1, length: 0)),
-            ("", 0, CFRange(location: 0, length: 1)),
-            ("\n", 0, CFRange(location: 0, length: 0))
+    func testRichMarkerContextRetainsFollowingTextAndHonorsNativeStart() throws {
+        let snapshots: [(String?, Int?, CFRange?, String)] = [
+            (nil, 0, CFRange(location: 0, length: 0), ""),
+            ("", nil, CFRange(location: 0, length: 0), ""),
+            ("", 0, nil, "• Apples\n• "),
+            ("", 0, CFRange(location: 1, length: 0), "• Apples\n• "),
+            ("", 0, CFRange(location: 0, length: 1), "")
         ]
-        for (value, count, range) in snapshots {
+        for (value, count, range, expectedBefore) in snapshots {
             let snapshot = try XCTUnwrap(DictationContextCapture.resolvedCursorText(
                 fullValue: value, characterCount: count, selectedRange: range,
                 markerSnapshot: { ("• Apples\n• ", "", "\n• Oranges") },
                 rangeSnapshot: { _ in XCTFail("Valid rich markers should be preserved"); return nil }))
             XCTAssertEqual(snapshot.source, .textMarkers)
-            XCTAssertEqual(snapshot.before, "• Apples\n• ")
+            XCTAssertEqual(snapshot.before, expectedBefore)
             XCTAssertEqual(snapshot.after, "\n• Oranges")
         }
     }
@@ -417,6 +486,31 @@ final class DictationContextTests: XCTestCase {
                     return ("previous conversation", "", "other text")
                 })
             XCTAssertNil(snapshot)
+        }
+    }
+
+    func testAttachmentCountsDoNotOverrideEmptyNativeProseValue() throws {
+        for value in ["", "\u{FFFC}\n", "\u{FFFC}\u{FFFC}\n", "\n\n"] {
+            let snapshot = try XCTUnwrap(DictationContextCapture.resolvedCursorText(
+                fullValue: value, characterCount: 12, selectedRange: CFRange(location: 0, length: 0),
+                markerSnapshot: { XCTFail("Attachment labels are not preceding prose"); return ("Screenshot", "", "\n") },
+                rangeSnapshot: { _ in XCTFail("Native prose value already proves the text boundary"); return nil }))
+            XCTAssertEqual(snapshot.source, .emptyField)
+            XCTAssertEqual(snapshot.before, "")
+            XCTAssertTrue(snapshot.after.allSatisfy(\.isWhitespace))
+        }
+    }
+
+    func testNativeCaretZeroDoesNotBorrowAttachmentOrPlaceholderPrefix() throws {
+        for label in ["Message ChatGPT", "Screenshot.png", "Add message"] {
+            let snapshot = try XCTUnwrap(DictationContextCapture.resolvedCursorText(
+                fullValue: label + "\n", characterCount: label.utf16.count + 1,
+                selectedRange: CFRange(location: 0, length: 0),
+                markerSnapshot: { (label, "", "\n") }, rangeSnapshot: { _ in nil }))
+            let context = makeContext(category: .other, before: snapshot.before, selected: snapshot.selected, after: snapshot.after)
+            XCTAssertEqual(snapshot.before, "")
+            XCTAssertFalse(context.continuesExistingSentence)
+            XCTAssertEqual(TextInserter.contextualizedForInsertion("How about we fix this?", context: context, style: .formal), "How about we fix this?")
         }
     }
 

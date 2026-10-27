@@ -14,7 +14,11 @@ final class WebKitContextCaptureTests: XCTestCase {
         try await captureFixture(staleSelection: true)
     }
 
-    private func captureFixture(staleSelection: Bool) async throws {
+    func testWebKitAttachmentDoesNotBecomeProseBeforeTheCaret() async throws {
+        try await captureFixture(staleSelection: false, attachment: true)
+    }
+
+    private func captureFixture(staleSelection: Bool, attachment: Bool = false) async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["DICTATE_WEBKIT_CAPTURE_TESTS"] == "1")
         try XCTSkipUnless(AXIsProcessTrusted(), "Requires the test app's existing Accessibility permission")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -32,7 +36,7 @@ final class WebKitContextCaptureTests: XCTestCase {
         guard compile.terminationStatus == 0 else { return }
         let process = Process()
         process.executableURL = executable
-        process.arguments = [staleSelection ? "stale" : "normal"]
+        process.arguments = [staleSelection ? "stale" : "normal", attachment ? "attachment" : "plain"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -50,6 +54,7 @@ final class WebKitContextCaptureTests: XCTestCase {
             if captured.fieldRole == "AXTextArea" { context = captured; break }
         }
         let captured = try XCTUnwrap(context, "Fixture did not expose the editor")
+        print("WebKit fixture attachment=\(attachment) before=\(captured.textBeforeCursor.debugDescription) after=\(captured.textAfterCursor.debugDescription)")
         XCTAssertEqual(captured.fieldRole, "AXTextArea")
         if !staleSelection { XCTAssertTrue(captured.hasTextPositionSnapshot) }
         // WebKit represents an empty <p><br></p> as a structural newline.
@@ -57,11 +62,11 @@ final class WebKitContextCaptureTests: XCTestCase {
         XCTAssertEqual(captured.selectedText ?? "", "")
         XCTAssertEqual((captured.textAfterCursor ?? "").trimmingCharacters(in: .whitespacesAndNewlines), "")
         XCTAssertFalse(captured.continuesExistingSentence)
-        let text = "Also, does the production point at Vercel or Netlify?"
+        let text = attachment ? "how about we set up error tracking for PostHog?" : "Also, does the production point at Vercel or Netlify?"
         let insertion = TextInserter().preparedTextForInsertion(text,
             targetBundleIdentifier: captured.bundleIdentifier, targetProcessIdentifier: pid,
             context: captured, style: .formal, knownTerms: [])
-        XCTAssertEqual(insertion, text)
+        XCTAssertEqual(insertion, attachment ? "How about we set up error tracking for PostHog?" : text)
     }
 
     private static let hostSource = #"""
@@ -78,10 +83,11 @@ final class WebKitContextCaptureTests: XCTestCase {
                 webView.navigationDelegate = self
                 window.makeKeyAndOrderFront(nil)
                 NSApplication.shared.activate(ignoringOtherApps: true)
-                webView.loadHTMLString("<p id='reference'>Previous conversation without punctuation</p><div id='editor' contenteditable='true' role='textbox' aria-multiline='true'><p><br></p></div><p>Text following the composer</p>", baseURL: nil)
+                let image = CommandLine.arguments.contains("attachment") ? "<img alt='Screenshot' width='40' height='40' src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2240%22 height=%2240%22%3E%3Crect width=%2240%22 height=%2240%22 fill=%22red%22/%3E%3C/svg%3E'>" : ""
+                webView.loadHTMLString("<p id='reference'>Previous conversation without punctuation</p><div id='editor' contenteditable='true' role='textbox' aria-multiline='true'>\(image)<p id='prose'><br></p></div><p>Text following the composer</p>", baseURL: nil)
             }
             func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-                let target = CommandLine.arguments.last == "stale" ? "document.getElementById('reference').firstChild, 12" : "editor.firstChild, 0"
+                let target = CommandLine.arguments.contains("stale") ? "document.getElementById('reference').firstChild, 12" : "document.getElementById('prose'), 0"
                 webView.evaluateJavaScript("const editor = document.getElementById('editor'); editor.focus(); const r = document.createRange(); r.setStart(\(target)); r.collapse(true); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);")
             }
         }
