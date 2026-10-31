@@ -7,12 +7,15 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TranscriptHistoryView: View {
     @Environment(AppState.self) private var appState
 
     @State private var searchText = ""
     @State private var showClearAllConfirm = false
+    @State private var copiedRecoveryID: UUID?
+    @State private var exportingRecoveryID: UUID?
 
     /// Uses the Mac's date order and preferred 12- or 24-hour clock.
     static let timestampFormat = Date.FormatStyle(date: .abbreviated, time: .shortened)
@@ -63,7 +66,7 @@ struct TranscriptHistoryView: View {
             if !cancelledEntries.isEmpty {
                 DSSection(overline: "Cancelled sessions") {
                     DSHint(
-                        text: "Continue restores your words and resumes recording. Stop finishes the combined dictation; if the original app is unavailable, the text is copied. Recover text saves it here without pasting. Sessions expire after 24 hours.",
+                        text: "Continue restores your words and resumes recording. Stop finishes the combined dictation; if the original app is unavailable, the text is copied. Recover text saves it here without pasting. Copy saved text may contain only a partial preview. Export audio saves the recording as WAV. Sessions expire after 24 hours.",
                         icon: "arrow.counterclockwise"
                     )
                     .padding(.vertical, 12)
@@ -79,6 +82,7 @@ struct TranscriptHistoryView: View {
                                     .font(DS.Fonts.ui(13))
                                     .foregroundStyle(DS.Colors.textSecondary)
                                     .lineLimit(3)
+                                    .textSelection(.enabled)
                                 Text("\(Int(entry.duration)) sec · Expires in \(entry.expiresAt, style: .relative)")
                                     .font(DS.Fonts.ui(11.5))
                                     .foregroundStyle(DS.Colors.textSecondary)
@@ -106,13 +110,25 @@ struct TranscriptHistoryView: View {
                                 .buttonStyle(.dsPrimary)
                                 .accessibilityLabel("\(continueTitle) cancelled session from \(entry.createdAt.formatted(Self.timestampFormat))")
                                 .disabled(appState.continuingEntryID == entry.id
-                                          ? !appState.canStopDictation : appState.status != .idle)
+                                          ? !appState.canStopDictation : appState.status != .idle || exportingRecoveryID == entry.id)
                                 Button(recoverTitle) {
                                     Task { await appState.recoverCancelledDictation(entry) }
                                 }
                                 .buttonStyle(.dsSecondary)
                                 .accessibilityLabel("\(recoverTitle) from cancelled session on \(entry.createdAt.formatted(Self.timestampFormat))")
-                                .disabled(appState.status != .idle)
+                                .disabled(appState.status != .idle || exportingRecoveryID == entry.id)
+                                Button(copiedRecoveryID == entry.id ? "Copied" : "Copy saved text") {
+                                    if copyToPasteboard(appState.recoveryStore.copyableText(for: entry)) {
+                                        copiedRecoveryID = entry.id
+                                    }
+                                }
+                                .buttonStyle(.dsSecondary)
+                                .disabled(appState.recoveryStore.copyableText(for: entry).isEmpty)
+                                Button(exportingRecoveryID == entry.id ? "Exporting…" : "Export audio…") {
+                                    Task { await exportAudio(entry) }
+                                }
+                                .buttonStyle(.dsSecondary)
+                                .disabled(!entry.hasAudio || exportingRecoveryID != nil || appState.recoveringEntryID == entry.id || appState.continuingEntryID == entry.id)
                             }
                             DSIconButton(
                                 systemImage: "trash",
@@ -121,7 +137,7 @@ struct TranscriptHistoryView: View {
                                 do { try appState.recoveryStore.remove(id: entry.id) }
                                 catch { appState.recoveryStore.errorMessage = error.localizedDescription }
                             }
-                            .disabled(appState.recoveringEntryID == entry.id || appState.continuingEntryID == entry.id)
+                            .disabled(appState.recoveringEntryID == entry.id || appState.continuingEntryID == entry.id || exportingRecoveryID == entry.id)
                         }
                         .padding(16)
                     }
@@ -170,6 +186,25 @@ struct TranscriptHistoryView: View {
             do { try appState.recoveryStore.reload() }
             catch { appState.recoveryStore.errorMessage = error.localizedDescription }
         }
+    }
+
+    private func exportAudio(_ entry: CancelledDictation) async {
+        let store = appState.recoveryStore
+        store.retain(id: entry.id)
+        exportingRecoveryID = entry.id
+        defer {
+            store.release(id: entry.id)
+            exportingRecoveryID = nil
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.wav]
+        panel.nameFieldStringValue = "Dictation-\(entry.createdAt.formatted(.iso8601.year().month().day()))-\(entry.id.uuidString.prefix(8)).wav"
+        let response = await withCheckedContinuation { continuation in
+            panel.begin { continuation.resume(returning: $0) }
+        }
+        guard response == .OK, let destination = panel.url else { return }
+        do { try await store.exportAudio(id: entry.id, to: destination) }
+        catch { store.errorMessage = "Audio export failed. The saved session is still available. \(error.localizedDescription)" }
     }
 
     private func copyToPasteboard(_ text: String) -> Bool {

@@ -71,3 +71,6 @@ scripts/release-macos.sh
 !*.shared.xcconfig
 .superset/config.json
 design.pen
+
+# Private, manually recovered dictation backups
+recovered-dictations/

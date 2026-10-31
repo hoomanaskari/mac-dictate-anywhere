@@ -38,7 +38,7 @@ A native macOS app for voice dictation anywhere. Press and hold Fn (or a custom 
 - **S1-mini by Superwhisper** - Download or delete a compact English transcript normalizer and run it fully on-device without a separate model server
 - **Ollama Integration** - Connect to a local or remote Ollama server and choose an installed cleanup model by its exact ID
 - **OpenRouter Integration** - Use hosted models through OpenRouter with model search, structured-output-aware selection, and secure API key storage
-- **AssemblyAI Dictation** - Optional cloud speech model with transcription, self-correction cleanup, keyterms, context, and output instructions in one request; installed Apple Speech assets provide an on-device live preview while recording
+- **AssemblyAI Dictation** - Optional cloud speech model with overlapping ~100-second chunks, durable retries, keyterms, context, and output instructions; installed Apple Speech assets provide an on-device live preview while recording
 - **Optional Transcript Cleanup** - Post-process the final transcript with S1-mini by Superwhisper, Apple Intelligence, Ollama, or OpenRouter for punctuation, grammar, formatting, and wording cleanup
 - **Safe Fallbacks** - If AI cleanup fails or returns unusable output, the original local transcript is pasted instead
 - **Menu Bar App** - Runs quietly in your menu bar
@@ -66,7 +66,7 @@ On the first paste, macOS may also ask **Dictate Anywhere** to control **System 
 
 ## Optional AI Transcript Cleanup
 
-FluidAudio and Apple Speech transcribe locally. Their raw audio stays on your Mac even when a remote transcript-cleanup provider is enabled. AssemblyAI is a separate cloud speech-model choice: when selected, audio is sent directly to AssemblyAI for the final transcription. When compatible Apple Speech language assets are already installed, the same microphone samples also produce an on-device live preview; that preview is never pasted in place of AssemblyAI's result. Context Awareness keeps surrounding text local by default; sharing it with AssemblyAI or another remote provider requires a separate opt-in.
+FluidAudio and Apple Speech transcribe locally. Their raw audio stays on your Mac even when a remote transcript-cleanup provider is enabled. AssemblyAI is a separate cloud speech-model choice: when selected, audio is sent directly to AssemblyAI in roughly 100-second chunks with three seconds of overlap. Chunk boundaries prefer silence; ambiguous text seams are retranscribed as a larger continuous span instead of guessed. Completed chunks are cached locally so recovery can reuse them. Short dictations retain the single-request Dictation API path. For longer dictations, Polished mode sends the assembled verbatim transcript once to AssemblyAI LLM Gateway (Gemini 3.5 Flash-Lite) for cleanup, using the EU endpoint when EU is selected and the US endpoint otherwise. A failed or truncated cleanup falls back to the raw transcript. This adds a text-cleanup request and overlapping/repair audio can add usage charges. When compatible Apple Speech language assets are already installed, the same microphone samples also produce an on-device live preview; that preview is never pasted in place of AssemblyAI's result. Context Awareness keeps surrounding text local by default; sharing it with AssemblyAI or another remote provider requires a separate opt-in.
 
 | Provider | Runs Where | Best For | Benefits |
 |----------|------------|----------|----------|
@@ -187,6 +187,12 @@ download size.
 | Norwegian | | Bulgarian | Estonian | |
 | | | Ukrainian | Maltese | |
 | | | Russian | | |
+
+## Long dictation recovery
+
+Cancelled/failed sessions offer **Copy saved text** (which may be a partial preview), **Export audio…** (WAV), **Recover text**, and **Continue**. Copy/export do not require a working speech provider or delete the saved session. Audio and chunk caches are removed after success, explicit deletion, or the existing 24-hour recovery expiry. Readable interrupted recordings without metadata are surfaced after relaunch.
+
+Normal chunks are at most 100 seconds. Ambiguous seams are retried as a continuous span up to the provider's 20-minute request limit; if ambiguity persists beyond that, the app keeps the recording and reports a recovery error rather than dropping words. Very large combined transcripts (over 60,000 characters) remain verbatim to avoid cleanup truncation. Apple live preview remains provisional and separate from the final AssemblyAI text.
 
 ## Building from Source
 

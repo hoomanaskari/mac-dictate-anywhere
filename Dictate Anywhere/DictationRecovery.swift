@@ -166,12 +166,33 @@ final class DictationRecoveryStore {
                   url.deletingPathExtension().lastPathComponent == entry.id.uuidString else { return nil }
             return entry
         }.sorted { $0.createdAt > $1.createdAt }
+        // A crash may leave readable audio without cancellation metadata.
+        // Surface it instead of silently deleting it at the next expiry sweep.
+        let knownIDs = Set(entries.map(\.id)).union(activeCaptureIDs)
+        for url in files where url.pathExtension == "caf" {
+            guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
+                  !knownIDs.contains(id),
+                  let modified = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  now.timeIntervalSince(modified) < Self.retention,
+                  let file = try? AVAudioFile(forReading: url), file.length > 0 else { continue }
+            let previewURL = AssemblyAIChunkStore.directory(for: url).appendingPathComponent("preview.txt")
+            let preview = (try? String(contentsOf: previewURL, encoding: .utf8)) ?? ""
+            let entry = CancelledDictation(id: id, createdAt: modified,
+                expiresAt: modified.addingTimeInterval(Self.retention),
+                duration: Double(file.length) / file.processingFormat.sampleRate,
+                preview: preview, completedTranscript: nil, hasAudio: true,
+                captureError: "Recording interrupted; saved audio may be incomplete.")
+            try JSONEncoder().encode(entry).write(to: metadataURL(id: id), options: .atomic)
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: metadataURL(id: id).path)
+            entries.append(entry)
+        }
+        entries.sort { $0.createdAt > $1.createdAt }
         for entry in entries where entry.expiresAt <= now && !retainedEntryIDs.contains(entry.id) {
             try remove(id: entry.id)
         }
         // Clean up interrupted captures and unreadable metadata after the same retention period.
         let retainedIDs = Set(entries.map(\.id)).union(activeCaptureIDs)
-        for file in files where ["caf", "json"].contains(file.pathExtension) {
+        for file in files where ["caf", "json", "chunks"].contains(file.pathExtension) {
             guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
                   !retainedIDs.contains(id), fm.fileExists(atPath: file.path),
                   let modified = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
@@ -241,7 +262,7 @@ final class DictationRecoveryStore {
             throw NSError(domain: "DictationRecovery", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "This session is currently in use."])
         }
-        for url in [audioURL(id: id), metadataURL(id: id)] where FileManager.default.fileExists(atPath: url.path) {
+        for url in [audioURL(id: id), metadataURL(id: id), AssemblyAIChunkStore.directory(for: audioURL(id: id))] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
         entries.removeAll { $0.id == id }
@@ -261,6 +282,46 @@ final class DictationRecoveryStore {
     func release(id: UUID) {
         retainedEntryIDs.remove(id)
         scheduleExpiry()
+    }
+
+    /// A preview is explicitly copyable even when recognition cannot finish.
+    /// Never pretend it is the completed transcript or delete the source audio.
+    func copyableText(for entry: CancelledDictation) -> String {
+        if let completed = entry.completedTranscript, !completed.isEmpty { return completed }
+        let cached = (try? String(contentsOf: AssemblyAIChunkStore.directory(for: audioURL(id: entry.id))
+            .appendingPathComponent("preview.txt"), encoding: .utf8)) ?? ""
+        let chunkText = CancelledDictation.joining(entry.transcriptPrefix ?? "", cached)
+        return entry.preview.count >= chunkText.count ? entry.preview : chunkText
+    }
+
+    /// The caller retains the entry while the save panel and export are active.
+    func exportAudio(id: UUID, to destination: URL) async throws {
+        let source = audioURL(id: id)
+        guard source.standardizedFileURL != destination.standardizedFileURL else { return }
+        try await Task.detached(priority: .userInitiated) {
+            let input = try AVAudioFile(forReading: source)
+            let temporary = destination.deletingLastPathComponent()
+                .appendingPathComponent(".dictation-export-\(UUID()).wav")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            do {
+                let output = try AVAudioFile(forWriting: temporary, settings: input.processingFormat.settings)
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 16_000) else {
+                    throw TranscriptionError.audioFormatError
+                }
+                while input.framePosition < input.length {
+                    try Task.checkCancellation()
+                    try input.read(into: buffer)
+                    guard buffer.frameLength > 0 else { break }
+                    try output.write(from: buffer)
+                }
+            } // Close the WAV before making it visible at its final path.
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: destination)
+            }
+        }.value
     }
 
     func audioURL(id: UUID) -> URL { directory.appendingPathComponent(id.uuidString + ".caf") }
