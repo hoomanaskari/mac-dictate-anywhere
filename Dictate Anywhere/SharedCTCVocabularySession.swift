@@ -56,6 +56,12 @@ nonisolated struct SharedCTCVocabularySession: Sendable {
     func rescore(_ original: ASRResult, samples: [Float]) async throws -> String {
         guard !vocabulary.terms.isEmpty, let timings = original.tokenTimings, !timings.isEmpty,
               !samples.isEmpty else { return original.text }
+        // Use the same candidate rules and threshold as the acoustic scorer.
+        guard rescorer.hasCTCRescoringCandidates(transcript: original.text, tokenTimings: timings,
+            minSimilarity: max(thresholds.minSimilarity, vocabulary.minSimilarity)) else {
+            try Task.checkCancellation()
+            return original.text
+        }
         let evidence = try await logProbabilities(samples: samples)
         try Task.checkCancellation()
         let result = rescorer.ctcTokenRescore(transcript: original.text, tokenTimings: timings,

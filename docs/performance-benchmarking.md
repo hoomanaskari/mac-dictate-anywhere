@@ -50,6 +50,7 @@ compile both app and tests with `-O` for consistent helper comparisons.
 | Component | Coverage |
 | --- | --- |
 | Offline ASR | Replays the bundled speech fixture through installed Parakeet and available Apple Speech engines. Reports latency, duration, median real-time factor, and beginning/end recognition sentinels. |
+| Vocabulary preflight | Uses a human proper-name recording to require that eligible corrections still run and unrelated vocabulary preserves the original transcript on both separate and shared CTC paths. Requires installed Parakeet v3 or 110M and CTC assets; never downloads models. |
 | Mandarin ASR quality | Replays the four bundled, referenced Mandarin fixtures through installed SenseVoice. Reports CER and per-fixture p50/p95; skips if the model is not installed. |
 | User audio quality | If both `PIPELINE_BENCHMARK_AUDIO_PATH` and `PIPELINE_BENCHMARK_REFERENCE_PATH` are provided, replays a local 16 kHz mono fixture and reports WER. No audio or reference content is uploaded or logged by the harness. |
 | Audio polling | Processes fixed sample windows and measures RMS/smoothing plus meaningful-display-change decisions. |
@@ -96,6 +97,13 @@ offline ASR and recovery timings report p50/p95, and XCTest records CPU/memory
 for the synchronous workload tests. These are not whole-app CPU or peak-memory
 measurements. Energy, thermal state, microphone callback overruns, and live UI
 latency still require Instruments and real app runs before product decisions.
+
+For vocabulary preflight changes, compare final text with the always-run
+acoustic path using identical SDK, model files and correction settings. This
+checks optimization equivalence. Vocabulary accuracy against the recording's
+reference is a separate check: an existing over-correction in both paths is not
+a regression caused by skipping inference. The preflight must still run CTC
+whenever the SDK's candidate or acoustic-rescue rules require evidence.
 
 `OverlayContentTests` always runs in the normal test suite. It evaluates the
 production preview and waveform bodies under Observation tracking and proves

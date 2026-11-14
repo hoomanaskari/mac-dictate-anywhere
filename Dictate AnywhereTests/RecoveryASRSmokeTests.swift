@@ -1,5 +1,6 @@
 import XCTest
 @preconcurrency import AVFoundation
+@preconcurrency import CoreML
 import Speech
 import FluidAudio
 @testable import Dictate_Anywhere
@@ -81,6 +82,45 @@ final class RecoveryASRSmokeTests: XCTestCase {
             await manager.cleanup()
             throw error
         }
+    }
+
+    /// A false preflight must preserve the caller's exact transcript, while a
+    /// real proper-name correction must still reach both acoustic backends.
+    func testVocabularyPreflightPreservesCorrections() async throws {
+        let directory = CtcModels.defaultCacheDirectory(for: .ctc110m)
+        let files = FileManager.default
+        try XCTSkipUnless(["MelSpectrogram.mlmodelc", "AudioEncoder.mlmodelc", "CtcHead.mlmodelc", "tokenizer.json"].allSatisfy {
+            files.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }, "Install vocabulary assets first; this check never downloads models")
+        let ctcModels = try await CtcModels.loadDirect(from: directory, variant: .ctc110m)
+        let samples = try fixtureSamples(named: "vocabulary-names")
+        let name = "Solanki"
+        var checked = 0
+        for (choice, version) in [(ParakeetModelChoice.multilingual, AsrModelVersion.v3), (.compactEnglish, .tdtCtc110m)] {
+            guard ParakeetEngine().checkModelOnDisk(for: choice) else { continue }
+            let models = try AsrModels.loadLocal(from: AsrModels.defaultCacheDirectory(for: version), version: version)
+            let manager = AsrManager(config: BatchTranscriptionPolicy.asrConfig, models: models)
+            var state = TdtDecoderState.make(decoderLayers: version.decoderLayers)
+            let original = try await manager.transcribe(samples, decoderState: &state)
+            let head = try await MLModel.load(contentsOf: directory.appendingPathComponent("CtcHead.mlmodelc"),
+                                              configuration: models.configuration)
+            let irrelevant = try await PreparedTDTVocabulary.prepare(models: models,
+                terms: ["Czechoslovakia", "photosynthesis"], cachedCTCModels: ctcModels, cachedHead: head)
+            let unchanged = try await irrelevant.rescore(original, samples: samples)
+            XCTAssertEqual(unchanged, original.text, "Unrelated vocabulary changed the transcript for \(choice.rawValue)")
+            XCTAssertFalse(original.text.localizedCaseInsensitiveContains(name),
+                           "Refresh the fixture if the base model learns this name; the check must exercise a correction")
+            let eligible = try await PreparedTDTVocabulary.prepare(models: models, terms: [name],
+                cachedCTCModels: ctcModels, cachedHead: head)
+            let corrected = try await eligible.rescore(original, samples: samples)
+            XCTAssertTrue(corrected.localizedCaseInsensitiveContains(name),
+                          "Preflight lost the eligible correction for \(choice.rawValue): \(corrected)")
+            XCTAssertTrue(corrected.localizedCaseInsensitiveContains("said the accused appeared in court with covered faces"),
+                          "Vocabulary correction dropped the words following the name for \(choice.rawValue): \(corrected)")
+            await manager.cleanup()
+            checked += 1
+        }
+        try XCTSkipUnless(checked > 0, "Install Parakeet v3 or 110M first")
     }
 
     private func checkFluidAudioRecovery(model: ParakeetModelChoice) async throws {
