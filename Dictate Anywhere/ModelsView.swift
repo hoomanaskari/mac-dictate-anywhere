@@ -372,7 +372,9 @@ struct ModelsView: View {
         DSSection(overline: "Internal Prompts") {
             DSDetailRow(
                 label: "Customize prompts",
-                caption: "Edit AssemblyAI recognition, cleanup, destination, writing-style, and field-context instructions."
+                caption: settings.assemblyAIOutputMode == .polished
+                    ? "Edit AssemblyAI recognition, cleanup, destination, writing-style, and field-context instructions."
+                    : "Edit the context AssemblyAI uses for speech recognition."
             ) {
                 Button("Customize…") {
                     appState.selectedPage = .internalPrompts

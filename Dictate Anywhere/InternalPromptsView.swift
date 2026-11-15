@@ -40,36 +40,42 @@ struct InternalPromptsView: View {
         DSPage {
             DSSectionHeader(
                 title: "Customize Internal Prompts",
-                subtitle: "Fine-tune the instructions AssemblyAI uses to recognize, clean, and format your dictation."
+                subtitle: settings.assemblyAIOutputMode == .polished
+                    ? "Fine-tune the instructions AssemblyAI uses to recognize, clean, and format your dictation."
+                    : "Fine-tune the context AssemblyAI uses to recognize your dictation."
             )
 
             DSHint(
-                text: "Recognition prompts are always used. Cleanup, destination, style, and field-context prompts apply only when Output is set to Polished. Insertion and privacy safeguards remain protected. Keep prompts concise: applicable preferences share a limited instruction budget and long prompts may be shortened."
+                text: settings.assemblyAIOutputMode == .polished
+                    ? "Recognition prompts are always used. Cleanup, destination, style, and field-context prompts apply to polished output. Insertion and privacy safeguards remain protected. Keep prompts concise: applicable preferences share a limited instruction budget and long prompts may be shortened."
+                    : "Recognition context helps AssemblyAI identify words accurately. Keep prompts focused on the subject and terminology of your dictation."
             )
 
-            DSSection(overline: "Cleanup") {
-                promptRows(cleanupPrompts, settings: settings)
-                DSDivider()
-                additionalInstructionsEditor(settings: settings)
+            if settings.assemblyAIOutputMode == .polished {
+                DSSection(overline: "Cleanup") {
+                    promptRows(cleanupPrompts, settings: settings)
+                    DSDivider()
+                    additionalInstructionsEditor(settings: settings)
+                }
+
+                promptSection(
+                    overline: "Destination Type",
+                    prompts: destinationPrompts,
+                    settings: settings
+                )
+
+                promptSection(
+                    overline: "Writing Style",
+                    prompts: stylePrompts,
+                    settings: settings
+                )
+
+                promptSection(
+                    overline: "Field Context",
+                    prompts: fieldContextPrompts,
+                    settings: settings
+                )
             }
-
-            promptSection(
-                overline: "Destination Type",
-                prompts: destinationPrompts,
-                settings: settings
-            )
-
-            promptSection(
-                overline: "Writing Style",
-                prompts: stylePrompts,
-                settings: settings
-            )
-
-            promptSection(
-                overline: "Field Context",
-                prompts: fieldContextPrompts,
-                settings: settings
-            )
 
             promptSection(
                 overline: "Recognition Context",
