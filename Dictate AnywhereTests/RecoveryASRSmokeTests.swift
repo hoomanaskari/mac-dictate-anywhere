@@ -84,8 +84,9 @@ final class RecoveryASRSmokeTests: XCTestCase {
         }
     }
 
-    /// A false preflight must preserve the caller's exact transcript, while a
-    /// real proper-name correction must still reach both acoustic backends.
+    /// A false preflight must skip CTC inference and preserve the caller's exact
+    /// transcript, while a real proper-name correction must still reach both
+    /// acoustic backends.
     func testVocabularyPreflightPreservesCorrections() async throws {
         let directory = CtcModels.defaultCacheDirectory(for: .ctc110m)
         let files = FileManager.default
@@ -95,9 +96,16 @@ final class RecoveryASRSmokeTests: XCTestCase {
         let ctcModels = try await CtcModels.loadDirect(from: directory, variant: .ctc110m)
         let samples = try fixtureSamples(named: "vocabulary-names")
         let name = "Solanki"
-        var checked = 0
-        for (choice, version) in [(ParakeetModelChoice.multilingual, AsrModelVersion.v3), (.compactEnglish, .tdtCtc110m)] {
-            guard ParakeetEngine().checkModelOnDisk(for: choice) else { continue }
+        let inferenceProbe = VocabularyInferenceProbe()
+        var checkedPaths: [String] = []
+        for (choice, version, path) in [
+            (ParakeetModelChoice.multilingual, AsrModelVersion.v3, "separate"),
+            (.compactEnglish, .tdtCtc110m, "shared")
+        ] {
+            guard ParakeetEngine().checkModelOnDisk(for: choice) else {
+                print("VOCABULARY_PREFLIGHT backend=\(choice.rawValue) path=\(path) status=skipped reason=model_not_installed")
+                continue
+            }
             let models = try AsrModels.loadLocal(from: AsrModels.defaultCacheDirectory(for: version), version: version)
             let manager = AsrManager(config: BatchTranscriptionPolicy.asrConfig, models: models)
             var state = TdtDecoderState.make(decoderLayers: version.decoderLayers)
@@ -106,21 +114,33 @@ final class RecoveryASRSmokeTests: XCTestCase {
                                               configuration: models.configuration)
             let irrelevant = try await PreparedTDTVocabulary.prepare(models: models,
                 terms: ["Czechoslovakia", "photosynthesis"], cachedCTCModels: ctcModels, cachedHead: head)
-            let unchanged = try await irrelevant.rescore(original, samples: samples)
-            XCTAssertEqual(unchanged, original.text, "Unrelated vocabulary changed the transcript for \(choice.rawValue)")
-            XCTAssertFalse(original.text.localizedCaseInsensitiveContains(name),
-                           "Refresh the fixture if the base model learns this name; the check must exercise a correction")
             let eligible = try await PreparedTDTVocabulary.prepare(models: models, terms: [name],
                 cachedCTCModels: ctcModels, cachedHead: head)
-            let corrected = try await eligible.rescore(original, samples: samples)
+            inferenceProbe.reset()
+            let unchanged = try await irrelevant.rescore(original, samples: samples,
+                onCTCInference: inferenceProbe.record)
+            let unrelatedInferences = inferenceProbe.count
+            XCTAssertEqual(unchanged, original.text, "Unrelated vocabulary changed the transcript for \(choice.rawValue)")
+            XCTAssertEqual(unrelatedInferences, 0,
+                           "Unrelated vocabulary ran CTC inference for \(choice.rawValue)")
+            XCTAssertFalse(original.text.localizedCaseInsensitiveContains(name),
+                           "Refresh the fixture if the base model learns this name; the check must exercise a correction")
+            inferenceProbe.reset()
+            let corrected = try await eligible.rescore(original, samples: samples,
+                onCTCInference: inferenceProbe.record)
+            let eligibleInferences = inferenceProbe.count
+            XCTAssertGreaterThan(eligibleInferences, 0,
+                                 "Eligible vocabulary never invoked CTC inference for \(choice.rawValue)")
             XCTAssertTrue(corrected.localizedCaseInsensitiveContains(name),
                           "Preflight lost the eligible correction for \(choice.rawValue): \(corrected)")
             XCTAssertTrue(corrected.localizedCaseInsensitiveContains("said the accused appeared in court with covered faces"),
                           "Vocabulary correction dropped the words following the name for \(choice.rawValue): \(corrected)")
             await manager.cleanup()
-            checked += 1
+            checkedPaths.append(path)
+            print("VOCABULARY_PREFLIGHT backend=\(choice.rawValue) path=\(path) status=checked unrelated_ctc_inference_calls=\(unrelatedInferences) eligible_ctc_inference_calls=\(eligibleInferences) original=\(original.text) corrected=\(corrected)")
         }
-        try XCTSkipUnless(checked > 0, "Install Parakeet v3 or 110M first")
+        try XCTSkipUnless(checkedPaths.count == 2,
+                          "Install both Parakeet v3 (separate) and compact English 110M (shared); checked \(checkedPaths)")
     }
 
     private func checkFluidAudioRecovery(model: ParakeetModelChoice) async throws {
@@ -419,5 +439,20 @@ final class RecoveryASRSmokeTests: XCTestCase {
         }
         if let error { throw error }
         return Array(UnsafeBufferPointer(start: output.floatChannelData![0], count: Int(output.frameLength)))
+    }
+}
+
+nonisolated private final class VocabularyInferenceProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+
+    var count: Int { lock.withLock { calls } }
+
+    func reset() {
+        lock.withLock { calls = 0 }
+    }
+
+    func record() {
+        lock.withLock { calls += 1 }
     }
 }

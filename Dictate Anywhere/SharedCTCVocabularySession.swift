@@ -53,7 +53,8 @@ nonisolated struct SharedCTCVocabularySession: Sendable {
                     thresholds: ContextBiasingConstants.rescorerConfig(forVocabSize: vocabulary.terms.count))
     }
 
-    func rescore(_ original: ASRResult, samples: [Float]) async throws -> String {
+    func rescore(_ original: ASRResult, samples: [Float],
+                 onCTCInference: (@Sendable () -> Void)? = nil) async throws -> String {
         guard !vocabulary.terms.isEmpty, let timings = original.tokenTimings, !timings.isEmpty,
               !samples.isEmpty else { return original.text }
         // Use the same candidate rules and threshold as the acoustic scorer.
@@ -62,6 +63,7 @@ nonisolated struct SharedCTCVocabularySession: Sendable {
             try Task.checkCancellation()
             return original.text
         }
+        onCTCInference?()
         let evidence = try await logProbabilities(samples: samples)
         try Task.checkCancellation()
         let result = rescorer.ctcTokenRescore(transcript: original.text, tokenTimings: timings,

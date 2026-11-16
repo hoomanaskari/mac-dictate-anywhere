@@ -50,7 +50,7 @@ compile both app and tests with `-O` for consistent helper comparisons.
 | Component | Coverage |
 | --- | --- |
 | Offline ASR | Replays the bundled speech fixture through installed Parakeet and available Apple Speech engines. Reports latency, duration, median real-time factor, and beginning/end recognition sentinels. |
-| Vocabulary preflight | Uses a human proper-name recording to require that eligible corrections still run and unrelated vocabulary preserves the original transcript on both separate and shared CTC paths. Requires installed Parakeet v3 or 110M and CTC assets; never downloads models. |
+| Vocabulary preflight | Uses a human proper-name recording to require that unrelated vocabulary skips CTC inference, preserves the original transcript, and that eligible corrections still run on both separate and shared CTC paths. Requires both installed Parakeet v3 and compact English 110M plus CTC assets; never downloads models. |
 | Mandarin ASR quality | Replays the four bundled, referenced Mandarin fixtures through installed SenseVoice. Reports CER and per-fixture p50/p95; skips if the model is not installed. |
 | User audio quality | If both `PIPELINE_BENCHMARK_AUDIO_PATH` and `PIPELINE_BENCHMARK_REFERENCE_PATH` are provided, replays a local 16 kHz mono fixture and reports WER. No audio or reference content is uploaded or logged by the harness. |
 | Audio polling | Processes fixed sample windows and measures RMS/smoothing plus meaningful-display-change decisions. |

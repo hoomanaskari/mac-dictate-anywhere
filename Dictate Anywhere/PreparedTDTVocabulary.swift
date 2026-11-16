@@ -27,9 +27,11 @@ nonisolated enum PreparedTDTVocabulary: Sendable {
         return .separate(session, ctcModels)
     }
 
-    func rescore(_ original: ASRResult, samples: [Float]) async throws -> String {
+    func rescore(_ original: ASRResult, samples: [Float],
+                 onCTCInference: (@Sendable () -> Void)? = nil) async throws -> String {
         switch self {
-        case .shared(let session): return try await session.rescore(original, samples: samples)
+        case .shared(let session):
+            return try await session.rescore(original, samples: samples, onCTCInference: onCTCInference)
         case .separate(let session, _):
             // Only transcript replacements are consumed here. The SDK's exact
             // preflight can skip CTC when no correction needs acoustic evidence.
@@ -37,6 +39,7 @@ nonisolated enum PreparedTDTVocabulary: Sendable {
                 try Task.checkCancellation()
                 return original.text
             }
+            onCTCInference?()
             let output = await session.rescore(text: original.text, tokenTimings: original.tokenTimings ?? [], audioSamples: samples)
             try Task.checkCancellation()
             return output?.wasModified == true ? output!.text : original.text

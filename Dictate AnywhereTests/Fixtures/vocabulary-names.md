@@ -16,5 +16,6 @@ Reference from `data/en_us/test.tsv`:
 SHA-256: `509bc6279b6549a1ed01a712950f0593e43380204f77f39a4fdd11bd216c68c0`.
 
 The vocabulary preflight regression uses this recording to prove that an
-eligible proper-name correction still runs on both separate and shared CTC
-paths, while an unrelated vocabulary leaves the original transcript intact.
+unrelated vocabulary skips CTC inference and leaves the original transcript
+intact, while an eligible proper-name correction still runs on both separate
+and shared CTC paths.
