@@ -80,6 +80,22 @@ final class AppleSpeechEngine: TranscriptionEngine {
     var audioSamples: [Float] {
         stateLock.withLock { levelSampleBuffer.samples }
     }
+    var endOfUtteranceHandler: (() -> Void)?
+    private var silenceDetector: AppleSpeechSilenceDetector?
+
+    var isSpeechDetectionDownloaded: Bool {
+        BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
+    }
+    private(set) var isSpeechDetectionDownloading: Bool = false
+
+    func downloadSpeechDetection() async throws {
+        guard !isSpeechDetectionDownloading else { return }
+        isSpeechDetectionDownloading = true
+        defer { isSpeechDetectionDownloading = false }
+        _ = try await BatchSpeechDetection.download(
+            modelsDirectory: BatchSpeechDetection.modelURL.deletingLastPathComponent().deletingLastPathComponent()
+        )
+    }
 
     private let stateLock = NSLock()
     private var transcript = ""
@@ -173,6 +189,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
                     contextualVocabulary: vocabulary,
                     onTranscript: { [weak self] text, isPartial in
                         self?.setTranscript(text)
+                        self?.silenceDetector?.observeTranscript(text)
                         if isPartial { self?.markFirstPartialIfNeeded(text: text) }
                     }
                 )
@@ -253,6 +270,19 @@ final class AppleSpeechEngine: TranscriptionEngine {
             if preparedVocabulary != appleContextualVocabulary() {
                 await updateSessionContextualVocabulary(sessionContextualVocabulary)
             }
+            let silenceMode = Settings.shared.appleSpeechSilenceDetectionMode
+            if silenceMode != .off {
+                let detector = AppleSpeechSilenceDetector(
+                    mode: silenceMode,
+                    onEndOfUtterance: { [weak self] in
+                        self?.endOfUtteranceHandler?()
+                    }
+                )
+                self.silenceDetector = detector
+                await detector.prepare()
+            } else {
+                self.silenceDetector = nil
+            }
             let controller = try await startAudioCaptureOffMainActor(
                 timeout: audioCaptureStartupTimeout,
                 queue: audioCaptureSetupQueue,
@@ -265,18 +295,23 @@ final class AppleSpeechEngine: TranscriptionEngine {
                     recoveryCapture?.append(samples)
                     guard let self, let session else { return }
                     self.appendLevelSamples(samples)
+                    self.silenceDetector?.append(samples: samples)
                     session.append(samples: samples)
                 }
             }
             guard audioCaptureStartupCancellation === startupCancellation,
                   activeSession === session else {
                 controller.stop()
+                silenceDetector?.reset()
+                silenceDetector = nil
                 throw CancellationError()
             }
             audioCaptureStartupCancellation = nil
             audioCaptureController = controller
             logger.info("Apple Speech recording started")
         } catch {
+            silenceDetector?.reset()
+            silenceDetector = nil
             if audioCaptureStartupCancellation === startupCancellation {
                 audioCaptureStartupCancellation = nil
             }
@@ -292,6 +327,10 @@ final class AppleSpeechEngine: TranscriptionEngine {
     #if DEBUG
     func installAudioCaptureControllerForTesting(_ controller: AudioCaptureController) {
         audioCaptureController = controller
+    }
+
+    func installSilenceDetectorForTesting(_ detector: AppleSpeechSilenceDetector) {
+        self.silenceDetector = detector
     }
     #endif
 
@@ -311,6 +350,8 @@ final class AppleSpeechEngine: TranscriptionEngine {
         let trace = PerfTrace.begin("stt.stopToFinal")
         defer { trace.end() }
         stopAudioCapture()
+        silenceDetector?.reset()
+        silenceDetector = nil
 
         guard let session = activeSession else { return currentTranscript }
         let finalTranscript = await PerfTrace.measure("stt.finalize") {
@@ -326,6 +367,8 @@ final class AppleSpeechEngine: TranscriptionEngine {
         audioCaptureStartupCancellation?.cancel()
         audioCaptureStartupCancellation = nil
         stopAudioCapture(outcome: "cancelled")
+        silenceDetector?.reset()
+        silenceDetector = nil
         await activeSession?.cancel()
         activeSession = nil
         setTranscript("")
