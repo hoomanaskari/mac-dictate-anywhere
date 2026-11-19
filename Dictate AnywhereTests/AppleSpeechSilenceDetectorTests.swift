@@ -189,4 +189,26 @@ final class AppleSpeechSilenceDetectorTests: XCTestCase {
         detector.append(samples: makeSilenceSamples(count: 20_000))
         XCTAssertEqual(triggerCount, 1, "Silero VAD mode must gracefully fallback to inbuilt detection when model is missing")
     }
+
+    @MainActor
+    func testAppleSpeechEngineWiresEndOfUtteranceHandler() {
+        let engine = AppleSpeechEngine()
+        var eouInvoked = false
+        engine.endOfUtteranceHandler = {
+            eouInvoked = true
+        }
+
+        let detector = AppleSpeechSilenceDetector(
+            mode: .inbuilt,
+            onEndOfUtterance: {
+                engine.endOfUtteranceHandler?()
+            }
+        )
+        engine.installSilenceDetectorForTesting(detector)
+
+        detector.append(samples: makeSpeechSamples(count: 5_000))
+        detector.append(samples: makeSilenceSamples(count: 20_000))
+
+        XCTAssertTrue(eouInvoked, "Engine endOfUtteranceHandler must be called when detector triggers")
+    }
 }

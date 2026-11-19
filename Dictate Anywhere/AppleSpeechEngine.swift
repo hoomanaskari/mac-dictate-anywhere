@@ -20,6 +20,7 @@ protocol AppleSpeechSessionProtocol: AnyObject, Sendable {
     func updateContextualVocabulary(_ terms: [String]) async throws
 }
 
+@Observable
 final class AppleSpeechEngine: TranscriptionEngine {
     typealias SessionFactory = @MainActor @Sendable (
         SupportedLanguage, [String]
@@ -83,9 +84,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
     var endOfUtteranceHandler: (() -> Void)?
     private var silenceDetector: AppleSpeechSilenceDetector?
 
-    var isSpeechDetectionDownloaded: Bool {
-        BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
-    }
+    private(set) var isSpeechDetectionDownloaded: Bool = BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
     private(set) var isSpeechDetectionDownloading: Bool = false
 
     func downloadSpeechDetection() async throws {
@@ -95,6 +94,11 @@ final class AppleSpeechEngine: TranscriptionEngine {
         _ = try await BatchSpeechDetection.download(
             modelsDirectory: BatchSpeechDetection.modelURL.deletingLastPathComponent().deletingLastPathComponent()
         )
+        isSpeechDetectionDownloaded = BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
+    }
+
+    func refreshSpeechDetectionDownloaded() {
+        isSpeechDetectionDownloaded = BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
     }
 
     private let stateLock = NSLock()

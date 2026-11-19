@@ -232,6 +232,9 @@ struct ModelsView: View {
                  ? "This will remove the \(model.streamingPresetTitle) download for \(model.displayName) (\(model.sizeSummary)). Other preset downloads are kept. You can download it again later."
                  : "This will remove the \(model.displayName) speech model (\(model.sizeSummary)). You can download it again later.")
         }
+        .onAppear {
+            appState.appleSpeechEngine.refreshSpeechDetectionDownloaded()
+        }
     }
 
 

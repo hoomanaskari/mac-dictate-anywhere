@@ -106,7 +106,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             if let vad = try await BatchSpeechDetection.loadCached(at: vadModelURL) {
                 lock.withLock {
                     self.vadManager = vad
-                    self.vadStreamState = vad.makeStreamState()
+                    self.vadStreamState = VadStreamState.initial()
                 }
                 startVadProcessingLoop(vad: vad)
             } else {
@@ -133,6 +133,9 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
             if mode == .sileroVAD, vadManager != nil {
                 vadPendingSamples.append(contentsOf: samples)
+                if vadPendingSamples.count > Self.sampleRate * 10 {
+                    vadPendingSamples.removeFirst(vadPendingSamples.count - Self.sampleRate * 10)
+                }
                 vadContinuation?.yield()
                 return .none
             } else {
@@ -230,12 +233,27 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
                         let result = try await vad.processStreamingChunk(chunk, state: currentState, config: config)
                         let shouldTrigger: Bool = self.lock.withLock {
                             self.vadStreamState = result.state
+                            self.samplesSinceLastTranscriptChange += chunk.count
+
                             if result.state.triggered || result.event?.kind == .speechStart {
                                 self.hasSpeechStarted = true
+                                self.consecutiveSilenceSamples = 0
+                            } else if result.probability < 0.3 {
+                                if self.hasSpeechStarted {
+                                    self.consecutiveSilenceSamples += chunk.count
+                                }
                             }
-                            if self.hasSpeechStarted && !self.isTriggered && (result.event?.kind == .speechEnd) {
-                                self.isTriggered = true
-                                return true
+
+                            if self.hasSpeechStarted && !self.isTriggered {
+                                if result.event?.kind == .speechEnd {
+                                    self.isTriggered = true
+                                    return true
+                                }
+                                if self.consecutiveSilenceSamples >= Self.requiredSilenceSamples,
+                                   self.samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples {
+                                    self.isTriggered = true
+                                    return true
+                                }
                             }
                             return false
                         }
@@ -246,6 +264,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
                             return
                         }
                     } catch {
+                        if error is CancellationError || Task.isCancelled { break }
                         self.logger.error("VAD chunk processing error: \(error.localizedDescription, privacy: .public)")
                     }
                 }
@@ -264,8 +283,8 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             lastTranscript = ""
             samplesSinceLastTranscriptChange = 0
             vadPendingSamples.removeAll(keepingCapacity: true)
-            if let vad = vadManager {
-                vadStreamState = vad.makeStreamState()
+            if vadManager != nil {
+                vadStreamState = VadStreamState.initial()
             }
         }
         vadProcessingTask?.cancel()
