@@ -211,4 +211,156 @@ final class AppleSpeechSilenceDetectorTests: XCTestCase {
 
         XCTAssertTrue(eouInvoked, "Engine endOfUtteranceHandler must be called when detector triggers")
     }
+
+    func testDroppedUnusedPreparedDetectorDeallocatesImmediately() async {
+        weak var weakDetector: AppleSpeechSilenceDetector?
+        do {
+            let detector = AppleSpeechSilenceDetector(
+                mode: .inbuilt,
+                onEndOfUtterance: {}
+            )
+            weakDetector = detector
+            XCTAssertNotNil(weakDetector)
+        }
+        XCTAssertNil(weakDetector, "Unused detector must deallocate when dropped without requiring explicit reset()")
+
+        weak var weakSileroDetector: AppleSpeechSilenceDetector?
+        do {
+            let detector = AppleSpeechSilenceDetector(
+                mode: .sileroVAD,
+                onEndOfUtterance: {}
+            )
+            await detector.prepare()
+            weakSileroDetector = detector
+            XCTAssertNotNil(weakSileroDetector)
+        }
+        XCTAssertNil(weakSileroDetector, "Prepared Silero detector must deallocate when dropped without requiring explicit reset()")
+    }
+
+    func testContinuousSilenceRequiredAndQuietAudioResetsSilenceCounter() {
+        var triggerCount = 0
+        let detector = AppleSpeechSilenceDetector(
+            mode: .inbuilt,
+            onEndOfUtterance: { triggerCount += 1 }
+        )
+
+        // 1. Arm with speech (~300ms)
+        detector.append(samples: makeSpeechSamples(count: 5_000, amplitude: 0.1))
+        XCTAssertTrue(detector.debugHasSpeechStarted)
+
+        // 2. Feed 562 ms of silence (9,000 samples @ 16 kHz, below 17,600 required)
+        detector.append(samples: makeSilenceSamples(count: 9_000))
+        XCTAssertEqual(triggerCount, 0)
+        XCTAssertEqual(detector.debugConsecutiveSilenceSamples, 9_000)
+
+        // 3. Feed 1 second of audio in the dead zone between 0.004 and 0.006 RMS (amplitude 0.007 -> RMS ~0.00495)
+        let quietAudio = makeSpeechSamples(count: 16_000, amplitude: 0.007)
+        detector.append(samples: quietAudio)
+        XCTAssertEqual(triggerCount, 0)
+        XCTAssertEqual(detector.debugConsecutiveSilenceSamples, 0, "Audio above silence threshold must reset consecutive silence samples")
+
+        // 4. Feed another 550 ms of silence (8,800 samples, below 17,600 required)
+        detector.append(samples: makeSilenceSamples(count: 8_800))
+        XCTAssertEqual(triggerCount, 0, "Split silence pauses must not sum together to trigger premature auto-stop")
+
+        // 5. Feed remaining silence to reach a full continuous 1.1s (17,600 samples)
+        detector.append(samples: makeSilenceSamples(count: 8_800))
+        XCTAssertEqual(triggerCount, 1, "Full continuous silence interval must trigger auto-stop")
+    }
+
+    func testSileroSpeechEndPendingWaitsForTranscriptToSettle() {
+        var triggerCount = 0
+        let detector = AppleSpeechSilenceDetector(
+            mode: .sileroVAD,
+            onEndOfUtterance: { triggerCount += 1 }
+        )
+
+        // Simulate speech start and transcript
+        detector.observeTranscript("Hello world")
+        XCTAssertTrue(detector.debugHasSpeechStarted)
+
+        // Simulate speechEnd event while transcript is still actively updating every 256ms (4,096 samples)
+        detector.debugSimulateSpeechEndEvent()
+        XCTAssertTrue(detector.debugIsSpeechEndPending)
+
+        // Supply audio chunks with transcript updates every 256ms (4,096 samples < 12,800 required)
+        detector.append(samples: makeSilenceSamples(count: 4_096))
+        detector.observeTranscript("Hello world, still speaking")
+        XCTAssertEqual(triggerCount, 0, "Must not trigger while transcript is actively updating")
+
+        detector.append(samples: makeSilenceSamples(count: 4_096))
+        detector.observeTranscript("Hello world, still speaking more")
+        XCTAssertEqual(triggerCount, 0, "Must not trigger while transcript is actively updating")
+
+        // Now transcript settles: feed silence to exceed requiredTranscriptInactivitySamples (12,800 samples = 0.8s)
+        detector.append(samples: makeSilenceSamples(count: 13_000))
+        XCTAssertEqual(triggerCount, 1, "Detector must trigger once transcript settles after speechEnd")
+    }
+
+    @MainActor
+    func testLateCallbackFromPreviousRecordingIsIgnored() async {
+        let engine = AppleSpeechEngine()
+        var triggerCount = 0
+        engine.endOfUtteranceHandler = {
+            triggerCount += 1
+        }
+
+        let recording1ID = UUID()
+        let detector1 = AppleSpeechSilenceDetector(
+            mode: .inbuilt,
+            onEndOfUtterance: {
+                Task { @MainActor [weak engine] in
+                    guard let engine else { return }
+                    let isCurrent = engine.isCurrentRecordingIDForTesting(recording1ID)
+                    guard isCurrent else { return }
+                    engine.endOfUtteranceHandler?()
+                }
+            }
+        )
+        engine.installSilenceDetectorForTesting(detector1, recordingID: recording1ID)
+
+        // Start a new recording (recording 2) which changes currentRecordingID
+        let recording2ID = UUID()
+        let detector2 = AppleSpeechSilenceDetector(
+            mode: .inbuilt,
+            onEndOfUtterance: {}
+        )
+        engine.installSilenceDetectorForTesting(detector2, recordingID: recording2ID)
+
+        // Now detector1 fires late callback
+        detector1.append(samples: makeSpeechSamples(count: 5_000))
+        detector1.append(samples: makeSilenceSamples(count: 20_000))
+
+        // Give MainActor task time to run
+        try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(triggerCount, 0, "Late callback from previous recording ID must be ignored")
+    }
+
+    func testDetectorTeardownConcurrentWithAudioAndTranscript() async {
+        let detector = AppleSpeechSilenceDetector(
+            mode: .inbuilt,
+            onEndOfUtterance: {}
+        )
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for _ in 0..<100 {
+                    detector.append(samples: [Float](repeating: 0.1, count: 512))
+                    detector.observeTranscript("Sample text")
+                }
+            }
+            group.addTask {
+                for _ in 0..<100 {
+                    detector.append(samples: [Float](repeating: 0, count: 512))
+                }
+            }
+            group.addTask {
+                for _ in 0..<50 {
+                    detector.reset()
+                }
+            }
+        }
+        XCTAssertFalse(detector.debugIsTriggered)
+    }
 }

@@ -78,6 +78,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
     private var vadPendingSamples: [Float] = []
     private var vadProcessingTask: Task<Void, Never>?
     private var vadContinuation: AsyncStream<Void>.Continuation?
+    private var isSpeechEndPending = false
 
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "com.pixelforty.dictate-anywhere",
@@ -100,10 +101,16 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
     // MARK: - Preparation
 
-    func prepare() async {
+    func prepare(cachedVad: VadManager? = nil) async {
         guard mode == .sileroVAD else { return }
         do {
-            if let vad = try await BatchSpeechDetection.loadCached(at: vadModelURL) {
+            let vad: VadManager?
+            if let cachedVad {
+                vad = cachedVad
+            } else {
+                vad = try await BatchSpeechDetection.loadCached(at: vadModelURL)
+            }
+            if let vad {
                 // Prewarm model by running a single silent chunk through CoreML
                 _ = try? await vad.processStreamingChunk(
                     [Float](repeating: 0, count: VadManager.chunkSize), state: .initial()
@@ -180,24 +187,35 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
         samplesSinceLastTranscriptChange += samples.count
 
-        if rms >= Self.speechThresholdRMS {
-            consecutiveSpeechSamples += samples.count
-            consecutiveSilenceSamples = 0
-            if consecutiveSpeechSamples >= Self.minSpeechSamplesToArm {
-                hasSpeechStarted = true
-            }
-        } else if rms < Self.silenceThresholdRMS {
+        if rms < Self.silenceThresholdRMS {
             consecutiveSpeechSamples = 0
             if hasSpeechStarted {
                 consecutiveSilenceSamples += samples.count
             }
+        } else {
+            // Audio at or above silence threshold breaks the continuous silence interval
+            consecutiveSilenceSamples = 0
+            if rms >= Self.speechThresholdRMS {
+                consecutiveSpeechSamples += samples.count
+                isSpeechEndPending = false
+                if consecutiveSpeechSamples >= Self.minSpeechSamplesToArm {
+                    hasSpeechStarted = true
+                }
+            } else {
+                consecutiveSpeechSamples = 0
+            }
         }
 
-        if hasSpeechStarted,
-           consecutiveSilenceSamples >= Self.requiredSilenceSamples,
-           samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples {
-            isTriggered = true
-            return .triggerEndOfUtterance
+        if hasSpeechStarted, !isTriggered {
+            let transcriptSettled = samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples
+            if isSpeechEndPending && transcriptSettled {
+                isTriggered = true
+                return .triggerEndOfUtterance
+            }
+            if consecutiveSilenceSamples >= Self.requiredSilenceSamples && transcriptSettled {
+                isTriggered = true
+                return .triggerEndOfUtterance
+            }
         }
 
         return .none
@@ -213,7 +231,6 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
         }
 
         vadProcessingTask = Task(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
             let config = VadSegmentationConfig(
                 minSpeechDuration: 0.25,
                 minSilenceDuration: 0.85,
@@ -222,6 +239,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
             for await _ in stream {
                 if Task.isCancelled { break }
+                guard let self else { break }
 
                 while true {
                     let chunk: [Float]? = self.lock.withLock {
@@ -242,19 +260,25 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
                             if result.state.triggered || result.event?.kind == .speechStart {
                                 self.hasSpeechStarted = true
                                 self.consecutiveSilenceSamples = 0
-                            } else if result.probability < 0.3 {
-                                if self.hasSpeechStarted {
-                                    self.consecutiveSilenceSamples += chunk.count
+                                self.isSpeechEndPending = false
+                            } else {
+                                if result.event?.kind == .speechEnd {
+                                    self.isSpeechEndPending = true
+                                }
+                                if result.probability < 0.3 {
+                                    if self.hasSpeechStarted {
+                                        self.consecutiveSilenceSamples += chunk.count
+                                    }
                                 }
                             }
 
                             if self.hasSpeechStarted && !self.isTriggered {
-                                if result.event?.kind == .speechEnd {
+                                let transcriptSettled = self.samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples
+                                if self.isSpeechEndPending && transcriptSettled {
                                     self.isTriggered = true
                                     return true
                                 }
-                                if self.consecutiveSilenceSamples >= Self.requiredSilenceSamples,
-                                   self.samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples {
+                                if self.consecutiveSilenceSamples >= Self.requiredSilenceSamples && transcriptSettled {
                                     self.isTriggered = true
                                     return true
                                 }
@@ -286,6 +310,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             consecutiveSpeechSamples = 0
             lastTranscript = ""
             samplesSinceLastTranscriptChange = 0
+            isSpeechEndPending = false
             vadPendingSamples.removeAll(keepingCapacity: true)
             if vadManager != nil {
                 vadStreamState = VadStreamState.initial()
@@ -308,6 +333,17 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
     var debugConsecutiveSilenceSamples: Int {
         lock.withLock { consecutiveSilenceSamples }
+    }
+
+    var debugIsSpeechEndPending: Bool {
+        lock.withLock { isSpeechEndPending }
+    }
+
+    func debugSimulateSpeechEndEvent() {
+        lock.withLock {
+            hasSpeechStarted = true
+            isSpeechEndPending = true
+        }
     }
     #endif
 }
