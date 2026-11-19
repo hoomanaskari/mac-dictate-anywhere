@@ -1458,9 +1458,13 @@ final class AppState {
             "engine": engine.rawValue,
             "model": model,
             "language": language,
-            "eou_enabled": String(engine == .parakeet
-                && settings.parakeetModelChoice.supportsEndOfUtterance
-                && settings.autoStopAfterSpeechEndsEnabled),
+            "eou_enabled": String(
+                (engine == .parakeet
+                    && settings.parakeetModelChoice.supportsEndOfUtterance
+                    && settings.autoStopAfterSpeechEndsEnabled)
+                || (engine == .appleSpeech
+                    && settings.appleSpeechSilenceDetectionMode != .off)
+            ),
             "cleanup_mode": settings.transcriptPostProcessingMode.rawValue,
             "s1_mini_enabled": String(settings.transcriptPostProcessingMode == .s1Mini),
             "filler_removal_enabled": String(settings.isFillerWordRemovalEnabled
@@ -2588,14 +2592,22 @@ final class AppState {
         audioMonitor.reset()
     }
 
+    private func isAutoStopEnabled(for engine: TranscriptionEngine) -> Bool {
+        if engine is ParakeetEngine {
+            return settings.autoStopAfterSpeechEndsEnabled && settings.parakeetModelChoice.supportsEndOfUtterance
+        }
+        if engine is AppleSpeechEngine {
+            return settings.appleSpeechSilenceDetectionMode != .off
+        }
+        return false
+    }
+
     private func configureEndOfUtteranceHandler(for engine: TranscriptionEngine) {
-        guard let parakeet = engine as? ParakeetEngine else { return }
-        parakeet.endOfUtteranceHandler = { [weak self] in
+        engine.endOfUtteranceHandler = { [weak self] in
             PerfTrace.event("eou.detected")
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard self.settings.autoStopAfterSpeechEndsEnabled else { return }
-                guard self.settings.parakeetModelChoice.supportsEndOfUtterance else { return }
+                guard self.isAutoStopEnabled(for: engine) else { return }
                 guard self.sessionHotkeyMode == .handsFreeToggle else { return }
                 guard self.status == .recording, !self.isTransitioning else { return }
                 PerfTrace.event("eou.stop")
@@ -2605,7 +2617,7 @@ final class AppState {
     }
 
     private func clearEndOfUtteranceHandler(for engine: TranscriptionEngine) {
-        (engine as? ParakeetEngine)?.endOfUtteranceHandler = nil
+        engine.endOfUtteranceHandler = nil
     }
 
 }
