@@ -83,6 +83,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
     }
     var endOfUtteranceHandler: (() -> Void)?
     private var silenceDetector: AppleSpeechSilenceDetector?
+    private var prewarmedDetector: AppleSpeechSilenceDetector?
 
     private(set) var isSpeechDetectionDownloaded: Bool = BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL)
     private(set) var isSpeechDetectionDownloading: Bool = false
@@ -215,6 +216,20 @@ final class AppleSpeechEngine: TranscriptionEngine {
                 preparationTask = nil
                 preparationIdentity = nil
             }
+            // Prewarm silence detector if Silero VAD is selected and installed
+            if Settings.shared.appleSpeechSilenceDetectionMode == .sileroVAD,
+               isSpeechDetectionDownloaded {
+                let detector = AppleSpeechSilenceDetector(
+                    mode: .sileroVAD,
+                    onEndOfUtterance: { [weak self] in
+                        self?.endOfUtteranceHandler?()
+                    }
+                )
+                await detector.prepare()
+                self.prewarmedDetector = detector
+            } else {
+                self.prewarmedDetector = nil
+            }
         } catch {
             if preparationGeneration == generation {
                 preparationTask = nil
@@ -276,14 +291,20 @@ final class AppleSpeechEngine: TranscriptionEngine {
             }
             let silenceMode = Settings.shared.appleSpeechSilenceDetectionMode
             if silenceMode != .off {
-                let detector = AppleSpeechSilenceDetector(
-                    mode: silenceMode,
-                    onEndOfUtterance: { [weak self] in
-                        self?.endOfUtteranceHandler?()
-                    }
-                )
+                let detector: AppleSpeechSilenceDetector
+                if let prewarmed = prewarmedDetector, prewarmed.mode == silenceMode {
+                    detector = prewarmed
+                    self.prewarmedDetector = nil
+                } else {
+                    detector = AppleSpeechSilenceDetector(
+                        mode: silenceMode,
+                        onEndOfUtterance: { [weak self] in
+                            self?.endOfUtteranceHandler?()
+                        }
+                    )
+                    await detector.prepare()
+                }
                 self.silenceDetector = detector
-                await detector.prepare()
             } else {
                 self.silenceDetector = nil
             }
@@ -405,6 +426,8 @@ final class AppleSpeechEngine: TranscriptionEngine {
         preparedLanguage = nil
         preparedVocabulary = []
         isReady = false
+        prewarmedDetector?.reset()
+        prewarmedDetector = nil
         preparation?.cancel()
         _ = try? await preparation?.value
         await session?.cancel()

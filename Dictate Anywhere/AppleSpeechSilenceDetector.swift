@@ -104,6 +104,10 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
         guard mode == .sileroVAD else { return }
         do {
             if let vad = try await BatchSpeechDetection.loadCached(at: vadModelURL) {
+                // Prewarm model by running a single silent chunk through CoreML
+                _ = try? await vad.processStreamingChunk(
+                    [Float](repeating: 0, count: VadManager.chunkSize), state: .initial()
+                )
                 lock.withLock {
                     self.vadManager = vad
                     self.vadStreamState = VadStreamState.initial()

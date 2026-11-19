@@ -1750,7 +1750,7 @@ final class Settings {
         let persistedParakeetModelChoice = ParakeetModelChoice(
             rawValue: defaults.string(forKey: Keys.parakeetModelChoice) ?? ""
         ) ?? .multilingual
-        var persistedEngineChoice = TranscriptionEngineChoice(rawValue: storedEngineRaw ?? "") ?? .parakeet
+        var persistedEngineChoice = TranscriptionEngineChoice(rawValue: storedEngineRaw ?? "") ?? (AppleSpeechEngine.isSupported ? .appleSpeech : .parakeet)
         if persistedEngineChoice == .appleSpeech, !AppleSpeechEngine.isSupported {
             persistedEngineChoice = .parakeet
             defaults.set(TranscriptionEngineChoice.parakeet.rawValue, forKey: Keys.engineChoice)
@@ -1761,8 +1761,9 @@ final class Settings {
             userHasChosenEngine = false
         }
         // Apply auto-default before first render to avoid transient startup mismatch.
+        // For fresh installs, keep Apple Speech as the default when supported so no initial model download is forced.
         let parakeetExistsOnDisk = Self.parakeetModelExistsOnDisk()
-        if !hasChosenEngine, parakeetExistsOnDisk {
+        if !hasChosenEngine, !AppleSpeechEngine.isSupported, parakeetExistsOnDisk {
             engineChoice = .parakeet
         }
         legacyAppleSpeechMigrationPending = !AppleSpeechEngine.isSupported
