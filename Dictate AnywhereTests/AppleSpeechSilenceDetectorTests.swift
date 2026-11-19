@@ -5,6 +5,7 @@
 //  Unit tests for AppleSpeechSilenceDetector and silence detection modes.
 //
 
+import FluidAudio
 import XCTest
 @testable import Dictate_Anywhere
 
@@ -362,5 +363,234 @@ final class AppleSpeechSilenceDetectorTests: XCTestCase {
             }
         }
         XCTAssertFalse(detector.debugIsTriggered)
+    }
+
+    @MainActor
+    func testRecordingACancelledDuringDetectorPreparationDoesNotOverwriteOrClearRecordingB() async throws {
+        try XCTSkipUnless(AppleSpeechEngine.isSupported, "Apple Speech is unavailable")
+
+        let settings = Settings.shared
+        let originalMode = settings.appleSpeechSilenceDetectionMode
+        settings.appleSpeechSilenceDetectionMode = .inbuilt
+        defer { settings.appleSpeechSilenceDetectionMode = originalMode }
+
+        var captureCallbacks: [([Float]) -> Void] = []
+        let captureLock = NSLock()
+
+        let engine = AppleSpeechEngine(
+            sessionFactory: { _, _ in
+                TestAppleSpeechSession()
+            },
+            audioCaptureFactory: { _, _, onSamples in
+                captureLock.withLock {
+                    captureCallbacks.append(onSamples)
+                }
+                return MockAudioCaptureController()
+            }
+        )
+
+        var bAutoStopped = false
+        engine.endOfUtteranceHandler = {
+            bAutoStopped = true
+        }
+
+        let gate = AsyncGate()
+        engine.silenceDetectorPreparationHook = {
+            await gate.hold()
+        }
+
+        // 1. Start recording A in background task
+        let taskA = Task {
+            try await engine.startRecording(deviceID: nil)
+        }
+
+        // 2. Wait until startup A reaches detector preparation await
+        await gate.waitUntilHeld()
+
+        // 3. Cancel recording A while it is suspended in detector preparation
+        await engine.cancel()
+
+        // 4. Remove hook so recording B does not suspend
+        engine.silenceDetectorPreparationHook = nil
+
+        // 5. Start recording B
+        let taskB = Task {
+            try await engine.startRecording(deviceID: nil)
+        }
+        try await taskB.value
+
+        // Verify B has installed its silence detector
+        let detectorB = engine.currentSilenceDetectorForTesting
+        XCTAssertNotNil(detectorB, "Recording B must have installed its silence detector")
+
+        // 6. Resume recording A from detector preparation
+        gate.release()
+
+        // 7. A should complete with cancellation error (or failure)
+        do {
+            try await taskA.value
+            XCTFail("Recording A must not succeed after cancellation")
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            // Also acceptable if cancelled/engineNotReady
+        }
+
+        // 8. Verify B still has its detector and was NOT overwritten or cleared by A
+        XCTAssertTrue(
+            engine.currentSilenceDetectorForTesting === detectorB,
+            "Recording B must retain its detector after A finishes and cleans up"
+        )
+
+        // 9. Verify B can auto-stop
+        let bCallback = captureLock.withLock { captureCallbacks.last }
+        XCTAssertNotNil(bCallback, "B must have registered an audio capture callback")
+
+        bCallback?(makeSpeechSamples(count: 5_000, amplitude: 0.1))
+        bCallback?(makeSilenceSamples(count: 20_000))
+
+        // Wait for MainActor endOfUtteranceHandler task
+        try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertTrue(bAutoStopped, "Recording B must still be able to auto-stop")
+
+        await engine.cancel()
+    }
+
+    func testSileroQueuedAudioDoesNotPrematurelyTriggerUntilNewSilenceArrives() async throws {
+        try XCTSkipUnless(
+            BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL),
+            "Silero VAD model required for neural path test"
+        )
+
+        var triggerCount = 0
+        let detector = AppleSpeechSilenceDetector(
+            mode: .sileroVAD,
+            onEndOfUtterance: { triggerCount += 1 }
+        )
+
+        await detector.prepare()
+        XCTAssertTrue(detector.debugHasVadManager, "Silero VAD manager must be loaded")
+
+        // 1. Queue speech followed by trailing silence aligned to VadManager.chunkSize (4,096 samples = 256ms)
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/en-recovery.wav")
+        let rawSpeech: [Float]
+        if let reader = try? RecoveryAudioReader(url: fixtureURL),
+           let samples = try? reader.nextSamples(maxSamples: 16_384) {
+            rawSpeech = samples
+        } else {
+            rawSpeech = makeSpeechSamples(count: 16_384, amplitude: 0.2)
+        }
+        // 8,192 samples of speech (2 chunks of 4,096 = 512ms, > 250ms minSpeechDuration)
+        let speechSamples = Array(rawSpeech.prefix(8_192))
+        // 16,384 samples of silence (4 chunks of 4,096 = 1,024ms, > 850ms minSilenceDuration)
+        let queuedSilence = makeSilenceSamples(count: 16_384)
+
+        detector.append(samples: speechSamples)
+        detector.append(samples: queuedSilence)
+
+        // 2. Update transcript while that audio is still queued
+        detector.observeTranscript("Hello world from queued audio")
+
+        let queuedSampleCount = detector.debugTotalAppendedSamples
+        let expectedProcessed = (queuedSampleCount / VadManager.chunkSize) * VadManager.chunkSize
+        XCTAssertEqual(detector.debugLastTranscriptSamplePosition, queuedSampleCount)
+
+        // 3. Send no more samples and wait for queued audio to be processed
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline && detector.debugTotalProcessedSamples < expectedProcessed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertGreaterThanOrEqual(
+            detector.debugTotalProcessedSamples,
+            expectedProcessed,
+            "Worker must process all queued samples"
+        )
+
+        // Give any pending trigger a moment to potentially fire
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // 4. Verify auto-stop did NOT fire from queued audio
+        XCTAssertEqual(
+            triggerCount, 0,
+            "Auto-stop must NOT fire because no new audio arrived after the transcript update"
+        )
+        XCTAssertFalse(detector.debugIsTriggered)
+
+        // 5. Positive case: send enough new silence after the transcript update (16,384 samples = 4 chunks = 1,024ms > 800ms)
+        detector.append(samples: makeSilenceSamples(count: 16_384))
+
+        // Wait for worker to process the new silence
+        let triggerDeadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < triggerDeadline && triggerCount == 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        // 6. Verify auto-stop fired
+        XCTAssertEqual(
+            triggerCount, 1,
+            "Auto-stop must fire once enough new silence arrives after the transcript update"
+        )
+        XCTAssertTrue(detector.debugIsTriggered)
+    }
+}
+
+// MARK: - Test Helpers
+
+@MainActor
+private final class TestAppleSpeechSession: AppleSpeechSessionProtocol {
+    private(set) var cancelCount = 0
+
+    func start() async throws {}
+    func append(samples: [Float]) {}
+    func finish() async -> String { "" }
+    func cancel() async { cancelCount += 1 }
+    func updateContextualVocabulary(_ terms: [String]) async throws {}
+}
+
+private final class MockAudioCaptureController: @unchecked Sendable, AudioCaptureController {
+    private(set) var wasStopped = false
+    func stop() { wasStopped = true }
+}
+
+private final class AsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isHeld = false
+    private var heldContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func hold() async {
+        await withCheckedContinuation { cont in
+            lock.withLock {
+                self.releaseContinuation = cont
+                if let held = self.heldContinuation {
+                    self.heldContinuation = nil
+                    held.resume()
+                } else {
+                    self.isHeld = true
+                }
+            }
+        }
+    }
+
+    func waitUntilHeld() async {
+        await withCheckedContinuation { cont in
+            lock.withLock {
+                if self.isHeld {
+                    cont.resume()
+                } else {
+                    self.heldContinuation = cont
+                }
+            }
+        }
+    }
+
+    func release() {
+        lock.withLock {
+            self.releaseContinuation?.resume()
+            self.releaseContinuation = nil
+        }
     }
 }

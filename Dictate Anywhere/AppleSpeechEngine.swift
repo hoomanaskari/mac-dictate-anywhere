@@ -26,11 +26,21 @@ final class AppleSpeechEngine: TranscriptionEngine {
     typealias SessionFactory = @MainActor @Sendable (
         SupportedLanguage, [String]
     ) async throws -> any AppleSpeechSessionProtocol
+    typealias AudioCaptureFactory = @Sendable (
+        _ deviceID: AudioDeviceID?,
+        _ usesExplicitMicrophoneSelection: Bool,
+        _ onSamples: @escaping ([Float]) -> Void
+    ) throws -> AudioCaptureController
 
     private let sessionFactory: SessionFactory?
+    private let audioCaptureFactory: AudioCaptureFactory?
 
-    init(sessionFactory: SessionFactory? = nil) {
+    init(
+        sessionFactory: SessionFactory? = nil,
+        audioCaptureFactory: AudioCaptureFactory? = nil
+    ) {
         self.sessionFactory = sessionFactory
+        self.audioCaptureFactory = audioCaptureFactory
     }
 
     static var isOperatingSystemSupported: Bool {
@@ -301,6 +311,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
                 await updateSessionContextualVocabulary(sessionContextualVocabulary)
             }
             let silenceMode = Settings.shared.appleSpeechSilenceDetectionMode
+            var preparedDetector: AppleSpeechSilenceDetector?
             if silenceMode != .off {
                 let detector = AppleSpeechSilenceDetector(
                     mode: silenceMode,
@@ -314,24 +325,31 @@ final class AppleSpeechEngine: TranscriptionEngine {
                     }
                 )
                 let cachedVad = stateLock.withLock { self.prewarmedVadManager }
+                #if DEBUG
+                if let silenceDetectorPreparationHook {
+                    await silenceDetectorPreparationHook()
+                }
+                #endif
                 await detector.prepare(cachedVad: cachedVad)
-                stateLock.withLock {
-                    self.silenceDetector = detector
-                }
-            } else {
-                stateLock.withLock {
-                    self.silenceDetector = nil
-                }
+                preparedDetector = detector
             }
+
+            let installed = stateLock.withLock { () -> Bool in
+                guard self.currentRecordingID == recordingID else { return false }
+                self.silenceDetector = preparedDetector
+                return true
+            }
+            guard installed, audioCaptureStartupCancellation === startupCancellation else {
+                preparedDetector?.reset()
+                throw CancellationError()
+            }
+
             let controller = try await startAudioCaptureOffMainActor(
                 timeout: audioCaptureStartupTimeout,
                 queue: audioCaptureSetupQueue,
                 cancellation: startupCancellation
             ) { [self, session] in
-                try makeAudioCaptureController(
-                    deviceID: deviceID,
-                    usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection
-                ) { [weak self, weak session] samples in
+                let captureCallback: ([Float]) -> Void = { [weak self, weak session] samples in
                     recoveryCapture?.append(samples)
                     guard let self, let session else { return }
                     self.appendLevelSamples(samples)
@@ -339,11 +357,24 @@ final class AppleSpeechEngine: TranscriptionEngine {
                     detector?.append(samples: samples)
                     session.append(samples: samples)
                 }
+                if let audioCaptureFactory {
+                    return try audioCaptureFactory(
+                        deviceID,
+                        usesExplicitMicrophoneSelection,
+                        captureCallback
+                    )
+                }
+                return try makeAudioCaptureController(
+                    deviceID: deviceID,
+                    usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection,
+                    onSamples: captureCallback
+                )
             }
             guard audioCaptureStartupCancellation === startupCancellation,
                   activeSession === session else {
                 controller.stop()
                 let detectorToReset = stateLock.withLock { () -> AppleSpeechSilenceDetector? in
+                    guard self.currentRecordingID == recordingID else { return nil }
                     self.currentRecordingID = nil
                     let d = self.silenceDetector
                     self.silenceDetector = nil
@@ -357,6 +388,7 @@ final class AppleSpeechEngine: TranscriptionEngine {
             logger.info("Apple Speech recording started")
         } catch {
             let detectorToReset = stateLock.withLock { () -> AppleSpeechSilenceDetector? in
+                guard self.currentRecordingID == recordingID else { return nil }
                 self.currentRecordingID = nil
                 let d = self.silenceDetector
                 self.silenceDetector = nil
@@ -376,6 +408,12 @@ final class AppleSpeechEngine: TranscriptionEngine {
     }
 
     #if DEBUG
+    @ObservationIgnored
+    var silenceDetectorPreparationHook: (@Sendable () async -> Void)?
+    var currentSilenceDetectorForTesting: AppleSpeechSilenceDetector? {
+        stateLock.withLock { silenceDetector }
+    }
+
     func installAudioCaptureControllerForTesting(_ controller: AudioCaptureController) {
         audioCaptureController = controller
     }

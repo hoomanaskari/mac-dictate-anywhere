@@ -69,7 +69,9 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
     private var consecutiveSilenceSamples = 0
     private var consecutiveSpeechSamples = 0
     private var lastTranscript = ""
-    private var samplesSinceLastTranscriptChange = 0
+    private var totalAppendedSamples = 0
+    private var totalProcessedSamples = 0
+    private var lastTranscriptSamplePosition = 0
 
     // MARK: - Silero VAD State
 
@@ -141,11 +143,14 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
         let action: Action = lock.withLock {
             guard !isTriggered else { return .none }
+            totalAppendedSamples += samples.count
 
             if mode == .sileroVAD, vadManager != nil {
                 vadPendingSamples.append(contentsOf: samples)
                 if vadPendingSamples.count > Self.sampleRate * 10 {
-                    vadPendingSamples.removeFirst(vadPendingSamples.count - Self.sampleRate * 10)
+                    let excess = vadPendingSamples.count - Self.sampleRate * 10
+                    vadPendingSamples.removeFirst(excess)
+                    totalProcessedSamples += excess
                 }
                 vadContinuation?.yield()
                 return .none
@@ -169,7 +174,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty && trimmed != lastTranscript {
                 lastTranscript = trimmed
-                samplesSinceLastTranscriptChange = 0
+                lastTranscriptSamplePosition = totalAppendedSamples
                 hasSpeechStarted = true
                 consecutiveSilenceSamples = 0
             }
@@ -185,7 +190,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             vDSP_rmsqv(base, 1, &rms, vDSP_Length(ptr.count))
         }
 
-        samplesSinceLastTranscriptChange += samples.count
+        totalProcessedSamples += samples.count
 
         if rms < Self.silenceThresholdRMS {
             consecutiveSpeechSamples = 0
@@ -207,6 +212,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
         }
 
         if hasSpeechStarted, !isTriggered {
+            let samplesSinceLastTranscriptChange = max(0, totalProcessedSamples - lastTranscriptSamplePosition)
             let transcriptSettled = samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples
             if isSpeechEndPending && transcriptSettled {
                 isTriggered = true
@@ -255,7 +261,7 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
                         let result = try await vad.processStreamingChunk(chunk, state: currentState, config: config)
                         let shouldTrigger: Bool = self.lock.withLock {
                             self.vadStreamState = result.state
-                            self.samplesSinceLastTranscriptChange += chunk.count
+                            self.totalProcessedSamples += chunk.count
 
                             if result.state.triggered || result.event?.kind == .speechStart {
                                 self.hasSpeechStarted = true
@@ -273,7 +279,8 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
                             }
 
                             if self.hasSpeechStarted && !self.isTriggered {
-                                let transcriptSettled = self.samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples
+                                let samplesSinceLastTranscriptChange = max(0, self.totalProcessedSamples - self.lastTranscriptSamplePosition)
+                                let transcriptSettled = samplesSinceLastTranscriptChange >= Self.requiredTranscriptInactivitySamples
                                 if self.isSpeechEndPending && transcriptSettled {
                                     self.isTriggered = true
                                     return true
@@ -309,7 +316,9 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
             consecutiveSilenceSamples = 0
             consecutiveSpeechSamples = 0
             lastTranscript = ""
-            samplesSinceLastTranscriptChange = 0
+            totalAppendedSamples = 0
+            totalProcessedSamples = 0
+            lastTranscriptSamplePosition = 0
             isSpeechEndPending = false
             vadPendingSamples.removeAll(keepingCapacity: true)
             if vadManager != nil {
@@ -337,6 +346,22 @@ final class AppleSpeechSilenceDetector: @unchecked Sendable {
 
     var debugIsSpeechEndPending: Bool {
         lock.withLock { isSpeechEndPending }
+    }
+
+    var debugHasVadManager: Bool {
+        lock.withLock { vadManager != nil }
+    }
+
+    var debugTotalAppendedSamples: Int {
+        lock.withLock { totalAppendedSamples }
+    }
+
+    var debugTotalProcessedSamples: Int {
+        lock.withLock { totalProcessedSamples }
+    }
+
+    var debugLastTranscriptSamplePosition: Int {
+        lock.withLock { lastTranscriptSamplePosition }
     }
 
     func debugSimulateSpeechEndEvent() {
