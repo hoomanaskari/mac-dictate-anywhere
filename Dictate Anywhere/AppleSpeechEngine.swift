@@ -350,10 +350,14 @@ final class AppleSpeechEngine: TranscriptionEngine {
                 cancellation: startupCancellation
             ) { [self, session] in
                 let captureCallback: ([Float]) -> Void = { [weak self, weak session] samples in
-                    recoveryCapture?.append(samples)
                     guard let self, let session else { return }
-                    self.appendLevelSamples(samples)
-                    let detector = self.stateLock.withLock { self.silenceDetector }
+                    let (isCurrent, detector) = self.stateLock.withLock { () -> (Bool, AppleSpeechSilenceDetector?) in
+                        guard self.currentRecordingID == recordingID else { return (false, nil) }
+                        self.levelSampleBuffer.append(samples)
+                        return (true, self.silenceDetector)
+                    }
+                    guard isCurrent else { return }
+                    recoveryCapture?.append(samples)
                     detector?.append(samples: samples)
                     session.append(samples: samples)
                 }

@@ -457,6 +457,107 @@ final class AppleSpeechSilenceDetectorTests: XCTestCase {
         await engine.cancel()
     }
 
+    @MainActor
+    func testLateAudioBuffersFromCancelledRecordingADoNotTriggerOrArmRecordingB() async throws {
+        try XCTSkipUnless(AppleSpeechEngine.isSupported, "Apple Speech is unavailable")
+
+        let settings = Settings.shared
+        let originalMode = settings.appleSpeechSilenceDetectionMode
+        settings.appleSpeechSilenceDetectionMode = .inbuilt
+        defer { settings.appleSpeechSilenceDetectionMode = originalMode }
+
+        var aCaptureCallback: (([Float]) -> Void)?
+        var bCaptureCallback: (([Float]) -> Void)?
+        let captureLock = NSLock()
+        let gateBStarted = DispatchSemaphore(value: 0)
+        let gateBRelease = DispatchSemaphore(value: 0)
+
+        let engine = AppleSpeechEngine(
+            sessionFactory: { _, _ in
+                TestAppleSpeechSession()
+            },
+            audioCaptureFactory: { _, _, onSamples in
+                let isRecordingB: Bool = captureLock.withLock {
+                    if aCaptureCallback == nil {
+                        aCaptureCallback = onSamples
+                        return false
+                    } else {
+                        bCaptureCallback = onSamples
+                        return true
+                    }
+                }
+                if isRecordingB {
+                    gateBStarted.signal()
+                    gateBRelease.wait()
+                }
+                return MockAudioCaptureController()
+            }
+        )
+
+        var bAutoStopCount = 0
+        engine.endOfUtteranceHandler = {
+            bAutoStopCount += 1
+        }
+
+        // 1. Start and finish starting recording A
+        let taskA = Task {
+            try await engine.startRecording(deviceID: nil)
+        }
+        try await taskA.value
+
+        let aCallback = captureLock.withLock { aCaptureCallback }
+        XCTAssertNotNil(aCallback, "Recording A must have registered a capture callback")
+
+        // 2. Cancel recording A
+        await engine.cancel()
+
+        // 3. Start recording B in background task (will suspend in audioCaptureFactory)
+        let taskB = Task {
+            try await engine.startRecording(deviceID: nil)
+        }
+
+        // Wait until B reaches audioCaptureFactory and blocks on gateBRelease
+        while gateBStarted.wait(timeout: .now()) != .success {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // B has installed its detector
+        let detectorB = engine.currentSilenceDetectorForTesting
+        XCTAssertNotNil(detectorB, "Recording B must have installed its detector")
+
+        // 4. While B's factory is still waiting, deliver speech and silence via A's callback
+        aCallback?(makeSpeechSamples(count: 5_000, amplitude: 0.1))
+        aCallback?(makeSilenceSamples(count: 20_000))
+
+        // Wait a brief moment to ensure no asynchronous trigger runs
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // 5. Verify late buffers from A did NOT arm or trigger B's detector
+        XCTAssertFalse(detectorB?.debugHasSpeechStarted ?? true, "Late samples from A must not arm B's detector")
+        XCTAssertFalse(detectorB?.debugIsTriggered ?? true, "Late samples from A must not trigger B's detector")
+        XCTAssertEqual(bAutoStopCount, 0, "B must not have triggered auto-stop from A's audio")
+
+        // 6. Resume B's audio capture factory
+        gateBRelease.signal()
+        try await taskB.value
+
+        // 7. Deliver speech and silence via B's own callback
+        let bCallback = captureLock.withLock { bCaptureCallback }
+        XCTAssertNotNil(bCallback, "Recording B must have registered a capture callback")
+
+        bCallback?(makeSpeechSamples(count: 5_000, amplitude: 0.1))
+        bCallback?(makeSilenceSamples(count: 20_000))
+
+        // Wait for MainActor endOfUtteranceHandler task
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // 8. Verify B can still auto-stop on its own audio
+        XCTAssertEqual(bAutoStopCount, 1, "Recording B must still auto-stop on its own audio")
+        XCTAssertTrue(detectorB?.debugIsTriggered ?? false)
+
+        await engine.cancel()
+    }
+
     func testSileroQueuedAudioDoesNotPrematurelyTriggerUntilNewSilenceArrives() async throws {
         try XCTSkipUnless(
             BatchSpeechDetection.isDownloaded(at: BatchSpeechDetection.modelURL),
