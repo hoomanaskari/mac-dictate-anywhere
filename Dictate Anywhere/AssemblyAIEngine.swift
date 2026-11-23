@@ -55,7 +55,7 @@ enum AssemblyAIEngineError: Error, LocalizedError, Equatable {
     }
 }
 
-struct AssemblyAIRequestConfiguration: Encodable {
+struct AssemblyAIRequestConfiguration: Encodable, Equatable {
     let sampleRate: Int
     let channels: Int
     let languageCodes: [String]
@@ -112,6 +112,18 @@ final class AssemblyAIEngine: TranscriptionEngine {
     private var sessionContextualVocabulary: [String] = []
     private var sessionDictationContext: DictationContext?
     private var warmUpTask: Task<Void, Never>?
+    #if DEBUG
+    @ObservationIgnored
+    var makeTestCaptureController: ((@escaping ([Float]) -> Void) -> AudioCaptureController)?
+    #endif
+    private var liveAudio: AssemblyAILiveAudio?
+    private var liveUploadTask: Task<LiveResult, Error>?
+
+    private struct LiveResult {
+        let configuration: AssemblyAIRequestConfiguration
+        let region: AssemblyAIRegion
+        let response: AssemblyAIDictationResponse
+    }
     private let audioCaptureSetupQueue = DispatchQueue(
         label: "com.dictate-anywhere.assemblyai-audio-startup",
         qos: .userInitiated
@@ -184,6 +196,9 @@ final class AssemblyAIEngine: TranscriptionEngine {
         chunkStore = store
         let processor = makeChunkProcessor(store: store)
         chunkProcessor = processor
+        liveUploadTask?.cancel()
+        liveUploadTask = nil
+        liveAudio = nil
         let usesExplicitMicrophoneSelection = Settings.shared.selectedMicrophoneUID != nil
         let livePreviewID = needsLivePreview ? recordingSessionID : nil
         stateLock.withLock { livePreviewSessionID = livePreviewID }
@@ -229,15 +244,16 @@ final class AssemblyAIEngine: TranscriptionEngine {
         }
 
         do {
+            let liveAudio = AssemblyAILiveAudio()
+            #if DEBUG
+            let makeTestCaptureController = self.makeTestCaptureController
+            #endif
             let controller = try await startAudioCaptureOffMainActor(
                 timeout: 5,
                 queue: audioCaptureSetupQueue,
                 cancellation: startupCancellation
             ) { [self, previewSession, recordingSessionID] in
-                try makeAudioCaptureController(
-                    deviceID: deviceID,
-                    usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection
-                ) { [weak self, previewSession, recordingSessionID] samples in
+                let onSamples: ([Float]) -> Void = { [weak self, previewSession, recordingSessionID] samples in
                     guard let self else { return }
                     recoveryCapture.append(samples)
                     let isCurrentSession = self.stateLock.withLock {
@@ -249,8 +265,17 @@ final class AssemblyAIEngine: TranscriptionEngine {
                         guard self.recordingSessionID == recordingSessionID else { return }
                         self.levelSampleBuffer.append(samples)
                         store.append(samples)
+                        liveAudio.append(samples)
                     }
                 }
+                #if DEBUG
+                if let makeTestCaptureController { return makeTestCaptureController(onSamples) }
+                #endif
+                return try makeAudioCaptureController(
+                    deviceID: deviceID,
+                    usesExplicitMicrophoneSelection: usesExplicitMicrophoneSelection,
+                    onSamples: onSamples
+                )
             }
             guard audioCaptureStartupCancellation === startupCancellation,
                   stateLock.withLock({ self.recordingSessionID == recordingSessionID }) else {
@@ -259,6 +284,18 @@ final class AssemblyAIEngine: TranscriptionEngine {
             }
             audioCaptureStartupCancellation = nil
             audioCaptureController = controller
+            self.liveAudio = liveAudio
+            liveUploadTask = Task {
+                // Let Accessibility return the target context while capture
+                // buffers audio. A later context change falls back at stop.
+                if Settings.shared.dictationContextAwarenessEnabled && sessionDictationContext == nil {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+                let configuration = makeRequestConfiguration(outputMode: Settings.shared.assemblyAIOutputMode)
+                let region = Settings.shared.assemblyAIRegion
+                let response = try await transcribeLive(audio: liveAudio, configuration: configuration, region: region)
+                return LiveResult(configuration: configuration, region: region, response: response)
+            }
             chunkTask?.cancel()
             chunkTask = Task { [weak self] in
                 do {
@@ -335,6 +372,13 @@ final class AssemblyAIEngine: TranscriptionEngine {
             return ""
         }
         stopAudioCapture()
+        let liveUpload = liveUploadTask
+        liveUploadTask = nil
+        defer { liveUpload?.cancel() }
+        // Only a normal Stop completes the upload. AppState also stops
+        // microphone capture on Cancel before asking the engine to abort.
+        if !Task.isCancelled { liveAudio?.finish() }
+        liveAudio = nil
         await stopLivePreview(for: requestSessionID)
         guard stateLock.withLock({ recordingSessionID == requestSessionID }) else { return "" }
         // Connection preparation is speculative, not a dependency of the
@@ -358,7 +402,13 @@ final class AssemblyAIEngine: TranscriptionEngine {
             try await store.finish()
             try Task.checkCancellation()
             guard stateLock.withLock({ recordingSessionID == requestSessionID }) else { throw CancellationError() }
-            let result = try await completeChunks(store: store, processor: processor, recordingSessionID: requestSessionID)
+            let liveResult = try await finishLiveUpload(liveUpload, store: store, recordingSessionID: requestSessionID)
+            let result: String
+            if let liveResult {
+                result = liveResult
+            } else {
+                result = try await completeChunks(store: store, processor: processor, recordingSessionID: requestSessionID)
+            }
             try Task.checkCancellation()
             let completedCurrentSession = stateLock.withLock { () -> Bool in
                 guard recordingSessionID == requestSessionID else { return false }
@@ -393,7 +443,10 @@ final class AssemblyAIEngine: TranscriptionEngine {
         let cancelledSessionID = stateLock.withLock { recordingSessionID }
         audioCaptureStartupCancellation?.cancel()
         audioCaptureStartupCancellation = nil
+        liveUploadTask?.cancel()
+        liveUploadTask = nil
         stopAudioCapture(outcome: "cancelled")
+        liveAudio = nil
         let background = chunkTask
         chunkTask = nil
         background?.cancel()
@@ -540,6 +593,84 @@ final class AssemblyAIEngine: TranscriptionEngine {
     var sendRequest: (URLRequest) async throws -> (Data, URLResponse) = { request in
         try await URLSession.shared.data(for: request)
     }
+    var sendLiveRequest: (URLRequest, Data, Data, AssemblyAILiveAudio) async throws -> (Data, URLResponse) = {
+        try await AssemblyAILiveUpload.send($0, prefix: $1, suffix: $2, audio: $3)
+    }
+
+    func makeRequestConfiguration(outputMode: AssemblyAIOutputMode) -> AssemblyAIRequestConfiguration {
+        let settings = Settings.shared
+        let shareSurroundingText = settings.shareDictationContextWithRemoteProviders
+        let context = settings.dictationContextAwarenessEnabled ? sessionDictationContext : nil
+        return AssemblyAIRequestConfiguration(
+            sampleRate: Self.sampleRate,
+            channels: 1,
+            languageCodes: [settings.assemblyAILanguage.rawValue],
+            sttPrompt: Self.sttPrompt(
+                context: context,
+                includeAppMetadata: shareSurroundingText,
+                promptOverrides: settings.assemblyAIPromptOverrides
+            ),
+            keytermsPrompt: Self.fittedKeyterms(
+                settings.customVocabulary + (shareSurroundingText ? sessionContextualVocabulary : [])
+            ),
+            llmInstruction: outputMode == .polished
+                ? Self.llmInstruction(
+                    customInstruction: settings.assemblyAIInstruction,
+                    context: context,
+                    shareSurroundingText: shareSurroundingText,
+                    style: context.map { settings.dictationWritingStyle(for: $0.category) },
+                    promptOverrides: settings.assemblyAIPromptOverrides
+                )
+                : nil
+        )
+    }
+
+    func transcribeLive(audio: AssemblyAILiveAudio, configuration: AssemblyAIRequestConfiguration,
+                        region: AssemblyAIRegion) async throws -> AssemblyAIDictationResponse {
+        try Task.checkCancellation()
+        let apiKey = apiKey()
+        guard !apiKey.isEmpty else { throw AssemblyAIEngineError.missingAPIKey }
+        let boundary = "dictate-anywhere-\(UUID().uuidString)"
+        let request = Self.request(baseURL: region.baseURL, live: true, apiKey: apiKey, boundary: boundary)
+        let prefix = try Self.multipartPrefix(config: configuration, boundary: boundary)
+        let suffix = Self.multipartSuffix(boundary: boundary)
+        let (data, response) = try await sendLiveRequest(request, prefix, suffix, audio)
+        return try Self.decodeResponse(data: data, response: response)
+    }
+
+    private func finishLiveUpload(_ upload: Task<LiveResult, Error>?, store: AssemblyAIChunkStore,
+                                  recordingSessionID: UUID) async throws -> String? {
+        guard let upload else { return nil }
+        let chunks = try await store.snapshot()
+        guard chunks.count == 1, let chunk = chunks.first, chunk.end < AssemblyAIChunker.target else { return nil }
+        let trace = PerfTrace.begin("stt.assemblyAILiveFinalize")
+        defer { trace.end(outcome: "fallback") }
+        let live: LiveResult
+        do {
+            live = try await withTaskCancellationHandler {
+                try await upload.value
+            } onCancel: {
+                upload.cancel()
+            }
+        } catch {
+            try Task.checkCancellation()
+            logger.notice("AssemblyAI live upload failed; retrying from the recording (\(type(of: error), privacy: .public))")
+            return nil
+        }
+        try Task.checkCancellation()
+        guard stateLock.withLock({ self.recordingSessionID == recordingSessionID }) else { throw CancellationError() }
+        let settings = Settings.shared
+        let outputMode = settings.assemblyAIOutputMode
+        guard live.region == settings.assemblyAIRegion,
+              live.configuration == makeRequestConfiguration(outputMode: outputMode) else { return nil }
+        let context = settings.dictationContextAwarenessEnabled ? sessionDictationContext : nil
+        let result = finalText(from: live.response, outputMode: outputMode,
+                               context: context, shareSurroundingText: settings.shareDictationContextWithRemoteProviders,
+                               mayPublishResult: true)
+        try await store.savePreview(live.response.text)
+        trace.end(outcome: "success")
+        return result
+    }
 
     private func transcribe(
         samples: [Float],
@@ -569,45 +700,11 @@ final class AssemblyAIEngine: TranscriptionEngine {
 
         let context = settings.dictationContextAwarenessEnabled ? sessionDictationContext : nil
         let request: URLRequest = try PerfTrace.measure("stt.assemblyAIRequestBuild") {
-            let config = configuration ?? AssemblyAIRequestConfiguration(
-                sampleRate: Self.sampleRate,
-                channels: 1,
-                languageCodes: [settings.assemblyAILanguage.rawValue],
-                sttPrompt: Self.sttPrompt(
-                    context: context,
-                    includeAppMetadata: shareSurroundingText,
-                    promptOverrides: settings.assemblyAIPromptOverrides
-                ),
-                keytermsPrompt: Self.fittedKeyterms(
-                    settings.customVocabulary
-                        + (shareSurroundingText
-                            ? sessionContextualVocabulary : [])
-                ),
-                llmInstruction: outputMode == .polished
-                    ? Self.llmInstruction(
-                        customInstruction: settings.assemblyAIInstruction,
-                        context: context,
-                        shareSurroundingText: shareSurroundingText,
-                        style: context.map { settings.dictationWritingStyle(for: $0.category) },
-                        promptOverrides: settings.assemblyAIPromptOverrides
-                    )
-                    : nil
-            )
+            let config = configuration ?? makeRequestConfiguration(outputMode: outputMode)
             let boundary = "dictate-anywhere-\(UUID().uuidString)"
-            let body = try Self.multipartBody(
-                config: config,
-                samples: samples,
-                boundary: boundary
-            )
-            var request = URLRequest(
-                url: (baseURL ?? settings.assemblyAIRegion.baseURL).appendingPathComponent("v1/transcribe")
-            )
-            request.httpMethod = "POST"
-            request.timeoutInterval = 90
-            request.setValue(apiKey, forHTTPHeaderField: "Authorization")
-            request.setValue(
-                "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
+            var request = Self.request(baseURL: baseURL ?? settings.assemblyAIRegion.baseURL,
+                                       live: false, apiKey: apiKey, boundary: boundary)
+            request.httpBody = try Self.multipartBody(config: config, samples: samples, boundary: boundary)
             return request
         }
 
@@ -615,6 +712,26 @@ final class AssemblyAIEngine: TranscriptionEngine {
             try await sendRequest(request)
         }
         try Task.checkCancellation()
+        let decoded = try Self.decodeResponse(data: data, response: response)
+        if verbatimOnly { return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let mayPublishResult = recordingSessionID.map { id in
+            stateLock.withLock { self.recordingSessionID == id }
+        } ?? true
+        return finalText(from: decoded, outputMode: outputMode, context: context,
+                         shareSurroundingText: shareSurroundingText, mayPublishResult: mayPublishResult)
+    }
+
+    static func request(baseURL: URL, live: Bool, apiKey: String, boundary: String) -> URLRequest {
+        let url = baseURL.appendingPathComponent(live ? "v1/transcribe/live" : "v1/transcribe")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        return request
+    }
+
+    static func decodeResponse(data: Data, response: URLResponse) throws -> AssemblyAIDictationResponse {
         guard let http = response as? HTTPURLResponse else {
             throw AssemblyAIEngineError.invalidResponse
         }
@@ -625,20 +742,20 @@ final class AssemblyAIEngine: TranscriptionEngine {
                 message: decoded?.detail ?? decoded?.error
             )
         }
-        let decoded: AssemblyAIDictationResponse = try PerfTrace.measure("stt.assemblyAIResponseDecode") {
+        return try PerfTrace.measure("stt.assemblyAIResponseDecode") {
             guard let decoded = try? JSONDecoder().decode(AssemblyAIDictationResponse.self, from: data)
             else {
                 throw AssemblyAIEngineError.invalidResponse
             }
             return decoded
         }
-        if verbatimOnly { return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    private func finalText(from decoded: AssemblyAIDictationResponse, outputMode: AssemblyAIOutputMode,
+                           context: DictationContext?, shareSurroundingText: Bool, mayPublishResult: Bool) -> String {
         let expectsInsertionPlan = outputMode == .polished && Self.canRequestInsertionPlan(
             context: context, shareSurroundingText: shareSurroundingText
         )
-        let mayPublishResult = recordingSessionID.map { id in
-            stateLock.withLock { self.recordingSessionID == id }
-        } ?? true
         if mayPublishResult {
             lastRawTranscript = decoded.text
         }
@@ -860,9 +977,16 @@ final class AssemblyAIEngine: TranscriptionEngine {
         samples: [Float],
         boundary: String
     ) throws -> Data {
+        var body = try multipartPrefix(config: config, boundary: boundary)
+        body.reserveCapacity(body.count + samples.count * 2 + 64)
+        appendPCM(samples, to: &body)
+        body.append(multipartSuffix(boundary: boundary))
+        return body
+    }
+
+    private static func multipartPrefix(config: AssemblyAIRequestConfiguration, boundary: String) throws -> Data {
         let configData = try JSONEncoder().encode(config)
         var body = Data()
-        body.reserveCapacity(configData.count + samples.count * 2 + 512)
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"config\"\r\n".utf8))
         body.append(Data("Content-Type: application/json\r\n\r\n".utf8))
@@ -871,6 +995,20 @@ final class AssemblyAIEngine: TranscriptionEngine {
         body.append(
             Data("Content-Disposition: form-data; name=\"audio\"; filename=\"audio.pcm\"\r\n".utf8))
         body.append(Data("Content-Type: audio/pcm\r\n\r\n".utf8))
+        return body
+    }
+
+    private static func multipartSuffix(boundary: String) -> Data {
+        Data("\r\n--\(boundary)--\r\n".utf8)
+    }
+
+    nonisolated static func pcmBytes(_ samples: [Float]) -> Data {
+        var body = Data()
+        appendPCM(samples, to: &body)
+        return body
+    }
+
+    private nonisolated static func appendPCM(_ samples: [Float], to body: inout Data) {
         let audioOffset = body.count
         body.count += samples.count * 2
         body.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
@@ -885,11 +1023,9 @@ final class AssemblyAIEngine: TranscriptionEngine {
                 bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
             }
         }
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        return body
     }
 
-    private static func warmConnection(region: AssemblyAIRegion) async {
+    static func warmConnection(region: AssemblyAIRegion) async {
         await PerfTrace.measure("stt.assemblyAIWarmConnection") {
             var request = URLRequest(url: region.baseURL.appendingPathComponent("warm"))
             request.timeoutInterval = 10

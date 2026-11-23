@@ -10,6 +10,112 @@ import Security
 /// real provider. Never runs in the ordinary test suite or logs credentials.
 @MainActor
 final class AssemblyAILongSpeechSmokeTests: XCTestCase {
+    #if DEBUG
+    func testLiveUploadHandsOffWithoutLosingWords() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["DICTATE_ASSEMBLYAI_HANDOFF_TEST"] == "1")
+        let engine = AssemblyAIEngine()
+        try XCTSkipUnless(engine.isReady, "Configure an AssemblyAI key in the Dev app.")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/en-long-dictation.txt")
+        let paragraphs = try String(contentsOf: source, encoding: .utf8).components(separatedBy: "\n\n")
+        let repeated = "I want to repeat this point because it matters"
+        let ending = "The patient fox carried a blue notebook across the quiet wooden bridge, then returned home before the evening rain began."
+        let reference = paragraphs.prefix(5).joined(separator: "\n\n") + "\n\n\(repeated). \(repeated). \(ending)"
+        let wav = directory.appendingPathComponent("handoff.wav")
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = ["-v", "Samantha", "-r", "155", "-o", wav.path,
+                         "--file-format=WAVE", "--data-format=LEI16@16000", reference]
+        try say.run()
+        say.waitUntilExit()
+        XCTAssertEqual(say.terminationStatus, 0)
+        let reader = try RecoveryAudioReader(url: wav)
+        var samples: [Float] = []
+        while let part = try reader.nextSamples() { samples += part }
+        let sampleRate = AssemblyAIEngine.sampleRate
+        let seconds = Double(samples.count) / Double(sampleRate)
+        XCTAssertGreaterThan(seconds, 120)
+        guard seconds > 120 else { return }
+
+        let settings = Settings.shared
+        let preview = settings.showTextPreview
+        let outputMode = settings.assemblyAIOutputMode
+        let language = settings.assemblyAILanguage
+        let vocabulary = settings.customVocabulary
+        let instruction = settings.assemblyAIInstruction
+        settings.showTextPreview = false
+        settings.assemblyAIOutputMode = .polished
+        settings.assemblyAILanguage = .english
+        settings.customVocabulary = []
+        settings.assemblyAIInstruction = "Keep every word and deliberate repetition. Adjust only capitalization and punctuation."
+        defer {
+            settings.showTextPreview = preview
+            settings.assemblyAIOutputMode = outputMode
+            settings.assemblyAILanguage = language
+            settings.customVocabulary = vocabulary
+            settings.assemblyAIInstruction = instruction
+        }
+
+        let capture = ReplayAssemblyAICapture()
+        engine.makeTestCaptureController = { onSamples in
+            capture.install(onSamples)
+            return capture
+        }
+        let recovery = try RecoveryAudioCapture(id: UUID(), url: directory.appendingPathComponent("session.caf"))
+        engine.recoveryCapture = recovery
+        var requestCount = 0
+        var cleanupCount = 0
+        var chunkTranscripts: [String] = []
+        engine.sendRequest = { request in
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if request.url?.path == "/v1/transcribe" {
+                requestCount += 1
+                let decoded = try AssemblyAIEngine.decodeResponse(data: data, response: response)
+                chunkTranscripts.append(decoded.text)
+                print("HANDOFF_CHUNK index=\(requestCount) head=\(decoded.text.prefix(90)) tail=\(decoded.text.suffix(90))")
+            } else if request.url?.path == "/v1/chat/completions" {
+                cleanupCount += 1
+            }
+            return (data, response)
+        }
+        try await engine.startRecording(deviceID: nil)
+        print("HANDOFF_STARTED audio_seconds=\(seconds) sample_count=\(samples.count)")
+        let start = ContinuousClock.now
+        for offset in stride(from: 0, to: samples.count, by: 1_600) {
+            let end = min(offset + 1_600, samples.count)
+            try await Task.sleep(until: start.advanced(by: .microseconds(end * 1_000_000 / sampleRate)),
+                                 clock: .continuous)
+            capture.send(Array(samples[offset..<end]))
+        }
+        XCTAssertGreaterThan(requestCount, 0, "A chunk must be transcribed before capture stops")
+        let result = await engine.stopRecording()
+        let saved = await recovery.finish()
+        XCTAssertEqual(saved.sampleCount, samples.count, "Recovery must contain the complete original recording")
+        XCTAssertNil(saved.error)
+        XCTAssertNil(engine.lastTranscriptionError)
+        XCTAssertEqual(cleanupCount, 1)
+        XCTAssertTrue(engine.lastResultWasPolished)
+        let raw = try XCTUnwrap(engine.lastRawTranscript)
+        let referenceWords = handoffWords(reference)
+        let rawWords = handoffWords(raw)
+        let polishedWords = handoffWords(result)
+        print("HANDOFF_RESULT requests=\(requestCount) cleanup=\(cleanupCount) expected_words=\(referenceWords.count) raw_words=\(rawWords.count) polished_words=\(polishedWords.count)")
+        print("HANDOFF_RAW \(raw)")
+        print("HANDOFF_POLISHED \(result)")
+        XCTAssertGreaterThanOrEqual(chunkTranscripts.count, 2)
+        XCTAssertEqual(rawWords, referenceWords, "The complete raw transcript must preserve every word in order")
+        XCTAssertEqual(polishedWords, referenceWords, "Whole-transcript cleanup must preserve the fixture wording")
+    }
+
+    private func handoffWords(_ text: String) -> [String] {
+        text.lowercased().replacingOccurrences(of: "’", with: "'")
+            .split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+    }
+    #endif
+
     func testRealProviderLongSpeechAndCachedRecovery() async throws {
         let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(env["RUN_ASSEMBLYAI_LONG_SPEECH_TEST"] == "1", "Opt-in real-provider test")
@@ -161,6 +267,17 @@ final class AssemblyAILongSpeechSmokeTests: XCTestCase {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+#if DEBUG
+private nonisolated final class ReplayAssemblyAICapture: AudioCaptureController, @unchecked Sendable {
+    private let lock = NSLock()
+    private var onSamples: (([Float]) -> Void)?
+
+    func install(_ callback: @escaping ([Float]) -> Void) { lock.withLock { onSamples = callback } }
+    func send(_ samples: [Float]) { lock.withLock { onSamples?(samples) } }
+    func stop() { lock.withLock { onSamples = nil } }
+}
+#endif
 
 nonisolated private final class LivePreviewObservation: @unchecked Sendable {
     private let lock = NSLock()

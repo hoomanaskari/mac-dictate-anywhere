@@ -423,7 +423,7 @@ struct ModelsView: View {
 
         DSHint(
             text:
-                "AssemblyAI transcribes long recordings in overlapping chunks of about 100 seconds while Apple Speech provides the live preview. Polished mode cleans the combined transcript through AssemblyAI after you stop. Audio and completed chunks stay on this Mac until success; failed sessions can be retried, copied, or exported from History."
+                "AssemblyAI receives audio while you record and switches to overlapping chunks at about 100 seconds. For long recordings, Polished mode cleans the combined transcript after you stop. You can retry, copy, or export failed sessions from History."
         )
     }
 

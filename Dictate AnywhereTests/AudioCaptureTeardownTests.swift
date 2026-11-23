@@ -92,6 +92,45 @@ final class AudioCaptureTeardownTests: XCTestCase {
         }
     }
 
+    func testAssemblyAICaptureStopDoesNotFinalizeAnUploadBeforeCancel() async throws {
+        let settings = Settings.shared
+        let preview = settings.showTextPreview
+        settings.showTextPreview = false
+        defer { settings.showTextPreview = preview }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let engine = AssemblyAIEngine()
+        let recovery = try RecoveryAudioCapture(id: UUID(), url: directory.appendingPathComponent("capture.caf"))
+        engine.recoveryCapture = recovery
+        engine.apiKey = { "test-key" }
+        engine.makeTestCaptureController = { onSamples in
+            onSamples(Array(repeating: 0.2, count: 1_600))
+            return DelayedStopController()
+        }
+        let receivedAudio = expectation(description: "Live upload received audio")
+        let cleanEnd = expectation(description: "Live upload was finalized")
+        cleanEnd.isInverted = true
+        let ended = expectation(description: "Live upload stopped")
+        engine.sendLiveRequest = { _, _, _, audio in
+            defer { ended.fulfill() }
+            for try await _ in audio.chunks {
+                receivedAudio.fulfill()
+            }
+            try Task.checkCancellation()
+            cleanEnd.fulfill()
+            throw URLError(.cancelled)
+        }
+        try await engine.startRecording(deviceID: nil)
+        await fulfillment(of: [receivedAudio], timeout: 2)
+        engine.stopAudioCapture()
+        await fulfillment(of: [cleanEnd], timeout: 0.15)
+        await engine.cancel()
+        await fulfillment(of: [ended], timeout: 2)
+        let saved = await recovery.finish()
+        XCTAssertEqual(saved.sampleCount, 1_600)
+    }
+
     private func assertFirstStopIncludesShutdown(
         _ run: (DelayedStopController) async -> Void
     ) async {
