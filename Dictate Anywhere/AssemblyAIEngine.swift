@@ -118,6 +118,11 @@ final class AssemblyAIEngine: TranscriptionEngine {
     #endif
     private var liveAudio: AssemblyAILiveAudio?
     private var liveUploadTask: Task<LiveResult, Error>?
+    /// Dev prototype: STT-3.7 streaming replaces the live upload and the
+    /// background chunk requests. The chunk store still spools the audio,
+    /// so a failed stream falls back to the Dictation chunk pipeline.
+    private var streamingAudio: AssemblyAIStreamingAudio?
+    private var streamingTask: Task<AssemblyAIStreamingResult, Error>?
 
     private struct LiveResult {
         let configuration: AssemblyAIRequestConfiguration
@@ -199,8 +204,14 @@ final class AssemblyAIEngine: TranscriptionEngine {
         liveUploadTask?.cancel()
         liveUploadTask = nil
         liveAudio = nil
+        streamingTask?.cancel()
+        streamingTask = nil
+        streamingAudio?.abandon()
+        streamingAudio = nil
+        let usesStreaming = Settings.shared.assemblyAIStreamingActive
         let usesExplicitMicrophoneSelection = Settings.shared.selectedMicrophoneUID != nil
-        let livePreviewID = needsLivePreview ? recordingSessionID : nil
+        // Streaming partials are the preview, so Apple Speech is not needed.
+        let livePreviewID = needsLivePreview && !usesStreaming ? recordingSessionID : nil
         stateLock.withLock { livePreviewSessionID = livePreviewID }
         let initialContextualVocabulary = sessionContextualVocabulary
         let previewSession: (any AppleSpeechSessionProtocol)? = try await PerfTrace.measure(
@@ -244,7 +255,8 @@ final class AssemblyAIEngine: TranscriptionEngine {
         }
 
         do {
-            let liveAudio = AssemblyAILiveAudio()
+            let liveAudio: AssemblyAILiveAudio? = usesStreaming ? nil : AssemblyAILiveAudio()
+            let streamingAudio: AssemblyAIStreamingAudio? = usesStreaming ? AssemblyAIStreamingAudio() : nil
             #if DEBUG
             let makeTestCaptureController = self.makeTestCaptureController
             #endif
@@ -265,7 +277,8 @@ final class AssemblyAIEngine: TranscriptionEngine {
                         guard self.recordingSessionID == recordingSessionID else { return }
                         self.levelSampleBuffer.append(samples)
                         store.append(samples)
-                        liveAudio.append(samples)
+                        liveAudio?.append(samples)
+                        streamingAudio?.append(samples)
                     }
                 }
                 #if DEBUG
@@ -285,7 +298,12 @@ final class AssemblyAIEngine: TranscriptionEngine {
             audioCaptureStartupCancellation = nil
             audioCaptureController = controller
             self.liveAudio = liveAudio
-            liveUploadTask = Task {
+            self.streamingAudio = streamingAudio
+            if let streamingAudio {
+                startStreaming(audio: streamingAudio, recordingSessionID: recordingSessionID,
+                               showsPreview: needsLivePreview)
+            }
+            if let liveAudio { liveUploadTask = Task {
                 // Let Accessibility return the target context while capture
                 // buffers audio. A later context change falls back at stop.
                 if Settings.shared.dictationContextAwarenessEnabled && sessionDictationContext == nil {
@@ -295,9 +313,9 @@ final class AssemblyAIEngine: TranscriptionEngine {
                 let region = Settings.shared.assemblyAIRegion
                 let response = try await transcribeLive(audio: liveAudio, configuration: configuration, region: region)
                 return LiveResult(configuration: configuration, region: region, response: response)
-            }
+            } }
             chunkTask?.cancel()
-            chunkTask = Task { [weak self] in
+            chunkTask = usesStreaming ? nil : Task { [weak self] in
                 do {
                     while !Task.isCancelled, self?.audioCaptureController != nil {
                         try await processor.processAvailable()
@@ -377,8 +395,15 @@ final class AssemblyAIEngine: TranscriptionEngine {
         defer { liveUpload?.cancel() }
         // Only a normal Stop completes the upload. AppState also stops
         // microphone capture on Cancel before asking the engine to abort.
-        if !Task.isCancelled { liveAudio?.finish() }
+        if !Task.isCancelled {
+            liveAudio?.finish()
+            streamingAudio?.finish()
+        }
         liveAudio = nil
+        let streaming = streamingTask
+        streamingTask = nil
+        streamingAudio = nil
+        defer { streaming?.cancel() }
         await stopLivePreview(for: requestSessionID)
         guard stateLock.withLock({ recordingSessionID == requestSessionID }) else { return "" }
         // Connection preparation is speculative, not a dependency of the
@@ -403,9 +428,12 @@ final class AssemblyAIEngine: TranscriptionEngine {
             try Task.checkCancellation()
             guard stateLock.withLock({ recordingSessionID == requestSessionID }) else { throw CancellationError() }
             let liveResult = try await finishLiveUpload(liveUpload, store: store, recordingSessionID: requestSessionID)
+            let streamedResult = try await finishStreaming(streaming, store: store, recordingSessionID: requestSessionID)
             let result: String
             if let liveResult {
                 result = liveResult
+            } else if let streamedResult {
+                result = streamedResult
             } else {
                 result = try await completeChunks(store: store, processor: processor, recordingSessionID: requestSessionID)
             }
@@ -445,8 +473,12 @@ final class AssemblyAIEngine: TranscriptionEngine {
         audioCaptureStartupCancellation = nil
         liveUploadTask?.cancel()
         liveUploadTask = nil
+        streamingTask?.cancel()
+        streamingTask = nil
         stopAudioCapture(outcome: "cancelled")
         liveAudio = nil
+        streamingAudio?.abandon()
+        streamingAudio = nil
         let background = chunkTask
         chunkTask = nil
         background?.cancel()
@@ -636,6 +668,74 @@ final class AssemblyAIEngine: TranscriptionEngine {
         let suffix = Self.multipartSuffix(boundary: boundary)
         let (data, response) = try await sendLiveRequest(request, prefix, suffix, audio)
         return try Self.decodeResponse(data: data, response: response)
+    }
+
+    func makeStreamingConfiguration() -> AssemblyAIStreamingConfiguration {
+        let settings = Settings.shared
+        let share = settings.shareDictationContextWithRemoteProviders
+        let context = settings.dictationContextAwarenessEnabled ? sessionDictationContext : nil
+        return AssemblyAIStreamingConfiguration(
+            model: settings.assemblyAIStreamingModel,
+            languageCode: settings.assemblyAILanguage.rawValue,
+            prompt: Self.sttPrompt(context: context, includeAppMetadata: share,
+                                   promptOverrides: settings.assemblyAIPromptOverrides),
+            keyterms: AssemblyAIStreamingConfiguration.fittedKeyterms(
+                settings.customVocabulary + (share ? sessionContextualVocabulary : []))
+        )
+    }
+
+    private func startStreaming(audio: AssemblyAIStreamingAudio, recordingSessionID: UUID, showsPreview: Bool) {
+        let apiKey = apiKey()
+        let region = Settings.shared.assemblyAIRegion
+        streamingTask = Task { [weak self] in
+            // Like the live upload, give Accessibility a moment to supply the
+            // destination context. Capture keeps buffering meanwhile.
+            if Settings.shared.dictationContextAwarenessEnabled && self?.sessionDictationContext == nil {
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            guard let configuration = self?.makeStreamingConfiguration() else { throw CancellationError() }
+            return try await AssemblyAIStreamingSession.run(
+                configuration: configuration, region: region, apiKey: apiKey, audio: audio
+            ) { [weak self] text in
+                guard let self, showsPreview else { return }
+                let shouldEmit = self.stateLock.withLock { () -> Bool in
+                    guard self.recordingSessionID == recordingSessionID else { return false }
+                    self.transcript = text
+                    guard !self.firstPartialEmitted, !text.isEmpty else { return false }
+                    self.firstPartialEmitted = true
+                    return true
+                }
+                if shouldEmit { PerfTrace.event("stt.firstPartial") }
+            }
+        }
+    }
+
+    /// Returns nil when the stream failed, so Stop falls back to the chunked
+    /// Dictation requests over the same spooled audio.
+    private func finishStreaming(_ streaming: Task<AssemblyAIStreamingResult, Error>?, store: AssemblyAIChunkStore,
+                                 recordingSessionID: UUID) async throws -> String? {
+        guard let streaming else { return nil }
+        let trace = PerfTrace.begin("stt.assemblyAIStreamFinalize")
+        defer { trace.end(outcome: "fallback") }
+        let streamed: AssemblyAIStreamingResult
+        do {
+            streamed = try await withTaskCancellationHandler {
+                try await streaming.value
+            } onCancel: {
+                streaming.cancel()
+            }
+        } catch {
+            try Task.checkCancellation()
+            logger.notice("AssemblyAI streaming failed; using Dictation chunks (\(error.localizedDescription, privacy: .public))")
+            return nil
+        }
+        try Task.checkCancellation()
+        guard stateLock.withLock({ self.recordingSessionID == recordingSessionID }) else { throw CancellationError() }
+        logger.info("AssemblyAI streaming finished: turns=\(streamed.turnCount) audio=\(streamed.audioDurationSeconds ?? -1)s billed=\(streamed.sessionDurationSeconds ?? -1)s")
+        try await store.savePreview(streamed.text)
+        let result = try await finishChunkedTranscript(streamed.text, recordingSessionID: recordingSessionID)
+        trace.end(outcome: "success")
+        return result
     }
 
     private func finishLiveUpload(_ upload: Task<LiveResult, Error>?, store: AssemblyAIChunkStore,

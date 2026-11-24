@@ -991,6 +991,8 @@ final class Settings {
         static let assemblyAIRegion = "assemblyAIRegion"
         static let assemblyAILanguage = "assemblyAILanguage"
         static let assemblyAIOutputMode = "assemblyAIOutputMode"
+        static let assemblyAIStreamingEnabled = "assemblyAIStreamingEnabled"
+        static let assemblyAIStreamingModel = "assemblyAIStreamingModel"
         static let assemblyAIInstruction = "assemblyAIInstruction"
         static let assemblyAIPromptOverrides = "assemblyAIPromptOverrides"
         static let isFillerWordRemovalEnabled = "isFillerWordRemovalEnabled"
@@ -1159,6 +1161,24 @@ final class Settings {
         didSet {
             UserDefaults.standard.set(assemblyAIOutputMode.rawValue, forKey: Keys.assemblyAIOutputMode)
         }
+    }
+
+    /// Dev prototype: stream to STT-3.7 instead of the Dictation API.
+    var assemblyAIStreamingEnabled: Bool {
+        didSet { UserDefaults.standard.set(assemblyAIStreamingEnabled, forKey: Keys.assemblyAIStreamingEnabled) }
+    }
+
+    var assemblyAIStreamingModel: AssemblyAIStreamingModel {
+        didSet { UserDefaults.standard.set(assemblyAIStreamingModel.rawValue, forKey: Keys.assemblyAIStreamingModel) }
+    }
+
+    /// Streaming is a Debug-only prototype. Release builds always use Dictation.
+    var assemblyAIStreamingActive: Bool {
+        #if DEBUG
+        return assemblyAIStreamingEnabled
+        #else
+        return false
+        #endif
     }
 
     var assemblyAIInstruction: String {
@@ -1776,6 +1796,11 @@ final class Settings {
             AssemblyAIOutputMode(
                 rawValue: defaults.string(forKey: Keys.assemblyAIOutputMode) ?? ""
             ) ?? .polished
+        assemblyAIStreamingEnabled = defaults.bool(forKey: Keys.assemblyAIStreamingEnabled)
+        assemblyAIStreamingModel =
+            AssemblyAIStreamingModel(
+                rawValue: defaults.string(forKey: Keys.assemblyAIStreamingModel) ?? ""
+            ) ?? .realtimeAgent
         assemblyAIInstruction = defaults.string(forKey: Keys.assemblyAIInstruction) ?? ""
         let storedAssemblyAIPromptOverrides = defaults.data(forKey: Keys.assemblyAIPromptOverrides)
             .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]

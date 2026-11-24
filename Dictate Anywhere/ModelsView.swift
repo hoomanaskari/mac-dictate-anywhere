@@ -330,6 +330,31 @@ struct ModelsView: View {
             DSInfoRow(label: "Price", value: "$0.62 per hour of audio")
         }
 
+        #if DEBUG
+        DSSection(overline: "Developer") {
+            DSStackedRow(
+                label: "Stream with STT-3.7 (Dev only)",
+                caption:
+                    "Sends audio over AssemblyAI's streaming WebSocket instead of the Dictation API. Sessions can run for hours, so long recordings are never split into chunks. Polished mode cleans the full transcript after you stop. If the stream fails, the recording falls back to Dictation.",
+                isOn: $settings.assemblyAIStreamingEnabled
+            )
+            if settings.assemblyAIStreamingEnabled {
+                DSDivider()
+                DSDetailRow(
+                    label: "Streaming model",
+                    caption: "Billed for the time the connection is open. It opens when you start dictating and closes when the transcript is final."
+                ) {
+                    DSDropdown(
+                        selection: $settings.assemblyAIStreamingModel,
+                        options: AssemblyAIStreamingModel.allCases,
+                        title: \.displayName,
+                        accessibilityName: "AssemblyAI streaming model"
+                    )
+                }
+            }
+        }
+        #endif
+
         DSSection(overline: "Dictation") {
             DSDetailRow(
                 label: "Language",

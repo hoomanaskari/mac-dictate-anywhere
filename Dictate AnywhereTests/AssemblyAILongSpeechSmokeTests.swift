@@ -110,6 +110,123 @@ final class AssemblyAILongSpeechSmokeTests: XCTestCase {
         XCTAssertEqual(polishedWords, referenceWords, "Whole-transcript cleanup must preserve the fixture wording")
     }
 
+    /// Run with TEST_RUNNER_DICTATE_ASSEMBLYAI_STREAMING_TEST=1. Streams more
+    /// than 120 seconds of synthetic speech through the STT-3.7 prototype in
+    /// real time and checks that no Dictation chunk request is needed.
+    func testStreamingTranscribesBeyond120SecondsInOneSession() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["DICTATE_ASSEMBLYAI_STREAMING_TEST"] == "1")
+        let engine = AssemblyAIEngine()
+        try XCTSkipUnless(engine.isReady, "Configure an AssemblyAI key in the Dev app.")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/en-long-dictation.txt")
+        let paragraphs = try String(contentsOf: source, encoding: .utf8).components(separatedBy: "\n\n")
+        let ending = "The patient fox carried a blue notebook across the quiet wooden bridge, then returned home before the evening rain began."
+        // About 170 seconds: well past the 120-second Dictation live limit.
+        let reference = paragraphs.prefix(7).joined(separator: "\n\n") + "\n\n\(ending)"
+        let wav = directory.appendingPathComponent("streaming.wav")
+        let say = Process()
+        say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        say.arguments = ["-v", "Samantha", "-r", "155", "-o", wav.path,
+                         "--file-format=WAVE", "--data-format=LEI16@16000", reference]
+        try say.run()
+        say.waitUntilExit()
+        XCTAssertEqual(say.terminationStatus, 0)
+        let reader = try RecoveryAudioReader(url: wav)
+        var samples: [Float] = []
+        while let part = try reader.nextSamples() { samples += part }
+        let sampleRate = AssemblyAIEngine.sampleRate
+        let seconds = Double(samples.count) / Double(sampleRate)
+        XCTAssertGreaterThan(seconds, 120)
+        guard seconds > 120 else { return }
+
+        let settings = Settings.shared
+        let preview = settings.showTextPreview
+        let outputMode = settings.assemblyAIOutputMode
+        let language = settings.assemblyAILanguage
+        let vocabulary = settings.customVocabulary
+        let instruction = settings.assemblyAIInstruction
+        let streamingEnabled = settings.assemblyAIStreamingEnabled
+        let streamingModel = settings.assemblyAIStreamingModel
+        settings.showTextPreview = true
+        settings.assemblyAIOutputMode = .polished
+        settings.assemblyAILanguage = .english
+        settings.customVocabulary = []
+        settings.assemblyAIInstruction = "Keep every word and deliberate repetition. Adjust only capitalization and punctuation."
+        settings.assemblyAIStreamingEnabled = true
+        settings.assemblyAIStreamingModel = .realtimeAgent
+        defer {
+            settings.showTextPreview = preview
+            settings.assemblyAIOutputMode = outputMode
+            settings.assemblyAILanguage = language
+            settings.customVocabulary = vocabulary
+            settings.assemblyAIInstruction = instruction
+            settings.assemblyAIStreamingEnabled = streamingEnabled
+            settings.assemblyAIStreamingModel = streamingModel
+        }
+
+        let capture = ReplayAssemblyAICapture()
+        engine.makeTestCaptureController = { onSamples in
+            capture.install(onSamples)
+            return capture
+        }
+        let recovery = try RecoveryAudioCapture(id: UUID(), url: directory.appendingPathComponent("session.caf"))
+        engine.recoveryCapture = recovery
+        var dictationRequests = 0
+        var cleanupCount = 0
+        engine.sendRequest = { request in
+            if request.url?.path.hasPrefix("/v1/transcribe") == true { dictationRequests += 1 }
+            if request.url?.path == "/v1/chat/completions" { cleanupCount += 1 }
+            return try await URLSession.shared.data(for: request)
+        }
+        try await engine.startRecording(deviceID: nil)
+        print("STREAMING_STARTED audio_seconds=\(seconds)")
+        let start = ContinuousClock.now
+        var previewAt130: String?
+        for offset in stride(from: 0, to: samples.count, by: 1_600) {
+            let end = min(offset + 1_600, samples.count)
+            try await Task.sleep(until: start.advanced(by: .microseconds(end * 1_000_000 / sampleRate)),
+                                 clock: .continuous)
+            capture.send(Array(samples[offset..<end]))
+            if previewAt130 == nil, end >= 130 * sampleRate { previewAt130 = engine.currentTranscript }
+        }
+        let stopped = ContinuousClock.now
+        let result = await engine.stopRecording()
+        let stopToFinal = ContinuousClock.now - stopped
+        let saved = await recovery.finish()
+        XCTAssertEqual(saved.sampleCount, samples.count, "Recovery must contain the complete original recording")
+        XCTAssertNil(engine.lastTranscriptionError)
+        XCTAssertEqual(dictationRequests, 0, "Streaming must not fall back to Dictation chunks")
+        XCTAssertEqual(cleanupCount, 1)
+        let raw = try XCTUnwrap(engine.lastRawTranscript)
+        let referenceWords = handoffWords(reference)
+        let rawWords = handoffWords(raw)
+        let similarity = wordSimilarity(referenceWords, rawWords)
+        print("STREAMING_RESULT stop_to_final=\(stopToFinal) expected_words=\(referenceWords.count) raw_words=\(rawWords.count) similarity=\(similarity) polished=\(engine.lastResultWasPolished)")
+        print("STREAMING_PREVIEW_AT_130S words=\(handoffWords(previewAt130 ?? "").count)")
+        print("STREAMING_RAW \(raw)")
+        print("STREAMING_POLISHED \(result)")
+        XCTAssertGreaterThan(handoffWords(previewAt130 ?? "").count, 200, "Live preview must keep growing past 120 seconds")
+        XCTAssertGreaterThanOrEqual(similarity, 0.95)
+        XCTAssertEqual(Array(rawWords.suffix(8)), Array(handoffWords(ending).suffix(8)), "The final words must not be lost at Stop")
+    }
+
+    /// Longest-common-subsequence word overlap relative to the reference.
+    private func wordSimilarity(_ reference: [String], _ hypothesis: [String]) -> Double {
+        guard !reference.isEmpty else { return hypothesis.isEmpty ? 1 : 0 }
+        var previous = [Int](repeating: 0, count: hypothesis.count + 1)
+        for word in reference {
+            var current = [Int](repeating: 0, count: hypothesis.count + 1)
+            for (index, other) in hypothesis.enumerated() {
+                current[index + 1] = word == other ? previous[index] + 1 : max(previous[index + 1], current[index])
+            }
+            previous = current
+        }
+        return Double(previous[hypothesis.count]) / Double(max(reference.count, hypothesis.count))
+    }
+
     private func handoffWords(_ text: String) -> [String] {
         text.lowercased().replacingOccurrences(of: "’", with: "'")
             .split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
