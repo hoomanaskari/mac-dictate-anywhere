@@ -988,6 +988,7 @@ final class Settings {
         static let parakeetModelChoice = "parakeetModelChoice"
         static let selectedLanguage = "selectedLanguage"
         static let appleSpeechLanguage = "appleSpeechLanguage"
+        static let appleSpeechSilenceDetectionMode = "appleSpeechSilenceDetectionMode"
         static let assemblyAIRegion = "assemblyAIRegion"
         static let assemblyAILanguage = "assemblyAILanguage"
         static let assemblyAIOutputMode = "assemblyAIOutputMode"
@@ -1136,6 +1137,16 @@ final class Settings {
     var appleSpeechLanguage: SupportedLanguage {
         didSet {
             UserDefaults.standard.set(appleSpeechLanguage.rawValue, forKey: Keys.appleSpeechLanguage)
+        }
+    }
+
+    /// Silence detection / auto-stop mode for Apple Speech dictation.
+    var appleSpeechSilenceDetectionMode: AppleSpeechSilenceDetectionMode {
+        didSet {
+            UserDefaults.standard.set(
+                appleSpeechSilenceDetectionMode.rawValue,
+                forKey: Keys.appleSpeechSilenceDetectionMode
+            )
         }
     }
 
@@ -1751,7 +1762,7 @@ final class Settings {
         let persistedParakeetModelChoice = ParakeetModelChoice(
             rawValue: defaults.string(forKey: Keys.parakeetModelChoice) ?? ""
         ) ?? .multilingual
-        var persistedEngineChoice = TranscriptionEngineChoice(rawValue: storedEngineRaw ?? "") ?? .parakeet
+        var persistedEngineChoice = TranscriptionEngineChoice(rawValue: storedEngineRaw ?? "") ?? (AppleSpeechEngine.isSupported ? .appleSpeech : .parakeet)
         if persistedEngineChoice == .appleSpeech, !AppleSpeechEngine.isSupported {
             persistedEngineChoice = .parakeet
             defaults.set(TranscriptionEngineChoice.parakeet.rawValue, forKey: Keys.engineChoice)
@@ -1762,8 +1773,9 @@ final class Settings {
             userHasChosenEngine = false
         }
         // Apply auto-default before first render to avoid transient startup mismatch.
+        // For fresh installs, keep Apple Speech as the default when supported so no initial model download is forced.
         let parakeetExistsOnDisk = Self.parakeetModelExistsOnDisk()
-        if !hasChosenEngine, parakeetExistsOnDisk {
+        if !hasChosenEngine, !AppleSpeechEngine.isSupported, parakeetExistsOnDisk {
             engineChoice = .parakeet
         }
         legacyAppleSpeechMigrationPending = !AppleSpeechEngine.isSupported
@@ -1775,6 +1787,8 @@ final class Settings {
         selectedLanguage = SupportedLanguage(rawValue: langCode) ?? .english
         let appleLangCode = defaults.string(forKey: Keys.appleSpeechLanguage) ?? "en"
         appleSpeechLanguage = SupportedLanguage(rawValue: appleLangCode) ?? .english
+        let appleSilenceModeRaw = defaults.string(forKey: Keys.appleSpeechSilenceDetectionMode) ?? "off"
+        appleSpeechSilenceDetectionMode = AppleSpeechSilenceDetectionMode(rawValue: appleSilenceModeRaw) ?? .off
         assemblyAIAPIKey = Self.storedAssemblyAIAPIKey()
         assemblyAIRegion =
             AssemblyAIRegion(

@@ -300,6 +300,8 @@ protocol TranscriptionEngine: AnyObject {
     /// A terminal recognition failure from the most recent stop. AppState uses
     /// this to preserve recovery audio rather than discard it as silence.
     var lastTranscriptionError: String? { get }
+    /// Handler invoked when the engine detects the conclusion of speech.
+    var endOfUtteranceHandler: (() -> Void)? { get set }
 }
 
 extension TranscriptionEngine {
@@ -310,6 +312,10 @@ extension TranscriptionEngine {
     }
     func setSessionDictationContext(_ context: DictationContext?) {}
     var lastTranscriptionError: String? { nil }
+    var endOfUtteranceHandler: (() -> Void)? {
+        get { nil }
+        set {}
+    }
 }
 
 // MARK: - Shared Audio Helpers

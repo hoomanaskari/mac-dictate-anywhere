@@ -182,7 +182,23 @@ struct ModelsView: View {
                     DSInfoRow(label: "Model storage", value: "Downloaded and managed by macOS")
                     DSDivider()
                     appleSpeechStatusRow
-                    if let error = appState.enginePreparationError {
+                    DSDivider()
+                    DSDetailRow(
+                        label: "Stop hands-free dictation",
+                        caption: settings.appleSpeechSilenceDetectionMode.detailDescription
+                    ) {
+                        DSDropdown(
+                            selection: $settings.appleSpeechSilenceDetectionMode,
+                            options: AppleSpeechSilenceDetectionMode.allCases,
+                            title: { $0.displayName },
+                            accessibilityName: "Stop hands-free dictation after speech ends"
+                        )
+                    }
+                    if settings.appleSpeechSilenceDetectionMode == .sileroVAD {
+                        DSDivider()
+                        appleSpeechDetectionRow
+                    }
+                    if let error = modelActionError ?? appState.enginePreparationError {
                         DSDivider()
                         DSFieldMessage(text: error, tone: .error)
                             .padding(.vertical, 10)
@@ -215,6 +231,9 @@ struct ModelsView: View {
             Text(model.isEnglishNemotron
                  ? "This will remove the \(model.streamingPresetTitle) download for \(model.displayName) (\(model.sizeSummary)). Other preset downloads are kept. You can download it again later."
                  : "This will remove the \(model.displayName) speech model (\(model.sizeSummary)). You can download it again later.")
+        }
+        .onAppear {
+            appState.appleSpeechEngine.refreshSpeechDetectionDownloaded()
         }
     }
 
@@ -505,6 +524,35 @@ struct ModelsView: View {
             actionTitle: readiness == .needsSetup ? "Set Up Apple Speech" : nil,
             action: { Task { await appState.prepareActiveEngine() } })
             .disabled(appState.status != .idle || isDeletingModel)
+    }
+
+    private var appleSpeechDetectionRow: some View {
+        let installed = appState.appleSpeechEngine.isSpeechDetectionDownloaded
+        return DSDetailRow(
+            label: "Speech detection",
+            caption: installed
+                ? "Installed and ready for neural voice activity detection."
+                : "Required for Silero VAD mode. Inbuilt mode will be used until downloaded."
+        ) {
+            if installed {
+                Text("Installed")
+                    .foregroundStyle(DS.Colors.textSecondary)
+            } else {
+                Button("Download Speech Detection") {
+                    modelActionError = nil
+                    Task {
+                        do {
+                            try await appState.appleSpeechEngine.downloadSpeechDetection()
+                        } catch {
+                            modelActionError = error.localizedDescription
+                        }
+                    }
+                }
+                .buttonStyle(.dsSecondary)
+                .disabled(appState.status != .idle || appState.isPreparingEngine || isDeletingModel
+                    || appState.appleSpeechEngine.isSpeechDetectionDownloading)
+            }
+        }
     }
 
     private var speechReadiness: ModelReadiness {
