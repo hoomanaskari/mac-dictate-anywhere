@@ -118,7 +118,7 @@ final class AssemblyAIEngine: TranscriptionEngine {
     #endif
     private var liveAudio: AssemblyAILiveAudio?
     private var liveUploadTask: Task<LiveResult, Error>?
-    /// Dev prototype: STT-3.7 streaming replaces the live upload and the
+    /// STT-3.7 streaming replaces the live upload and the
     /// background chunk requests. The chunk store still spools the audio,
     /// so a failed stream falls back to the Dictation chunk pipeline.
     private var streamingAudio: AssemblyAIStreamingAudio?
@@ -208,7 +208,7 @@ final class AssemblyAIEngine: TranscriptionEngine {
         streamingTask = nil
         streamingAudio?.abandon()
         streamingAudio = nil
-        let usesStreaming = Settings.shared.assemblyAIStreamingActive
+        let usesStreaming = Settings.shared.assemblyAIStreamingEnabled
         let usesExplicitMicrophoneSelection = Settings.shared.selectedMicrophoneUID != nil
         // Streaming partials are the preview, so Apple Speech is not needed.
         let livePreviewID = needsLivePreview && !usesStreaming ? recordingSessionID : nil
@@ -625,6 +625,10 @@ final class AssemblyAIEngine: TranscriptionEngine {
     var sendRequest: (URLRequest) async throws -> (Data, URLResponse) = { request in
         try await URLSession.shared.data(for: request)
     }
+    var runStreaming: (AssemblyAIStreamingConfiguration, AssemblyAIRegion, String, AssemblyAIStreamingAudio,
+                       @escaping @Sendable (String) -> Void) async throws -> AssemblyAIStreamingResult = {
+        try await AssemblyAIStreamingSession.run(configuration: $0, region: $1, apiKey: $2, audio: $3, onUpdate: $4)
+    }
     var sendLiveRequest: (URLRequest, Data, Data, AssemblyAILiveAudio) async throws -> (Data, URLResponse) = {
         try await AssemblyAILiveUpload.send($0, prefix: $1, suffix: $2, audio: $3)
     }
@@ -694,9 +698,8 @@ final class AssemblyAIEngine: TranscriptionEngine {
                 try await Task.sleep(for: .milliseconds(250))
             }
             guard let configuration = self?.makeStreamingConfiguration() else { throw CancellationError() }
-            return try await AssemblyAIStreamingSession.run(
-                configuration: configuration, region: region, apiKey: apiKey, audio: audio
-            ) { [weak self] text in
+            guard let runStreaming = self?.runStreaming else { throw CancellationError() }
+            return try await runStreaming(configuration, region, apiKey, audio) { [weak self] text in
                 guard let self, showsPreview else { return }
                 let shouldEmit = self.stateLock.withLock { () -> Bool in
                     guard self.recordingSessionID == recordingSessionID else { return false }

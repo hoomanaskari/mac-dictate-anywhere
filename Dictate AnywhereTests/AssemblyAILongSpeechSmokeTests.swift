@@ -46,17 +46,20 @@ final class AssemblyAILongSpeechSmokeTests: XCTestCase {
         let language = settings.assemblyAILanguage
         let vocabulary = settings.customVocabulary
         let instruction = settings.assemblyAIInstruction
+        let streamingEnabled = settings.assemblyAIStreamingEnabled
         settings.showTextPreview = false
         settings.assemblyAIOutputMode = .polished
         settings.assemblyAILanguage = .english
         settings.customVocabulary = []
         settings.assemblyAIInstruction = "Keep every word and deliberate repetition. Adjust only capitalization and punctuation."
+        settings.assemblyAIStreamingEnabled = false  // This test covers the Dictation chunk handoff.
         defer {
             settings.showTextPreview = preview
             settings.assemblyAIOutputMode = outputMode
             settings.assemblyAILanguage = language
             settings.customVocabulary = vocabulary
             settings.assemblyAIInstruction = instruction
+            settings.assemblyAIStreamingEnabled = streamingEnabled
         }
 
         let capture = ReplayAssemblyAICapture()

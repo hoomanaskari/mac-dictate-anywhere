@@ -102,4 +102,77 @@ final class AssemblyAIStreamingTests: XCTestCase {
         for await _ in audio.frames { count += 1 }
         XCTAssertEqual(count, 0)
     }
+
+    #if DEBUG
+    @MainActor
+    func testStreamedTranscriptIsUsedWithoutDictationRequests() async throws {
+        let result = try await runEngine(
+            streaming: { audio, onUpdate in
+                for await _ in audio.frames {}
+                onUpdate("Streamed")
+                return AssemblyAIStreamingResult(text: "Streamed words.", turnCount: 1,
+                                                 audioDurationSeconds: 0.1, sessionDurationSeconds: 0.5)
+            },
+            dictation: { _ in XCTFail("Streaming must not call the Dictation API"); throw URLError(.badURL) })
+        XCTAssertEqual(result, "Streamed words.")
+    }
+
+    @MainActor
+    func testFailedStreamFallsBackToDictation() async throws {
+        var dictationRequests = 0
+        let result = try await runEngine(
+            streaming: { audio, _ in
+                for await _ in audio.frames { throw URLError(.networkConnectionLost) }
+                throw URLError(.networkConnectionLost)
+            },
+            dictation: { request in
+                XCTAssertEqual(request.url?.path, "/v1/transcribe")
+                dictationRequests += 1
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (Data(#"{"text":"Recovered from the recording."}"#.utf8), response)
+            })
+        XCTAssertEqual(result, "Recovered from the recording.")
+        XCTAssertEqual(dictationRequests, 1)
+    }
+
+    @MainActor
+    private func runEngine(
+        streaming: @escaping (AssemblyAIStreamingAudio, @escaping @Sendable (String) -> Void) async throws -> AssemblyAIStreamingResult,
+        dictation: @escaping (URLRequest) async throws -> (Data, URLResponse)
+    ) async throws -> String {
+        let settings = Settings.shared
+        let saved = (settings.assemblyAIStreamingEnabled, settings.assemblyAIOutputMode,
+                     settings.showTextPreview, settings.dictationContextAwarenessEnabled)
+        settings.assemblyAIStreamingEnabled = true
+        settings.assemblyAIOutputMode = .verbatim
+        settings.showTextPreview = false
+        settings.dictationContextAwarenessEnabled = false
+        defer {
+            settings.assemblyAIStreamingEnabled = saved.0
+            settings.assemblyAIOutputMode = saved.1
+            settings.showTextPreview = saved.2
+            settings.dictationContextAwarenessEnabled = saved.3
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let engine = AssemblyAIEngine()
+        engine.recoveryCapture = try RecoveryAudioCapture(id: UUID(), url: directory.appendingPathComponent("capture.caf"))
+        engine.apiKey = { "test-key" }
+        engine.runStreaming = { _, _, _, audio, onUpdate in try await streaming(audio, onUpdate) }
+        engine.sendRequest = dictation
+        engine.makeTestCaptureController = { onSamples in
+            onSamples([Float](repeating: 0.2, count: 16_000))
+            return SilentCapture()
+        }
+        try await engine.startRecording(deviceID: nil)
+        return await engine.stopRecording()
+    }
+    #endif
 }
+
+#if DEBUG
+private final class SilentCapture: @unchecked Sendable, AudioCaptureController {
+    func stop() {}
+}
+#endif

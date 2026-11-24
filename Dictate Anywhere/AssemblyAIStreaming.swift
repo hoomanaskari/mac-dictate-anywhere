@@ -2,10 +2,9 @@
 //  AssemblyAIStreaming.swift
 //  Dictate Anywhere
 //
-//  DEV PROTOTYPE: AssemblyAI STT-3.7 streaming over the v3 WebSocket. A
-//  session lasts up to three hours, so one push-to-talk dictation is never
-//  split into overlapping HTTP chunks. Reached only from Debug builds (see
-//  `Settings.assemblyAIStreamingActive`).
+//  AssemblyAI STT-3.7 streaming over the v3 WebSocket. A session lasts up
+//  to three hours, so one push-to-talk dictation is never split into
+//  overlapping HTTP chunks (see `Settings.assemblyAIStreamingEnabled`).
 //
 
 import Foundation
@@ -19,8 +18,15 @@ nonisolated enum AssemblyAIStreamingModel: String, CaseIterable, Codable, Identi
 
     var displayName: String {
         switch self {
-        case .realtimeAgent: return "STT-3.7 Realtime Agent ($0.45/hr)"
-        case .realtime: return "STT-3.7 Realtime ($0.30/hr)"
+        case .realtimeAgent: return "Realtime Agent (\(hourlyPrice)/hr)"
+        case .realtime: return "Realtime (\(hourlyPrice)/hr)"
+        }
+    }
+
+    var hourlyPrice: String {
+        switch self {
+        case .realtimeAgent: return "$0.45"
+        case .realtime: return "$0.30"
         }
     }
 }

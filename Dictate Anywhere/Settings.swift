@@ -1163,22 +1163,14 @@ final class Settings {
         }
     }
 
-    /// Dev prototype: stream to STT-3.7 instead of the Dictation API.
+    /// Stream to STT-3.7 over a WebSocket instead of the Dictation API.
+    /// On by default; one session covers recordings of any length.
     var assemblyAIStreamingEnabled: Bool {
         didSet { UserDefaults.standard.set(assemblyAIStreamingEnabled, forKey: Keys.assemblyAIStreamingEnabled) }
     }
 
     var assemblyAIStreamingModel: AssemblyAIStreamingModel {
         didSet { UserDefaults.standard.set(assemblyAIStreamingModel.rawValue, forKey: Keys.assemblyAIStreamingModel) }
-    }
-
-    /// Streaming is a Debug-only prototype. Release builds always use Dictation.
-    var assemblyAIStreamingActive: Bool {
-        #if DEBUG
-        return assemblyAIStreamingEnabled
-        #else
-        return false
-        #endif
     }
 
     var assemblyAIInstruction: String {
@@ -1796,7 +1788,7 @@ final class Settings {
             AssemblyAIOutputMode(
                 rawValue: defaults.string(forKey: Keys.assemblyAIOutputMode) ?? ""
             ) ?? .polished
-        assemblyAIStreamingEnabled = defaults.bool(forKey: Keys.assemblyAIStreamingEnabled)
+        assemblyAIStreamingEnabled = defaults.object(forKey: Keys.assemblyAIStreamingEnabled) as? Bool ?? true
         assemblyAIStreamingModel =
             AssemblyAIStreamingModel(
                 rawValue: defaults.string(forKey: Keys.assemblyAIStreamingModel) ?? ""
